@@ -55,6 +55,7 @@ The easiest way to use these scripts is with **RebelShip Browser**, which has al
 | Script | Description |
 |--------|-------------|
 | **fix-alliance-member-exclude.user.js** | Fixes broken exclude buttons for CEO and adds missing ones for regular members |
+| **fix-alliance-edit-buttons.user.js** | Adds missing edit buttons for alliance name/description for interim_ceo |
 
 ## Features
 

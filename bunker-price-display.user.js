@@ -14,7 +14,7 @@
     'use strict';
 
     const API_URL = "https://shippingmanager.cc/api/bunker/get-prices";
-    const isMobile = window.innerWidth < 800;
+    const isMobile = window.innerWidth < 1024;
 
     let fuelPriceElement = null;
     let co2PriceElement = null;

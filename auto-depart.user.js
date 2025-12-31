@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Auto Depart
-// @description Automatically departs all vessels when they are in port (checks every 5 minutes)
-// @version     1.1
+// @description Automatically departs all vessels when they are in port (checks every 5 minutes). On Android: enables background departure every 15 minutes even when phone is locked.
+// @version     2.0
 // @author      https://github.com/justonlyforyou/
 // @match       https://shippingmanager.cc/*
 // @run-at      document-end
@@ -12,6 +12,9 @@
     'use strict';
 
     const CHECK_INTERVAL = 5 * 60 * 1000; // 5 minutes in milliseconds
+    const isAndroidApp = typeof window.RebelShipBridge !== 'undefined';
+
+    let backgroundEnabled = false;
 
     async function checkAndDepart() {
         try {
@@ -61,11 +64,59 @@
         }
     }
 
+    // Android background worker toggle functions
+    async function getBackgroundStatus() {
+        if (!isAndroidApp) return false;
+        try {
+            const result = await window.RebelShipBridge.getAutoDepartStatus();
+            return result && result.enabled;
+        } catch (err) {
+            console.error('[AutoDepart] Error getting background status:', err);
+            return false;
+        }
+    }
+
+    async function setBackgroundEnabled(enabled) {
+        if (!isAndroidApp) return false;
+        try {
+            const result = await window.RebelShipBridge.setAutoDepartEnabled(enabled);
+            return result && result.success;
+        } catch (err) {
+            console.error('[AutoDepart] Error setting background enabled:', err);
+            return false;
+        }
+    }
+
+    function enableBackgroundAutoDepart() {
+        // Only on Android app - silently enable background worker
+        if (!isAndroidApp) {
+            console.log('[AutoDepart] Not in Android app, background worker not available');
+            return;
+        }
+
+        setBackgroundEnabled(true).then(success => {
+            if (success) {
+                console.log('[AutoDepart] Background auto-depart enabled (every 15 min)');
+            } else {
+                console.log('[AutoDepart] Could not enable background auto-depart');
+            }
+        }).catch(err => {
+            console.log('[AutoDepart] Background enable error:', err.message);
+        });
+    }
+
     // Initial check after 10 seconds (give page time to load)
     setTimeout(checkAndDepart, 10000);
 
     // Then check every 5 minutes
     setInterval(checkAndDepart, CHECK_INTERVAL);
 
-    console.log('[AutoDepart] Script loaded - checking every 5 minutes');
+    // Enable background worker on Android
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => setTimeout(enableBackgroundAutoDepart, 500));
+    } else {
+        setTimeout(enableBackgroundAutoDepart, 500);
+    }
+
+    console.log('[AutoDepart] Script loaded - checking every 5 minutes' + (isAndroidApp ? ' (Android app detected)' : ''));
 })();

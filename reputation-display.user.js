@@ -13,7 +13,7 @@
     'use strict';
 
     const API_URL = "https://shippingmanager.cc/api/user/get-user-settings";
-    const isMobile = window.innerWidth < 800;
+    const isMobile = window.innerWidth < 1024;
     let reputationElement = null;
 
     function getReputationColor(rep) {
@@ -67,7 +67,7 @@
                 }
             });
 
-            row.appendChild(reputationElement);
+            var menu = row.querySelector('#rebelship-menu'); if (menu) { row.insertBefore(reputationElement, menu); } else { row.appendChild(reputationElement); }
             return reputationElement;
         }
 

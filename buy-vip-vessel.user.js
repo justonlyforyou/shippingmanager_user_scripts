@@ -11,7 +11,7 @@
 (function() {
     'use strict';
 
-    const isMobile = window.innerWidth < 800;
+    const isMobile = window.innerWidth < 1024;
 
     // VIP Vessels data (IDs 59-63)
     const VIP_VESSELS = [

@@ -12,7 +12,7 @@
 (function() {
     'use strict';
 
-    const isMobile = window.innerWidth < 800;
+    const isMobile = window.innerWidth < 1024;
 
     // RebelShip Menu Logo SVG
     const REBELSHIP_LOGO = '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M20 21c-1.39 0-2.78-.47-4-1.32-2.44 1.71-5.56 1.71-8 0C6.78 20.53 5.39 21 4 21H2v2h2c1.38 0 2.74-.35 4-.99 2.52 1.29 5.48 1.29 8 0 1.26.65 2.62.99 4 .99h2v-2h-2zM3.95 19H4c1.6 0 3.02-.88 4-2 .98 1.12 2.4 2 4 2s3.02-.88 4-2c.98 1.12 2.4 2 4 2h.05l1.89-6.68c.08-.26.06-.54-.06-.78s-.34-.42-.6-.5L20 10.62V6c0-1.1-.9-2-2-2h-3V1H9v3H6c-1.1 0-2 .9-2 2v4.62l-1.29.42c-.26.08-.48.26-.6.5s-.15.52-.06.78L3.95 19zM6 6h12v3.97L12 8 6 9.97V6z"/></svg>';
@@ -179,6 +179,18 @@
         return data?.data?.chat?.messages || [];
     }
 
+    // Fetch alliance chat feed
+    async function fetchAllianceChat() {
+        const response = await fetch('https://shippingmanager.cc/api/alliance/get-chat-feed', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({})
+        });
+        const data = await response.json();
+        return data?.data?.chat_feed || [];
+    }
+
     // Format timestamp to readable date
     function formatDate(timestamp) {
         return new Date(timestamp * 1000).toISOString();
@@ -266,22 +278,126 @@
                 mimeType = 'text/csv';
             }
 
-            // Download file
-            const blob = new Blob([content], { type: mimeType });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = filename;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-
-            progressDiv.innerHTML = `Exported ${allMessages.length} messages!`;
+            // Download file - with Android fallback
+            const isAndroid = /Android/i.test(navigator.userAgent);
+            
+            if (isAndroid && navigator.share) {
+                // Use Web Share API on Android
+                const file = new File([content], filename, { type: mimeType });
+                navigator.share({ files: [file], title: filename }).then(() => {
+                    progressDiv.innerHTML = `Exported ${allMessages.length} messages!`;
+                }).catch(() => {
+                    // Fallback: open in new tab
+                    const dataUrl = 'data:' + mimeType + ';charset=utf-8,' + encodeURIComponent(content);
+                    window.open(dataUrl, '_blank');
+                    progressDiv.innerHTML = `Exported ${allMessages.length} messages. Long-press to save.`;
+                });
+            } else {
+                // Standard blob download for desktop
+                const blob = new Blob([content], { type: mimeType });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                progressDiv.innerHTML = `Exported ${allMessages.length} messages!`;
+            }
             setTimeout(() => progressDiv.remove(), 2000);
 
         } catch (error) {
             console.error('[ExportMessages] Error:', error);
+            const progressDiv = document.getElementById('export-progress');
+            if (progressDiv) {
+                progressDiv.innerHTML = 'Export failed: ' + error.message;
+                setTimeout(() => progressDiv.remove(), 3000);
+            }
+        }
+    }
+
+
+    // Export alliance chat
+    async function exportAllianceChat(format) {
+        const dropdown = document.querySelector('.rebelship-dropdown');
+        if (dropdown) dropdown.style.display = 'none';
+
+        console.log('[ExportMessages] Starting alliance chat export as', format);
+
+        try {
+            const progressDiv = document.createElement('div');
+            progressDiv.id = 'export-progress';
+            progressDiv.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#1f2937;color:#fff;padding:20px 40px;border-radius:8px;z-index:999999;box-shadow:0 4px 20px rgba(0,0,0,0.5);';
+            progressDiv.innerHTML = 'Loading alliance chat...';
+            document.body.appendChild(progressDiv);
+
+            const chatFeed = await fetchAllianceChat();
+            console.log('[ExportMessages] Found', chatFeed.length, 'alliance messages');
+
+            const allMessages = chatFeed
+                .filter(msg => msg.type === 'chat')
+                .map(msg => ({
+                    user_id: msg.user_id,
+                    message: msg.message,
+                    created_at: formatDate(msg.time_created),
+                    timestamp: msg.time_created
+                }))
+                .sort((a, b) => a.timestamp - b.timestamp);
+
+            let content, filename, mimeType;
+
+            if (format === 'json') {
+                content = JSON.stringify(allMessages, null, 2);
+                filename = `alliance_chat_${new Date().toISOString().slice(0,10)}.json`;
+                mimeType = 'application/json';
+            } else {
+                const headers = ['user_id', 'created_at', 'message'];
+                const csvRows = [headers.join(',')];
+
+                for (const msg of allMessages) {
+                    const row = [
+                        msg.user_id,
+                        msg.created_at,
+                        `"${(msg.message || '').replace(/"/g, '""').replace(/\n/g, '\\n')}"`
+                    ];
+                    csvRows.push(row.join(','));
+                }
+
+                content = csvRows.join('\n');
+                filename = `alliance_chat_${new Date().toISOString().slice(0,10)}.csv`;
+                mimeType = 'text/csv';
+            }
+
+            // Download file - with Android fallback
+            const isAndroid = /Android/i.test(navigator.userAgent);
+
+            if (isAndroid && navigator.share) {
+                const file = new File([content], filename, { type: mimeType });
+                navigator.share({ files: [file], title: filename }).then(() => {
+                    progressDiv.innerHTML = `Exported ${allMessages.length} alliance messages!`;
+                }).catch(() => {
+                    const dataUrl = 'data:' + mimeType + ';charset=utf-8,' + encodeURIComponent(content);
+                    window.open(dataUrl, '_blank');
+                    progressDiv.innerHTML = `Exported ${allMessages.length} messages. Long-press to save.`;
+                });
+            } else {
+                const blob = new Blob([content], { type: mimeType });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                progressDiv.innerHTML = `Exported ${allMessages.length} alliance messages!`;
+            }
+
+            setTimeout(() => progressDiv.remove(), 2000);
+
+        } catch (error) {
+            console.error('[ExportMessages] Alliance export error:', error);
             const progressDiv = document.getElementById('export-progress');
             if (progressDiv) {
                 progressDiv.innerHTML = 'Export failed: ' + error.message;
@@ -302,8 +418,10 @@
         submenu.style.cssText = 'display:none;position:absolute;left:0;top:0;transform:translateX(-100%);background:#1f2937;border:1px solid #374151;border-radius:4px;min-width:150px;z-index:99999;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
 
         const options = [
-            { label: 'Export as CSV', format: 'csv' },
-            { label: 'Export as JSON', format: 'json' }
+            { label: 'Messages CSV', format: 'csv', fn: exportMessages },
+            { label: 'Messages JSON', format: 'json', fn: exportMessages },
+            { label: 'Alliance Chat CSV', format: 'csv', fn: exportAllianceChat },
+            { label: 'Alliance Chat JSON', format: 'json', fn: exportAllianceChat }
         ];
 
         options.forEach(opt => {
@@ -312,7 +430,7 @@
             optItem.textContent = opt.label;
             optItem.addEventListener('mouseenter', () => optItem.style.background = '#374151');
             optItem.addEventListener('mouseleave', () => optItem.style.background = 'transparent');
-            optItem.addEventListener('click', () => exportMessages(opt.format));
+            optItem.addEventListener('click', () => opt.fn(opt.format));
             submenu.appendChild(optItem);
         });
 

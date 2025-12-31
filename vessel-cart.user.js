@@ -15,7 +15,7 @@
 (function() {
     'use strict';
 
-    const isMobile = window.innerWidth < 800;
+    const isMobile = window.innerWidth < 1024;
 
     // Inject interceptor script into page context (has access to Vue internals)
     const interceptorScript = document.createElement('script');
