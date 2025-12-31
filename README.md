@@ -39,6 +39,7 @@ The easiest way to use these scripts is with **RebelShip Browser**, which has al
 
 | Script | Description |
 |--------|-------------|
+| **auto-buy-fuel-co2.user.js** | Auto-buy fuel and CO2 with 3 modes: Basic (price threshold), Intelligent (calculates vessel needs), Emergency (low bunker override) |
 | **auto-depart.user.js** | Automatically departs vessels when ready |
 | **depart-all-loop.user.js** | Continuously departs all ready vessels in a loop |
 
@@ -66,7 +67,7 @@ The easiest way to use these scripts is with **RebelShip Browser**, which has al
 
 ## Compatibility
 
-- Tested with Shipping Manager as of December 2024
+- Tested with Shipping Manager as of December 2025
 - Works with Tampermonkey, Violentmonkey, and Greasemonkey on supported browsers
 - Mobile support via GeckoView-based browsers
 

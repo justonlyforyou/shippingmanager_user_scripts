@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Fix Alliance Edit Buttons
 // @namespace    https://shippingmanager.cc/
-// @version      1.0
+// @version      1.1
 // @description  Adds missing edit buttons for alliance name/description for interim_ceo
 // @author       https://github.com/justonlyforyou/
 // @match        https://shippingmanager.cc/*
@@ -54,19 +54,21 @@
         return allianceStore.members.find(m => m.user_id === userStore.user.id);
     }
 
+    let lastLoggedRole = null;
+
     function shouldShowButtons() {
         const myMember = getMyMember();
         if (!myMember) {
-            console.log('[Alliance Edit Fix] No member data found');
             return false;
         }
-        console.log('[Alliance Edit Fix] My role:', myMember.role, 'has_management_role:', myMember.has_management_role);
+        // Only log role once when it changes
+        if (lastLoggedRole !== myMember.role) {
+            console.log('[Alliance Edit Fix] Role:', myMember.role);
+            lastLoggedRole = myMember.role;
+        }
         // Only add buttons for interim_ceo
         // CEO already has the buttons built into the game
-        if (myMember.role === 'interim_ceo') {
-            return true;
-        }
-        return false;
+        return myMember.role === 'interim_ceo';
     }
 
     // ===========================================
