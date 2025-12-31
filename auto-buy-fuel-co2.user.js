@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Auto-Buy Fuel/CO2
 // @namespace    http://tampermonkey.net/
-// @version      3.3
+// @version      3.4
 // @description  Auto-buy fuel and CO2 when prices are below threshold
 // @author       https://github.com/justonlyforyou/
 // @match        https://shippingmanager.cc/*
@@ -1286,7 +1286,7 @@
 
         // Start monitoring if any auto-rebuy is enabled
         const settings = loadSettings();
-        if (settings.autoRebuyFuel || settings.autoRebuyCO2) {
+        if (settings.fuelMode !== 'off' || settings.co2Mode !== 'off') {
             // Wait a bit for the game to fully load
             setTimeout(startMonitoring, 5000);
         }
