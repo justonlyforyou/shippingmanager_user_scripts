@@ -3,6 +3,7 @@
 // @description Export all messenger conversations as CSV or JSON
 // @version     1.1
 // @author      https://github.com/justonlyforyou/
+// @order       29
 // @match       https://shippingmanager.cc/*
 // @grant       none
 // @run-at      document-end

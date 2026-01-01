@@ -3,6 +3,7 @@
 // @description Quick access to purchase hidden VIP vessels using game modal
 // @version     1.6
 // @author      https://github.com/justonlyforyou/
+// @order       27
 // @match       https://shippingmanager.cc/*
 // @run-at      document-end
 // @enabled     false

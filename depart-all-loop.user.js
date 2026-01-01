@@ -3,6 +3,7 @@
 // @description Clicks Depart All button repeatedly until all vessels departed
 // @version     1.0
 // @author      https://github.com/justonlyforyou/
+// @order       23
 // @match       https://shippingmanager.cc/*
 // @grant       none
 // @run-at      document-end

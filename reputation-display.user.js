@@ -3,6 +3,7 @@
 // @description Shows reputation next to company name, click to open Finance modal
 // @version     3.7
 // @author      joseywales - Pimped by https://github.com/justonlyforyou/
+// @order       24
 // @match       https://shippingmanager.cc/*
 // @grant       none
 // @run-at      document-end

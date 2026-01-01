@@ -4,6 +4,7 @@
 // @version      2.1
 // @description  Shows current fuel and CO2 bunker prices - Desktop and Mobile
 // @author       https://github.com/justonlyforyou/
+// @order        22
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-end

@@ -4,6 +4,7 @@
 // @version      1.1
 // @description  Adds missing edit buttons for alliance name/description for interim_ceo
 // @author       https://github.com/justonlyforyou/
+// @order        53
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-end

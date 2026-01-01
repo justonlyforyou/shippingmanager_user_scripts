@@ -3,6 +3,7 @@
 // @description Add vessels to cart and bulk purchase them
 // @version     3.5
 // @author      https://github.com/justonlyforyou/
+// @order       26
 // @match       https://shippingmanager.cc/*
 // @grant       none
 // @run-at      document-end

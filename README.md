@@ -58,6 +58,59 @@ The easiest way to use these scripts is with **RebelShip Browser**, which has al
 | **fix-alliance-member-exclude.user.js** | Fixes broken exclude buttons for CEO and adds missing ones for regular members |
 | **fix-alliance-edit-buttons.user.js** | Adds missing edit buttons for alliance name/description for interim_ceo |
 
+## Script Header Format
+
+All scripts must include a UserScript metadata block at the top of the file. This block is parsed by userscript managers and the RebelShip Browser to determine script properties.
+
+### Required Header Structure
+
+```javascript
+// ==UserScript==
+// @name         Script Name Here
+// @description  Brief description of what the script does
+// @version      1.0
+// @author       https://github.com/justonlyforyou/
+// @order        20
+// @match        https://shippingmanager.cc/*
+// @grant        none
+// @run-at       document-end
+// @enabled      false
+// ==/UserScript==
+```
+
+### Supported Directives
+
+| Directive | Required | Description |
+|-----------|----------|-------------|
+| `@name` | Yes | Display name of the script |
+| `@description` | Yes | Short description (shown in script manager) |
+| `@version` | Yes | Semantic version (e.g., `1.0`, `2.3.1`) |
+| `@author` | Yes | Author name or GitHub URL |
+| `@order` | Yes | Load order (1-999). Lower numbers load first |
+| `@match` | Yes | URL pattern where script runs. Use `https://shippingmanager.cc/*` |
+| `@namespace` | No | Optional namespace URL |
+| `@grant` | No | Permissions needed. Use `none` for standard scripts |
+| `@run-at` | No | When to inject: `document-start`, `document-end` (default), `document-idle` |
+| `@enabled` | No | Default state: `true` or `false`. Scripts default to disabled |
+
+### Order Guidelines
+
+Scripts are loaded and displayed in order from lowest to highest. Use these ranges:
+
+| Range | Category | Examples |
+|-------|----------|----------|
+| 10-19 | Core/Early | map-unlock (10) |
+| 20-29 | Automation | auto-buy-fuel-co2 (20), auto-depart (21) |
+| 30-39 | Bug Fixes | fix-alliance-edit-buttons (30) |
+| 50-59 | Export Tools | export-messages (52) |
+
+### Where Headers Are Used
+
+1. **RebelShip Browser (Desktop/Mobile)**: Parses headers to display script info, enable/disable toggles, and determine load order
+2. **Tampermonkey/Violentmonkey**: Standard userscript managers parse these headers
+3. **Android Background Worker**: Uses headers to determine which scripts to run in background mode
+4. **Script Update Service**: Compares `@version` to detect available updates from GitHub
+
 ## Features
 
 - **Cross-Platform**: All scripts work on both desktop and mobile browsers

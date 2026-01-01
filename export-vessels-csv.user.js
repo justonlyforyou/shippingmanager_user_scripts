@@ -3,6 +3,7 @@
 // @description Export all vessels with details as CSV
 // @version     1.1
 // @author      https://github.com/justonlyforyou/
+// @order       28
 // @match       https://shippingmanager.cc/*
 // @run-at      document-end
 // @enabled     false

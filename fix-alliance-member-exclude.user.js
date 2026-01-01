@@ -4,6 +4,7 @@
 // @version      1.0
 // @description  Fixes broken exclude buttons for CEO and adds missing ones for regular members
 // @author       https://github.com/justonlyforyou/
+// @order        51
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-end

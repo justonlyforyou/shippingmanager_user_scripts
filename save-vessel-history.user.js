@@ -4,6 +4,7 @@
 // @version      2.8
 // @description  Detect vessel history API calls and offer CSV download
 // @author       https://github.com/justonlyforyou/
+// @order        25
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-end

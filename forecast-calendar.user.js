@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name         ShippingManager - Forecast Calendar
 // @namespace    http://tampermonkey.net/
-// @version      3.1
+// @version      3.2
 // @description  Embedded forecast calendar with page-flip navigation
 // @author       https://github.com/justonlyforyou/
+// @order        100
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-end
@@ -803,8 +804,8 @@
             titleObserver = null;
         }
 
-        // Open maintenance modal and hijack it
-        modalStore.open('maintenance');
+        // Open routeResearch modal (loads faster as it can be opened empty)
+        modalStore.open('routeResearch');
 
         // Wait for modal to render, then replace content
         setTimeout(() => {
