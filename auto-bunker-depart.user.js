@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Auto Bunker & Depart
 // @namespace    http://tampermonkey.net/
-// @version      8.1
+// @version      8.2
 // @description  Auto-buy fuel/CO2 and auto-depart vessels - works in background mode via direct API
 // @author       https://github.com/justonlyforyou/
 // @order        20
@@ -46,7 +46,7 @@
         return !document.getElementById('app') || !document.querySelector('.messaging');
     }
 
-    console.log('[Auto-Buy] v8.1 - Android:', isAndroidApp);
+    console.log('[Auto-Buy] v8.2 - Android:', isAndroidApp);
 
     // ============================================
     // SETTINGS STORAGE
@@ -1407,32 +1407,57 @@
         }
     }
 
+    var uiInitialized = false;
+    var uiRetryCount = 0;
+    var MAX_UI_RETRIES = 30; // Try for 30 seconds
+
+    function initUI() {
+        if (uiInitialized) return;
+
+        // Check if page is ready (has #app and .messaging)
+        var hasApp = document.getElementById('app');
+        var hasMessaging = document.querySelector('.messaging');
+
+        console.log('[Auto-Buy] initUI check - #app:', !!hasApp, '.messaging:', !!hasMessaging, 'retry:', uiRetryCount);
+
+        if (!hasApp || !hasMessaging) {
+            uiRetryCount++;
+            if (uiRetryCount < MAX_UI_RETRIES) {
+                setTimeout(initUI, 1000);
+                return;
+            }
+            console.log('[Auto-Buy] Max retries reached, page might be in background mode');
+            return;
+        }
+
+        // Page is ready, add UI
+        uiInitialized = true;
+
+        // Inject CSS
+        var style = document.createElement('style');
+        style.textContent = SETTINGS_CSS;
+        document.head.appendChild(style);
+
+        // Add menu item
+        addMenuItem(SCRIPT_NAME, openSettingsModal);
+        console.log('[Auto-Buy] Menu item added successfully');
+    }
+
     function init() {
-        console.log('[Auto-Buy] Initializing v8.1...');
+        console.log('[Auto-Buy] Initializing v8.2...');
 
         // Request notification permission early
         requestNotificationPermission();
 
-        // Only add UI elements if NOT in background mode
-        if (!isBackgroundMode()) {
-            // Inject CSS
-            var style = document.createElement('style');
-            style.textContent = SETTINGS_CSS;
-            document.head.appendChild(style);
-
-            // Add menu item
-            addMenuItem(SCRIPT_NAME, openSettingsModal);
-            console.log('[Auto-Buy] Menu item added');
-        } else {
-            console.log('[Auto-Buy] Background mode - skipping UI');
-        }
+        // Start UI initialization with retry
+        initUI();
 
         // Start monitoring based on settings
         var settings = loadSettings();
         syncSettingsToAndroid(settings);
 
         if (settings.fuelMode !== 'off' || settings.co2Mode !== 'off' || settings.autoDepartEnabled) {
-            setTimeout(startMonitoring, isBackgroundMode() ? 1000 : 5000);
+            setTimeout(startMonitoring, 5000);
         }
     }
 
