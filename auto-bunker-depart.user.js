@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Auto Bunker & Depart
 // @namespace    http://tampermonkey.net/
-// @version      8.0
+// @version      8.1
 // @description  Auto-buy fuel/CO2 and auto-depart vessels - works in background mode via direct API
 // @author       https://github.com/justonlyforyou/
 // @order        20
@@ -46,7 +46,7 @@
         return !document.getElementById('app') || !document.querySelector('.messaging');
     }
 
-    console.log('[Auto-Buy] v8.0 - Android:', isAndroidApp);
+    console.log('[Auto-Buy] v8.1 - Android:', isAndroidApp);
 
     // ============================================
     // SETTINGS STORAGE
@@ -1408,19 +1408,24 @@
     }
 
     function init() {
-        console.log('[Auto-Buy] Initializing v8.0...');
+        console.log('[Auto-Buy] Initializing v8.1...');
 
         // Request notification permission early
         requestNotificationPermission();
 
-        // Inject CSS
-        var style = document.createElement('style');
-        style.textContent = SETTINGS_CSS;
-        document.head.appendChild(style);
+        // Only add UI elements if NOT in background mode
+        if (!isBackgroundMode()) {
+            // Inject CSS
+            var style = document.createElement('style');
+            style.textContent = SETTINGS_CSS;
+            document.head.appendChild(style);
 
-        // Add menu item (addMenuItem handles retry if menu not ready yet)
-        addMenuItem(SCRIPT_NAME, openSettingsModal);
-        console.log('[Auto-Buy] Menu item requested');
+            // Add menu item
+            addMenuItem(SCRIPT_NAME, openSettingsModal);
+            console.log('[Auto-Buy] Menu item added');
+        } else {
+            console.log('[Auto-Buy] Background mode - skipping UI');
+        }
 
         // Start monitoring based on settings
         var settings = loadSettings();
