@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Auto Bunker & Depart
 // @namespace    http://tampermonkey.net/
-// @version      7.8
+// @version      7.9
 // @description  Auto-buy fuel/CO2 and auto-depart vessels - works in background mode via direct API
 // @author       https://github.com/justonlyforyou/
 // @order        20
@@ -46,7 +46,7 @@
         return !document.getElementById('app') || !document.querySelector('.messaging');
     }
 
-    console.log('[Auto-Buy] v7.7 - Android:', isAndroidApp);
+    console.log('[Auto-Buy] v7.9 - Android:', isAndroidApp);
 
     // ============================================
     // SETTINGS STORAGE
@@ -412,7 +412,7 @@
             console.log('[Auto-Buy] Toast shown via Pinia');
         }
 
-        // 2. Android bridge notification
+        // 2. Android bridge notification (injected by BackgroundScriptService)
         if (window.RebelShipNotify) {
             try {
                 if (category === 'fuel' && window.RebelShipNotify.fuelBought) {
@@ -426,9 +426,26 @@
                 } else if (window.RebelShipNotify.notify) {
                     window.RebelShipNotify.notify(message);
                 }
-                console.log('[Auto-Buy] Android notification sent');
+                console.log('[Auto-Buy] Android notification sent via bridge');
             } catch (e) {
                 console.log('[Auto-Buy] Android notification failed:', e.message);
+            }
+        } else if (isBackgroundMode()) {
+            // Fallback: Direct navigation trick for Android headless mode
+            try {
+                var title = category === 'fuel' ? 'Fuel Purchased' :
+                           category === 'co2' ? 'CO2 Purchased' :
+                           category === 'depart' ? 'Ships Departed' :
+                           type === 'error' ? 'RebelShip Error' : 'RebelShip';
+                var url = 'https://rebelship-notify.local/send?title=' + encodeURIComponent(title) + '&message=' + encodeURIComponent(message);
+                var iframe = document.createElement('iframe');
+                iframe.style.display = 'none';
+                iframe.src = url;
+                document.body.appendChild(iframe);
+                setTimeout(function() { iframe.remove(); }, 100);
+                console.log('[Auto-Buy] Android notification sent via navigation');
+            } catch (e) {
+                console.log('[Auto-Buy] Navigation notification failed:', e.message);
             }
         }
 
@@ -1346,21 +1363,19 @@
     }
 
     function init() {
-        console.log('[Auto-Buy] Initializing v7.1...');
+        console.log('[Auto-Buy] Initializing v7.9...');
 
         // Request notification permission early
         requestNotificationPermission();
 
-        // Inject CSS (only if in UI mode)
-        if (!isBackgroundMode()) {
-            var style = document.createElement('style');
-            style.textContent = SETTINGS_CSS;
-            document.head.appendChild(style);
+        // Inject CSS
+        var style = document.createElement('style');
+        style.textContent = SETTINGS_CSS;
+        document.head.appendChild(style);
 
-            // Add menu item
-            addMenuItem(SCRIPT_NAME, openSettingsModal);
-            console.log('[Auto-Buy] Menu item added');
-        }
+        // Add menu item (addMenuItem handles retry if menu not ready yet)
+        addMenuItem(SCRIPT_NAME, openSettingsModal);
+        console.log('[Auto-Buy] Menu item requested');
 
         // Start monitoring based on settings
         var settings = loadSettings();
