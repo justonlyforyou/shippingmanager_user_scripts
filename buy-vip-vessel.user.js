@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Buy VIP Vessel
 // @description Quick access to purchase hidden VIP vessels using game modal
-// @version     1.6
+// @version     1.7
 // @author      https://github.com/justonlyforyou/
 // @order       27
 // @match       https://shippingmanager.cc/*
@@ -254,10 +254,24 @@
             const vesselData = data.data.vessels_for_sale;
             const vipInfo = VIP_VESSELS.find(v => v.id === vesselId);
 
+            // Build full product object matching game's expected structure
             const product = {
-                sku: 'vip_vessel_' + vesselId,
-                rewards: [{ vessel_id: vesselId }],
-                points: vipInfo ? vipInfo.points : 0
+                id: vesselId,
+                name: vesselData.name,
+                sku: 'vip_vessel',
+                description: 'Get a special vessel with 50% more revenue for each depart',
+                price: vipInfo ? vipInfo.points : vesselData.price_in_points,
+                image: 'price_tag_icon.svg',
+                rewards: [{ type: 'vessel', name: vesselData.name, vessel_id: vesselId }],
+                order: 13,
+                restricted: false,
+                special_tag: null,
+                one_time: null,
+                bonus_value: null,
+                delay_hours: null,
+                discount: null,
+                salary: 0,
+                info: []
             };
 
             if (stores.shopStore) {
@@ -282,7 +296,8 @@
                 initialPage: 'order',
                 vip_vessel: vesselData,
                 vessel: vesselData,
-                componentProps: { vip_vessel: vesselData }
+                product: product,
+                componentProps: { vip_vessel: vesselData, product: product }
             });
 
             console.log('[VIPVessel] Modal opened for:', vesselData.name);
