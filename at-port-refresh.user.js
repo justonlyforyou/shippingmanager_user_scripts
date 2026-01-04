@@ -6,7 +6,7 @@
 // @order       50
 // @match       https://shippingmanager.cc/*
 // @run-at      document-end
-// @enabled     true
+// @enabled     false
 // ==/UserScript==
 
 (function() {
