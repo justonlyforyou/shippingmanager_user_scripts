@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Fix Alliance Edit Buttons
+// @name         Shipping Manager - Fix Alliance Edit Buttons
 // @namespace    https://shippingmanager.cc/
-// @version      1.1
+// @version      1.2
 // @description  Adds missing edit buttons for alliance name/description for interim_ceo
 // @author       https://github.com/justonlyforyou/
 // @order        53
