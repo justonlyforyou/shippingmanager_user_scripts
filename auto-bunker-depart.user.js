@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Auto Bunker & Depart
 // @namespace    http://tampermonkey.net/
-// @version      8.2
+// @version      9.0
 // @description  Auto-buy fuel/CO2 and auto-depart vessels - works in background mode via direct API
 // @author       https://github.com/justonlyforyou/
 // @order        20
@@ -46,7 +46,7 @@
         return !document.getElementById('app') || !document.querySelector('.messaging');
     }
 
-    console.log('[Auto-Buy] v8.2 - Android:', isAndroidApp);
+    console.log('[Auto-Buy] v9.0 - Android:', isAndroidApp);
 
     // ============================================
     // SETTINGS STORAGE
@@ -514,7 +514,7 @@
     }
 
     // ============================================
-    // VESSEL CALCULATIONS
+    // VESSEL CALCULATIONS (matching copilot formulas)
     // ============================================
     function getVesselCapacity(vessel) {
         if (!vessel || !vessel.capacity_max) return 0;
@@ -525,12 +525,44 @@
         return (cap.dry || 0) + (cap.refrigerated || 0);
     }
 
-    function calculateFuelConsumption(vessel, distance, speed) {
+    /**
+     * Calculate fuel consumption using game formula
+     * Formula: fuel_kg_per_nm = capacity * sqrt(speed) * fuel_factor / 40
+     * Then: fuel_kg = distance * (actual_speed / ref_speed) * kg_per_nm_ref
+     */
+    function calculateFuelConsumption(vessel, distance, actualSpeed) {
         var capacity = getVesselCapacity(vessel);
-        if (capacity <= 0 || distance <= 0 || speed <= 0) return 0;
+        if (capacity <= 0 || distance <= 0 || actualSpeed <= 0) return 0;
+
+        var refSpeed = vessel.max_speed || actualSpeed;
         var fuelFactor = vessel.fuel_factor || 1;
-        var fuelKg = (capacity / 2000) * distance * Math.sqrt(speed) / 20 * fuelFactor;
-        return fuelKg / 1000;
+
+        // Calculate kg per nm at reference speed
+        var kgPerNmRef = capacity * Math.sqrt(refSpeed) * fuelFactor / 40;
+
+        // Calculate actual fuel consumption
+        var fuelKg = distance * (actualSpeed / refSpeed) * kgPerNmRef;
+        return fuelKg / 1000; // Return in tons
+    }
+
+    /**
+     * Calculate CO2 consumption using game formula
+     * Formula: co2_per_teu_nm = (2 - capacity / 15000) * co2_factor
+     * Total: co2_per_teu_nm * cargo * distance
+     */
+    function calculateCO2Consumption(vessel, distance) {
+        var capacity = getVesselCapacity(vessel);
+        if (capacity <= 0 || distance <= 0) return 0;
+
+        var co2Factor = vessel.co2_factor || 1;
+
+        // CO2 per TEU per nautical mile
+        var co2PerTeuNm = (2 - capacity / 15000) * co2Factor;
+
+        // Use max capacity for buffer in intelligent rebuy
+        var totalCO2Kg = co2PerTeuNm * capacity * distance;
+
+        return totalCO2Kg / 1000; // Return in tons
     }
 
     async function getVesselsReadyToDepart() {
@@ -581,6 +613,8 @@
         for (var i = 0; i < vessels.length; i++) {
             var vessel = vessels[i];
             var distance = vessel.route_distance;
+            if (!distance || distance <= 0) continue;
+
             var speed = vessel.route_speed || vessel.max_speed;
             var fuelNeeded = vessel.route_fuel_required || vessel.fuel_required;
             if (!fuelNeeded) {
@@ -591,8 +625,26 @@
         return totalFuel / 1000;
     }
 
+    async function calculateTotalCO2Needed() {
+        var vessels = await getVesselsReadyToDepart();
+        var totalCO2 = 0;
+        for (var i = 0; i < vessels.length; i++) {
+            var vessel = vessels[i];
+            var distance = vessel.route_distance;
+            if (!distance || distance <= 0) continue;
+
+            var co2Needed = calculateCO2Consumption(vessel, distance);
+            totalCO2 += co2Needed || 0;
+        }
+        return totalCO2;
+    }
+
     // ============================================
-    // AUTO-REBUY LOGIC (API-based)
+    // AUTO-REBUY LOGIC (matching copilot - Barrel Boss / Atmosphere Broker)
+    // Mode Priority:
+    // 1. BASIC: price <= threshold -> fill bunker completely (HIGHEST)
+    // 2. EMERGENCY: price > threshold BUT bunker low + ships waiting -> fill bunker
+    // 3. INTELLIGENT: price > threshold BUT vessels need fuel -> buy SHORTFALL only
     // ============================================
     async function autoRebuyFuel(bunker, prices, settings) {
         if (settings.fuelMode === 'off') return false;
@@ -602,49 +654,96 @@
 
         var fuelSpace = bunker.maxFuel - bunker.fuel;
         var availableCash = Math.max(0, bunker.cash - settings.fuelMinCash);
+        var maxAffordable = Math.floor(availableCash / fuelPrice);
         var amountToBuy = 0;
         var reason = '';
+        var isEmergencyBuy = false;
+        var isIntelligentBuy = false;
 
-        // BASIC: buy when price <= threshold
+        // ========== BASIC MODE: Price below threshold - fill bunker (HIGHEST PRIORITY) ==========
         if (fuelPrice <= settings.fuelPriceThreshold) {
-            var maxAffordable = Math.floor(availableCash / fuelPrice);
-            amountToBuy = Math.min(fuelSpace, maxAffordable);
-            reason = 'Basic: price $' + fuelPrice + ' <= $' + settings.fuelPriceThreshold;
-        }
+            if (fuelSpace < 0.5) {
+                console.log('[Auto-Buy] Fuel: Bunker full');
+                return false;
+            }
+            amountToBuy = Math.min(Math.ceil(fuelSpace), maxAffordable);
+            reason = 'Basic: price $' + fuelPrice + '/t <= threshold $' + settings.fuelPriceThreshold + '/t - filling bunker';
 
-        // INTELLIGENT: buy based on vessel needs
-        if (amountToBuy === 0 && settings.fuelMode === 'intelligent') {
-            if (fuelPrice <= settings.fuelIntelligentMaxPrice) {
-                var fuelNeeded = await calculateTotalFuelNeeded();
-                var shortfall = Math.ceil(fuelNeeded - bunker.fuel);
-                if (shortfall > 0) {
-                    var maxAfford = Math.floor(availableCash / fuelPrice);
-                    amountToBuy = Math.min(shortfall, fuelSpace, maxAfford);
-                    reason = 'Intelligent: shortfall ' + shortfall + 't';
+        // ========== EMERGENCY MODE: Price above threshold but critical situation ==========
+        } else if (settings.fuelMode === 'emergency') {
+            if (fuelPrice > settings.fuelEmergencyMaxPrice) {
+                console.log('[Auto-Buy] Fuel Emergency: Price $' + fuelPrice + '/t > max $' + settings.fuelEmergencyMaxPrice + '/t - skipping');
+                // Fall through to check Intelligent Mode if enabled
+            } else if (bunker.fuel < settings.fuelEmergencyBelow) {
+                var shipsAtPort = await getVesselsAtPortCount();
+
+                if (shipsAtPort >= settings.fuelEmergencyShips) {
+                    if (fuelSpace < 0.5) {
+                        console.log('[Auto-Buy] Fuel Emergency: Bunker full');
+                        return false;
+                    }
+                    isEmergencyBuy = true;
+                    amountToBuy = Math.min(Math.ceil(fuelSpace), maxAffordable);
+                    reason = 'EMERGENCY: Bunker=' + bunker.fuel.toFixed(1) + 't < ' + settings.fuelEmergencyBelow + 't, ' + shipsAtPort + ' ships at port, price $' + fuelPrice + '/t <= max $' + settings.fuelEmergencyMaxPrice + '/t';
                 }
             }
-        }
 
-        // EMERGENCY: buy when bunker critically low
-        if (amountToBuy === 0 && settings.fuelMode === 'emergency') {
-            var shipsAtPort = await getVesselsAtPortCount();
-            console.log('[Auto-Buy] EMERGENCY CHECK - Fuel: ' + bunker.fuel + 't, Threshold: ' + settings.fuelEmergencyBelow + 't, Ships: ' + shipsAtPort);
-            if (bunker.fuel <= settings.fuelEmergencyBelow &&
-                shipsAtPort >= settings.fuelEmergencyShips &&
-                fuelPrice <= settings.fuelEmergencyMaxPrice) {
-                var maxAffordEmerg = Math.floor(availableCash / fuelPrice);
-                amountToBuy = Math.min(fuelSpace, maxAffordEmerg);
-                reason = 'EMERGENCY: bunker ' + bunker.fuel.toFixed(0) + 't <= ' + settings.fuelEmergencyBelow + 't';
+            // If Emergency didn't trigger, check Intelligent Mode
+            if (!isEmergencyBuy && settings.fuelIntelligentMaxPrice) {
+                if (fuelPrice <= settings.fuelIntelligentMaxPrice) {
+                    var readyVessels = await getVesselsReadyToDepart();
+                    if (readyVessels.length > 0) {
+                        var totalFuelNeeded = await calculateTotalFuelNeeded();
+                        var shortfall = Math.ceil(totalFuelNeeded - bunker.fuel);
+
+                        if (shortfall > 0) {
+                            amountToBuy = Math.min(shortfall, Math.floor(fuelSpace), maxAffordable);
+                            isIntelligentBuy = true;
+                            reason = 'Intelligent: Price $' + fuelPrice + '/t > threshold but ' + readyVessels.length + ' vessels need ' + totalFuelNeeded.toFixed(1) + 't, bunker has ' + bunker.fuel.toFixed(1) + 't (shortfall: ' + shortfall + 't)';
+                        }
+                    }
+                }
             }
+
+        // ========== INTELLIGENT MODE ONLY (Emergency disabled) ==========
+        } else if (settings.fuelMode === 'intelligent') {
+            if (fuelPrice > settings.fuelIntelligentMaxPrice) {
+                console.log('[Auto-Buy] Fuel Intelligent: Price $' + fuelPrice + '/t > max $' + settings.fuelIntelligentMaxPrice + '/t - skipping');
+                return false;
+            }
+
+            var readyVesselsInt = await getVesselsReadyToDepart();
+            if (readyVesselsInt.length === 0) {
+                console.log('[Auto-Buy] Fuel Intelligent: No vessels ready to depart - skipping');
+                return false;
+            }
+
+            var totalFuelNeededInt = await calculateTotalFuelNeeded();
+            var shortfallInt = Math.ceil(totalFuelNeededInt - bunker.fuel);
+
+            if (shortfallInt > 0) {
+                amountToBuy = Math.min(shortfallInt, Math.floor(fuelSpace), maxAffordable);
+                isIntelligentBuy = true;
+                reason = 'Intelligent: Price $' + fuelPrice + '/t > threshold but ' + readyVesselsInt.length + ' vessels need ' + totalFuelNeededInt.toFixed(1) + 't, bunker has ' + bunker.fuel.toFixed(1) + 't (shortfall: ' + shortfallInt + 't)';
+            } else {
+                console.log('[Auto-Buy] Fuel Intelligent: No shortfall, vessels need ' + totalFuelNeededInt.toFixed(1) + 't, bunker has ' + bunker.fuel.toFixed(1) + 't - skipping');
+                return false;
+            }
+
+        // ========== BASIC MODE ONLY: Price above threshold ==========
+        } else {
+            console.log('[Auto-Buy] Fuel: Price $' + fuelPrice + '/t > threshold $' + settings.fuelPriceThreshold + '/t and emergency/intelligent disabled - skipping');
+            return false;
         }
 
-        if (amountToBuy > 0) {
-            console.log('[Auto-Buy] Fuel: ' + reason + ', buying ' + amountToBuy.toFixed(0) + 't @ $' + fuelPrice);
-            var result = await purchaseFuelAPI(amountToBuy, fuelPrice);
-            return result.success;
+        if (amountToBuy <= 0) {
+            console.log('[Auto-Buy] Fuel: Cannot buy - insufficient funds or space');
+            return false;
         }
 
-        return false;
+        console.log('[Auto-Buy] Fuel: ' + reason + ', buying ' + amountToBuy.toFixed(0) + 't @ $' + fuelPrice);
+        var result = await purchaseFuelAPI(amountToBuy, fuelPrice);
+        return result.success;
     }
 
     async function autoRebuyCO2(bunker, prices, settings) {
@@ -655,44 +754,95 @@
 
         var co2Space = bunker.maxCO2 - bunker.co2;
         var availableCash = Math.max(0, bunker.cash - settings.co2MinCash);
+        var maxAffordable = Math.floor(availableCash / co2Price);
         var amountToBuy = 0;
         var reason = '';
+        var isEmergencyBuy = false;
+        var isIntelligentBuy = false;
 
-        // BASIC
+        // ========== BASIC MODE: Price below threshold - fill bunker (HIGHEST PRIORITY) ==========
         if (co2Price <= settings.co2PriceThreshold) {
-            var maxAffordable = Math.floor(availableCash / co2Price);
-            amountToBuy = Math.min(co2Space, maxAffordable);
-            reason = 'Basic: price $' + co2Price + ' <= $' + settings.co2PriceThreshold;
-        }
-
-        // INTELLIGENT
-        if (amountToBuy === 0 && settings.co2Mode === 'intelligent') {
-            if (co2Price <= settings.co2IntelligentMaxPrice && co2Space > 0) {
-                var maxAfford = Math.floor(availableCash / co2Price);
-                amountToBuy = Math.min(co2Space, maxAfford);
-                reason = 'Intelligent: refilling';
+            if (co2Space < 0.5) {
+                console.log('[Auto-Buy] CO2: Bunker full');
+                return false;
             }
-        }
+            amountToBuy = Math.min(Math.ceil(co2Space), maxAffordable);
+            reason = 'Basic: price $' + co2Price + '/t <= threshold $' + settings.co2PriceThreshold + '/t - filling bunker';
 
-        // EMERGENCY
-        if (amountToBuy === 0 && settings.co2Mode === 'emergency') {
-            var shipsAtPort = await getVesselsAtPortCount();
-            if (bunker.co2 <= settings.co2EmergencyBelow &&
-                shipsAtPort >= settings.co2EmergencyShips &&
-                co2Price <= settings.co2EmergencyMaxPrice) {
-                var maxAffordEmerg = Math.floor(availableCash / co2Price);
-                amountToBuy = Math.min(co2Space, maxAffordEmerg);
-                reason = 'EMERGENCY: bunker ' + bunker.co2.toFixed(0) + 't <= ' + settings.co2EmergencyBelow + 't';
+        // ========== EMERGENCY MODE: Price above threshold but critical situation ==========
+        } else if (settings.co2Mode === 'emergency') {
+            if (co2Price > settings.co2EmergencyMaxPrice) {
+                console.log('[Auto-Buy] CO2 Emergency: Price $' + co2Price + '/t > max $' + settings.co2EmergencyMaxPrice + '/t - skipping');
+            } else if (bunker.co2 < settings.co2EmergencyBelow) {
+                var shipsAtPort = await getVesselsAtPortCount();
+
+                if (shipsAtPort >= settings.co2EmergencyShips) {
+                    if (co2Space < 0.5) {
+                        console.log('[Auto-Buy] CO2 Emergency: Bunker full');
+                        return false;
+                    }
+                    isEmergencyBuy = true;
+                    amountToBuy = Math.min(Math.ceil(co2Space), maxAffordable);
+                    reason = 'EMERGENCY: Bunker=' + bunker.co2.toFixed(1) + 't < ' + settings.co2EmergencyBelow + 't, ' + shipsAtPort + ' ships at port, price $' + co2Price + '/t <= max $' + settings.co2EmergencyMaxPrice + '/t';
+                }
             }
+
+            // If Emergency didn't trigger, check Intelligent Mode
+            if (!isEmergencyBuy && settings.co2IntelligentMaxPrice) {
+                if (co2Price <= settings.co2IntelligentMaxPrice) {
+                    var readyVessels = await getVesselsReadyToDepart();
+                    if (readyVessels.length > 0) {
+                        var totalCO2Needed = await calculateTotalCO2Needed();
+                        var shortfall = Math.ceil(totalCO2Needed - bunker.co2);
+
+                        if (shortfall > 0) {
+                            amountToBuy = Math.min(shortfall, Math.floor(co2Space), maxAffordable);
+                            isIntelligentBuy = true;
+                            reason = 'Intelligent: Price $' + co2Price + '/t > threshold but ' + readyVessels.length + ' vessels need ' + totalCO2Needed.toFixed(1) + 't, bunker has ' + bunker.co2.toFixed(1) + 't (shortfall: ' + shortfall + 't)';
+                        }
+                    }
+                }
+            }
+
+        // ========== INTELLIGENT MODE ONLY (Emergency disabled) ==========
+        } else if (settings.co2Mode === 'intelligent') {
+            if (co2Price > settings.co2IntelligentMaxPrice) {
+                console.log('[Auto-Buy] CO2 Intelligent: Price $' + co2Price + '/t > max $' + settings.co2IntelligentMaxPrice + '/t - skipping');
+                return false;
+            }
+
+            var readyVesselsInt = await getVesselsReadyToDepart();
+            if (readyVesselsInt.length === 0) {
+                console.log('[Auto-Buy] CO2 Intelligent: No vessels ready to depart - skipping');
+                return false;
+            }
+
+            var totalCO2NeededInt = await calculateTotalCO2Needed();
+            var shortfallInt = Math.ceil(totalCO2NeededInt - bunker.co2);
+
+            if (shortfallInt > 0) {
+                amountToBuy = Math.min(shortfallInt, Math.floor(co2Space), maxAffordable);
+                isIntelligentBuy = true;
+                reason = 'Intelligent: Price $' + co2Price + '/t > threshold but ' + readyVesselsInt.length + ' vessels need ' + totalCO2NeededInt.toFixed(1) + 't, bunker has ' + bunker.co2.toFixed(1) + 't (shortfall: ' + shortfallInt + 't)';
+            } else {
+                console.log('[Auto-Buy] CO2 Intelligent: No shortfall, vessels need ' + totalCO2NeededInt.toFixed(1) + 't, bunker has ' + bunker.co2.toFixed(1) + 't - skipping');
+                return false;
+            }
+
+        // ========== BASIC MODE ONLY: Price above threshold ==========
+        } else {
+            console.log('[Auto-Buy] CO2: Price $' + co2Price + '/t > threshold $' + settings.co2PriceThreshold + '/t and emergency/intelligent disabled - skipping');
+            return false;
         }
 
-        if (amountToBuy > 0) {
-            console.log('[Auto-Buy] CO2: ' + reason + ', buying ' + amountToBuy.toFixed(0) + 't @ $' + co2Price);
-            var result = await purchaseCO2API(amountToBuy, co2Price);
-            return result.success;
+        if (amountToBuy <= 0) {
+            console.log('[Auto-Buy] CO2: Cannot buy - insufficient funds or space');
+            return false;
         }
 
-        return false;
+        console.log('[Auto-Buy] CO2: ' + reason + ', buying ' + amountToBuy.toFixed(0) + 't @ $' + co2Price);
+        var result = await purchaseCO2API(amountToBuy, co2Price);
+        return result.success;
     }
 
     // ============================================
@@ -720,8 +870,8 @@
         }
 
         // Depart via API
-        var speed = vessel.route_speed || vessel.max_speed;
-        var result = await departVesselAPI(vessel.id, speed, 0);
+        var departSpeed = vessel.route_speed || vessel.max_speed;
+        var result = await departVesselAPI(vessel.id, departSpeed, 0);
 
         if (result.success) {
             console.log('[Auto-Depart] Departed: ' + vessel.name + ' (' + vessel.route_origin + ' -> ' + vessel.route_destination + ') - Income: $' + result.income);
@@ -1444,7 +1594,7 @@
     }
 
     function init() {
-        console.log('[Auto-Buy] Initializing v8.2...');
+        console.log('[Auto-Buy] Initializing v9.0...');
 
         // Request notification permission early
         requestNotificationPermission();
