@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ShippingManager - Bunker Price Display
 // @namespace    http://tampermonkey.net/
-// @version      2.1
-// @description  Shows current fuel and CO2 bunker prices - Desktop and Mobile
+// @version      3.0
+// @description  Shows current fuel and CO2 bunker prices with fill levels - Desktop and Mobile
 // @author       https://github.com/justonlyforyou/
 // @order        22
 // @match        https://shippingmanager.cc/*
@@ -19,7 +19,8 @@
 
     let fuelPriceElement = null;
     let co2PriceElement = null;
-    let mobileRow = null;
+    let fuelFillElement = null;
+    let co2FillElement = null;
 
     function findCurrentPrice(prices) {
         const now = new Date();
@@ -46,21 +47,82 @@
         return '#4ade80';
     }
 
+    function getFuelFillColor(percent) {
+        // Game uses 30% threshold for "low fuel" warning
+        if (percent <= 30) return '#ef4444';  // red
+        return '#4ade80';  // green
+    }
+
+    function getCO2FillColor(percent) {
+        // Game: positive = green, zero/negative = red
+        if (percent <= 0) return '#ef4444';  // red
+        return '#4ade80';  // green
+    }
+
+    function getPinia() {
+        var app = document.getElementById('app');
+        if (!app || !app.__vue_app__) return null;
+        return app.__vue_app__.config.globalProperties.$pinia;
+    }
+
+    function getUserStore() {
+        try {
+            var pinia = getPinia();
+            if (!pinia || !pinia._s) return null;
+            return pinia._s.get('user');
+        } catch (err) { // eslint-disable-line no-unused-vars
+            return null;
+        }
+    }
+
+    function getBunkerFillLevels() {
+        var userStore = getUserStore();
+        if (!userStore || !userStore.user || !userStore.settings) return null;
+
+        var fuel = userStore.user.fuel;
+        var co2 = userStore.user.co2;
+        var maxFuel = userStore.settings.max_fuel;
+        var maxCO2 = userStore.settings.max_co2;
+
+        if (!maxFuel || !maxCO2) return null;
+
+        return {
+            fuelPercent: Math.round((fuel / maxFuel) * 100),
+            co2Percent: Math.round((co2 / maxCO2) * 100)
+        };
+    }
+
     function insertDesktop() {
         var chartElement = document.querySelector('.content.chart.cursor-pointer');
         if (chartElement && !fuelPriceElement) {
+            // Fill percentage LEFT of icon
+            fuelFillElement = document.createElement('span');
+            fuelFillElement.id = 'bunker-fuel-fill';
+            fuelFillElement.style.cssText = 'margin-right:-5px !important;font-weight:bold !important;font-size:13px !important;';
+            fuelFillElement.textContent = '...';
+            chartElement.parentNode.insertBefore(fuelFillElement, chartElement);
+
+            // Price RIGHT of icon
             fuelPriceElement = document.createElement('span');
             fuelPriceElement.id = 'bunker-fuel-price';
-            fuelPriceElement.style.cssText = 'margin-left:8px;font-weight:bold;font-size:13px;';
+            fuelPriceElement.style.cssText = 'margin-left:-5px !important;font-weight:bold !important;font-size:13px !important;';
             fuelPriceElement.textContent = '...';
             chartElement.parentNode.insertBefore(fuelPriceElement, chartElement.nextSibling);
         }
 
         var ledElement = document.querySelector('.content.led.cursor-pointer');
         if (ledElement && !co2PriceElement) {
+            // Fill percentage LEFT of icon
+            co2FillElement = document.createElement('span');
+            co2FillElement.id = 'bunker-co2-fill';
+            co2FillElement.style.cssText = 'margin-right:-5px !important;font-weight:bold !important;font-size:13px !important;';
+            co2FillElement.textContent = '...';
+            ledElement.parentNode.insertBefore(co2FillElement, ledElement);
+
+            // Price RIGHT of icon
             co2PriceElement = document.createElement('span');
             co2PriceElement.id = 'bunker-co2-price';
-            co2PriceElement.style.cssText = 'margin-left:8px;font-weight:bold;font-size:13px;';
+            co2PriceElement.style.cssText = 'margin-left:-5px !important;font-weight:bold !important;font-size:13px !important;';
             co2PriceElement.textContent = '...';
             ledElement.parentNode.insertBefore(co2PriceElement, ledElement.nextSibling);
         }
@@ -75,7 +137,7 @@
 
         var row = document.createElement('div');
         row.id = 'rebel-mobile-row';
-        row.style.cssText = 'position:fixed;top:0;left:0;right:0;display:flex;justify-content:center;align-items:center;gap:10px;background:#1a1a2e;padding:4px 6px;font-size:14px;z-index:9999;';
+        row.style.cssText = 'position:fixed !important;top:0 !important;left:0 !important;right:0 !important;display:flex !important;justify-content:center !important;align-items:center !important;gap:10px !important;background:#1a1a2e !important;padding:4px 6px !important;font-size:14px !important;z-index:9999 !important;';
 
         document.body.appendChild(row);
 
@@ -94,33 +156,44 @@
         if (document.getElementById('bunker-fuel-mobile')) {
             fuelPriceElement = document.getElementById('bunker-fuel-mobile');
             co2PriceElement = document.getElementById('bunker-co2-mobile');
-            mobileRow = row;
+            fuelFillElement = document.getElementById('bunker-fuel-fill-mobile');
+            co2FillElement = document.getElementById('bunker-co2-fill-mobile');
             return true;
         }
 
-        mobileRow = row;
-
+        // Fuel: Fill% | Label | Price
         var fuelBox = document.createElement('div');
-        fuelBox.style.cssText = 'display:flex;align-items:center;gap:5px;';
+        fuelBox.style.cssText = 'display:flex !important;align-items:center !important;gap:5px !important;';
+        fuelFillElement = document.createElement('span');
+        fuelFillElement.id = 'bunker-fuel-fill-mobile';
+        fuelFillElement.style.cssText = 'font-weight:bold !important;';
+        fuelFillElement.textContent = '...';
+        fuelBox.appendChild(fuelFillElement);
         var fuelLabel = document.createElement('span');
-        fuelLabel.style.color = '#aaa';
+        fuelLabel.style.cssText = 'color:#aaa !important;';
         fuelLabel.textContent = 'Fuel:';
         fuelBox.appendChild(fuelLabel);
         fuelPriceElement = document.createElement('span');
         fuelPriceElement.id = 'bunker-fuel-mobile';
-        fuelPriceElement.style.fontWeight = 'bold';
+        fuelPriceElement.style.cssText = 'font-weight:bold !important;';
         fuelPriceElement.textContent = '...';
         fuelBox.appendChild(fuelPriceElement);
 
+        // CO2: Fill% | Label | Price
         var co2Box = document.createElement('div');
-        co2Box.style.cssText = 'display:flex;align-items:center;gap:5px;';
+        co2Box.style.cssText = 'display:flex !important;align-items:center !important;gap:5px !important;';
+        co2FillElement = document.createElement('span');
+        co2FillElement.id = 'bunker-co2-fill-mobile';
+        co2FillElement.style.cssText = 'font-weight:bold !important;';
+        co2FillElement.textContent = '...';
+        co2Box.appendChild(co2FillElement);
         var co2Label = document.createElement('span');
-        co2Label.style.color = '#aaa';
+        co2Label.style.cssText = 'color:#aaa !important;';
         co2Label.textContent = 'CO2:';
         co2Box.appendChild(co2Label);
         co2PriceElement = document.createElement('span');
         co2PriceElement.id = 'bunker-co2-mobile';
-        co2PriceElement.style.fontWeight = 'bold';
+        co2PriceElement.style.cssText = 'font-weight:bold !important;';
         co2PriceElement.textContent = '...';
         co2Box.appendChild(co2PriceElement);
 
@@ -167,6 +240,7 @@
                 if (!insertPriceDisplays()) return;
             }
 
+            // Update prices
             if (fuelPriceElement && fuelPrice !== undefined) {
                 fuelPriceElement.textContent = '$' + fuelPrice + '/t';
                 fuelPriceElement.style.color = getFuelColor(fuelPrice);
@@ -175,6 +249,19 @@
             if (co2PriceElement && co2Price !== undefined) {
                 co2PriceElement.textContent = '$' + co2Price + '/t';
                 co2PriceElement.style.color = getCO2Color(co2Price);
+            }
+
+            // Update fill levels from Pinia
+            var fillLevels = getBunkerFillLevels();
+            if (fillLevels) {
+                if (fuelFillElement) {
+                    fuelFillElement.textContent = fillLevels.fuelPercent + '%';
+                    fuelFillElement.style.color = getFuelFillColor(fillLevels.fuelPercent);
+                }
+                if (co2FillElement) {
+                    co2FillElement.textContent = fillLevels.co2Percent + '%';
+                    co2FillElement.style.color = getCO2FillColor(fillLevels.co2Percent);
+                }
             }
         } catch (err) {
             console.error("[BunkerPrice] Error:", err);
