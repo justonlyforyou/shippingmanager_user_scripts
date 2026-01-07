@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Auto Bunker & Depart
 // @namespace    http://tampermonkey.net/
-// @version      9.0
+// @version      10.0
 // @description  Auto-buy fuel/CO2 and auto-depart vessels - works in background mode via direct API
 // @author       https://github.com/justonlyforyou/
 // @order        20
@@ -12,6 +12,7 @@
 // @background-job-required true
 // ==/UserScript==
 
+/* globals CustomEvent */
 (function() {
     'use strict';
 
@@ -21,20 +22,27 @@
     const API_BASE = 'https://shippingmanager.cc/api';
 
     const DEFAULT_SETTINGS = {
-        fuelMode: 'off',
+        // Fuel settings
+        fuelMode: 'off',  // 'off', 'basic', 'intelligent'
         fuelPriceThreshold: 500,
         fuelMinCash: 1000000,
-        fuelIntelligentMaxPrice: 500,
-        fuelEmergencyBelow: 500,
-        fuelEmergencyShips: 5,
-        fuelEmergencyMaxPrice: 600,
-        co2Mode: 'off',
+        // Fuel Intelligent mode settings
+        fuelIntelligentMaxPrice: 600,
+        fuelIntelligentBelowEnabled: false,
+        fuelIntelligentBelow: 500,
+        fuelIntelligentShipsEnabled: false,
+        fuelIntelligentShips: 5,
+        // CO2 settings
+        co2Mode: 'off',  // 'off', 'basic', 'intelligent'
         co2PriceThreshold: 10,
         co2MinCash: 1000000,
-        co2IntelligentMaxPrice: 10,
-        co2EmergencyBelow: 500,
-        co2EmergencyShips: 5,
-        co2EmergencyMaxPrice: 12,
+        // CO2 Intelligent mode settings
+        co2IntelligentMaxPrice: 12,
+        co2IntelligentBelowEnabled: false,
+        co2IntelligentBelow: 500,
+        co2IntelligentShipsEnabled: false,
+        co2IntelligentShips: 5,
+        // Auto-Depart
         autoDepartEnabled: false
     };
 
@@ -46,7 +54,7 @@
         return !document.getElementById('app') || !document.querySelector('.messaging');
     }
 
-    console.log('[Auto-Buy] v9.0 - Android:', isAndroidApp);
+    console.log('[Auto-Buy] v10.0 - Android:', isAndroidApp);
 
     // ============================================
     // SETTINGS STORAGE
@@ -346,7 +354,7 @@
             var pinia = getPinia();
             if (!pinia || !pinia._s) return null;
             return pinia._s.get('user');
-        } catch (e) {
+        } catch (err) { // eslint-disable-line no-unused-vars
             return null;
         }
     }
@@ -356,7 +364,7 @@
             var pinia = getPinia();
             if (!pinia || !pinia._s) return null;
             return pinia._s.get('vessel');
-        } catch (e) {
+        } catch (err) { // eslint-disable-line no-unused-vars
             return null;
         }
     }
@@ -366,7 +374,7 @@
             var pinia = getPinia();
             if (!pinia || !pinia._s) return null;
             return pinia._s.get('modal');
-        } catch (e) {
+        } catch (err) { // eslint-disable-line no-unused-vars
             return null;
         }
     }
@@ -376,7 +384,7 @@
             var pinia = getPinia();
             if (!pinia || !pinia._s) return null;
             return pinia._s.get('toast');
-        } catch (e) {
+        } catch (err) { // eslint-disable-line no-unused-vars
             return null;
         }
     }
@@ -461,7 +469,7 @@
     /**
      * Show system notification via Web Notification API
      */
-    function showSystemNotification(message, type) {
+    function showSystemNotification(message, _type) {
         if (typeof Notification === 'undefined') {
             console.log('[Auto-Buy] Notification API not available');
             return;
@@ -481,14 +489,15 @@
         var tag = 'autobuy-' + Date.now();
 
         try {
-            var n = new Notification('Auto Bunker & Depart', {
+            // Create notification (variable unused but instantiation triggers display)
+            new Notification('Auto Bunker & Depart', {
                 body: message,
                 tag: tag,
                 requireInteraction: false
             });
             console.log('[Auto-Buy] System notification created');
-        } catch (e) {
-            console.log('[Auto-Buy] System notification failed:', e.message);
+        } catch (err) { // eslint-disable-line no-unused-vars
+            console.log('[Auto-Buy] System notification failed');
         }
     }
 
@@ -593,20 +602,6 @@
         return ready;
     }
 
-    async function getVesselsAtPortCount() {
-        var vesselStore = getVesselStore();
-        if (vesselStore && vesselStore.userVessels) {
-            return vesselStore.userVessels.filter(function(v) {
-                return v.status === 'port';
-            }).length;
-        }
-
-        var vessels = await fetchVesselsAPI();
-        return vessels.filter(function(v) {
-            return v.status === 'port';
-        }).length;
-    }
-
     async function calculateTotalFuelNeeded() {
         var vessels = await getVesselsReadyToDepart();
         var totalFuel = 0;
@@ -625,26 +620,16 @@
         return totalFuel / 1000;
     }
 
-    async function calculateTotalCO2Needed() {
-        var vessels = await getVesselsReadyToDepart();
-        var totalCO2 = 0;
-        for (var i = 0; i < vessels.length; i++) {
-            var vessel = vessels[i];
-            var distance = vessel.route_distance;
-            if (!distance || distance <= 0) continue;
-
-            var co2Needed = calculateCO2Consumption(vessel, distance);
-            totalCO2 += co2Needed || 0;
-        }
-        return totalCO2;
-    }
-
     // ============================================
     // AUTO-REBUY LOGIC (matching copilot - Barrel Boss / Atmosphere Broker)
     // Mode Priority:
-    // 1. BASIC: price <= threshold -> fill bunker completely (HIGHEST)
-    // 2. EMERGENCY: price > threshold BUT bunker low + ships waiting -> fill bunker
-    // 3. INTELLIGENT: price > threshold BUT vessels need fuel -> buy SHORTFALL only
+    // 1. NORMAL: price <= threshold -> fill bunker completely (HIGHEST)
+    // 2. INTELLIGENT: price <= maxPrice AND optional conditions met -> buy SHORTFALL only
+    //
+    // Intelligent Mode optional conditions (all ENABLED conditions must be met):
+    // - Max price (always checked)
+    // - Bunker below threshold (optional - fuelIntelligentBelowEnabled)
+    // - Min ships at port (optional - fuelIntelligentShipsEnabled)
     // ============================================
     async function autoRebuyFuel(bunker, prices, settings) {
         if (settings.fuelMode === 'off') return false;
@@ -657,82 +642,87 @@
         var maxAffordable = Math.floor(availableCash / fuelPrice);
         var amountToBuy = 0;
         var reason = '';
-        var isEmergencyBuy = false;
-        var isIntelligentBuy = false;
 
-        // ========== BASIC MODE: Price below threshold - fill bunker (HIGHEST PRIORITY) ==========
+        // ========== NORMAL MODE: Price below threshold - fill bunker (HIGHEST PRIORITY) ==========
         if (fuelPrice <= settings.fuelPriceThreshold) {
             if (fuelSpace < 0.5) {
                 console.log('[Auto-Buy] Fuel: Bunker full');
                 return false;
             }
             amountToBuy = Math.min(Math.ceil(fuelSpace), maxAffordable);
-            reason = 'Basic: price $' + fuelPrice + '/t <= threshold $' + settings.fuelPriceThreshold + '/t - filling bunker';
+            reason = 'Normal: price $' + fuelPrice + '/t <= threshold $' + settings.fuelPriceThreshold + '/t - filling bunker';
 
-        // ========== EMERGENCY MODE: Price above threshold but critical situation ==========
-        } else if (settings.fuelMode === 'emergency') {
-            if (fuelPrice > settings.fuelEmergencyMaxPrice) {
-                console.log('[Auto-Buy] Fuel Emergency: Price $' + fuelPrice + '/t > max $' + settings.fuelEmergencyMaxPrice + '/t - skipping');
-                // Fall through to check Intelligent Mode if enabled
-            } else if (bunker.fuel < settings.fuelEmergencyBelow) {
-                var shipsAtPort = await getVesselsAtPortCount();
-
-                if (shipsAtPort >= settings.fuelEmergencyShips) {
-                    if (fuelSpace < 0.5) {
-                        console.log('[Auto-Buy] Fuel Emergency: Bunker full');
-                        return false;
-                    }
-                    isEmergencyBuy = true;
-                    amountToBuy = Math.min(Math.ceil(fuelSpace), maxAffordable);
-                    reason = 'EMERGENCY: Bunker=' + bunker.fuel.toFixed(1) + 't < ' + settings.fuelEmergencyBelow + 't, ' + shipsAtPort + ' ships at port, price $' + fuelPrice + '/t <= max $' + settings.fuelEmergencyMaxPrice + '/t';
-                }
-            }
-
-            // If Emergency didn't trigger, check Intelligent Mode
-            if (!isEmergencyBuy && settings.fuelIntelligentMaxPrice) {
-                if (fuelPrice <= settings.fuelIntelligentMaxPrice) {
-                    var readyVessels = await getVesselsReadyToDepart();
-                    if (readyVessels.length > 0) {
-                        var totalFuelNeeded = await calculateTotalFuelNeeded();
-                        var shortfall = Math.ceil(totalFuelNeeded - bunker.fuel);
-
-                        if (shortfall > 0) {
-                            amountToBuy = Math.min(shortfall, Math.floor(fuelSpace), maxAffordable);
-                            isIntelligentBuy = true;
-                            reason = 'Intelligent: Price $' + fuelPrice + '/t > threshold but ' + readyVessels.length + ' vessels need ' + totalFuelNeeded.toFixed(1) + 't, bunker has ' + bunker.fuel.toFixed(1) + 't (shortfall: ' + shortfall + 't)';
-                        }
-                    }
-                }
-            }
-
-        // ========== INTELLIGENT MODE ONLY (Emergency disabled) ==========
+        // ========== INTELLIGENT MODE: Buy shortfall only with optional conditions ==========
         } else if (settings.fuelMode === 'intelligent') {
+            // Check max price condition (always required)
             if (fuelPrice > settings.fuelIntelligentMaxPrice) {
                 console.log('[Auto-Buy] Fuel Intelligent: Price $' + fuelPrice + '/t > max $' + settings.fuelIntelligentMaxPrice + '/t - skipping');
                 return false;
             }
 
-            var readyVesselsInt = await getVesselsReadyToDepart();
-            if (readyVesselsInt.length === 0) {
+            // Check optional "bunker below" condition
+            if (settings.fuelIntelligentBelowEnabled) {
+                if (bunker.fuel >= settings.fuelIntelligentBelow) {
+                    console.log('[Auto-Buy] Fuel Intelligent: Bunker ' + bunker.fuel.toFixed(1) + 't >= threshold ' + settings.fuelIntelligentBelow + 't - skipping');
+                    return false;
+                }
+                console.log('[Auto-Buy] Fuel Intelligent: Bunker ' + bunker.fuel.toFixed(1) + 't < threshold ' + settings.fuelIntelligentBelow + 't - condition met');
+            }
+
+            // Get vessels for ships check and fuel calculation
+            var vessels = await fetchVesselsAPI();
+            if (!vessels) {
+                console.log('[Auto-Buy] Fuel Intelligent: Could not fetch vessels - skipping');
+                return false;
+            }
+
+            // Check optional "min ships at port" condition
+            if (settings.fuelIntelligentShipsEnabled) {
+                var shipsAtPort = vessels.filter(function(v) { return v.status === 'port'; }).length;
+                if (shipsAtPort < settings.fuelIntelligentShips) {
+                    console.log('[Auto-Buy] Fuel Intelligent: Only ' + shipsAtPort + ' ships at port < required ' + settings.fuelIntelligentShips + ' - skipping');
+                    return false;
+                }
+                console.log('[Auto-Buy] Fuel Intelligent: ' + shipsAtPort + ' ships at port >= required ' + settings.fuelIntelligentShips + ' - condition met');
+            }
+
+            // Calculate fuel shortfall for departing vessels
+            var readyVessels = vessels.filter(function(v) {
+                return v.status === 'port' && !v.is_parked && v.route_destination;
+            });
+
+            if (readyVessels.length === 0) {
                 console.log('[Auto-Buy] Fuel Intelligent: No vessels ready to depart - skipping');
                 return false;
             }
 
-            var totalFuelNeededInt = await calculateTotalFuelNeeded();
-            var shortfallInt = Math.ceil(totalFuelNeededInt - bunker.fuel);
+            var totalFuelNeeded = 0;
+            for (var i = 0; i < readyVessels.length; i++) {
+                var vessel = readyVessels[i];
+                var distance = vessel.route_distance;
+                if (!distance || distance <= 0) continue;
 
-            if (shortfallInt > 0) {
-                amountToBuy = Math.min(shortfallInt, Math.floor(fuelSpace), maxAffordable);
-                isIntelligentBuy = true;
-                reason = 'Intelligent: Price $' + fuelPrice + '/t > threshold but ' + readyVesselsInt.length + ' vessels need ' + totalFuelNeededInt.toFixed(1) + 't, bunker has ' + bunker.fuel.toFixed(1) + 't (shortfall: ' + shortfallInt + 't)';
+                var speed = vessel.route_speed || vessel.max_speed;
+                var fuelNeeded = vessel.route_fuel_required || vessel.fuel_required;
+                if (!fuelNeeded) {
+                    fuelNeeded = calculateFuelConsumption(vessel, distance, speed) * 1000;
+                }
+                totalFuelNeeded += (fuelNeeded || 0) / 1000;
+            }
+
+            var shortfall = Math.ceil(totalFuelNeeded - bunker.fuel);
+
+            if (shortfall > 0) {
+                amountToBuy = Math.min(shortfall, Math.floor(fuelSpace), maxAffordable);
+                reason = 'Intelligent: ' + readyVessels.length + ' vessels need ' + totalFuelNeeded.toFixed(1) + 't, bunker has ' + bunker.fuel.toFixed(1) + 't (shortfall: ' + shortfall + 't)';
             } else {
-                console.log('[Auto-Buy] Fuel Intelligent: No shortfall, vessels need ' + totalFuelNeededInt.toFixed(1) + 't, bunker has ' + bunker.fuel.toFixed(1) + 't - skipping');
+                console.log('[Auto-Buy] Fuel Intelligent: No shortfall, ' + readyVessels.length + ' vessels need ' + totalFuelNeeded.toFixed(1) + 't, bunker has ' + bunker.fuel.toFixed(1) + 't - skipping');
                 return false;
             }
 
         // ========== BASIC MODE ONLY: Price above threshold ==========
         } else {
-            console.log('[Auto-Buy] Fuel: Price $' + fuelPrice + '/t > threshold $' + settings.fuelPriceThreshold + '/t and emergency/intelligent disabled - skipping');
+            console.log('[Auto-Buy] Fuel: Price $' + fuelPrice + '/t > threshold $' + settings.fuelPriceThreshold + '/t and intelligent disabled - skipping');
             return false;
         }
 
@@ -757,81 +747,83 @@
         var maxAffordable = Math.floor(availableCash / co2Price);
         var amountToBuy = 0;
         var reason = '';
-        var isEmergencyBuy = false;
-        var isIntelligentBuy = false;
 
-        // ========== BASIC MODE: Price below threshold - fill bunker (HIGHEST PRIORITY) ==========
+        // ========== NORMAL MODE: Price below threshold - fill bunker (HIGHEST PRIORITY) ==========
         if (co2Price <= settings.co2PriceThreshold) {
             if (co2Space < 0.5) {
                 console.log('[Auto-Buy] CO2: Bunker full');
                 return false;
             }
             amountToBuy = Math.min(Math.ceil(co2Space), maxAffordable);
-            reason = 'Basic: price $' + co2Price + '/t <= threshold $' + settings.co2PriceThreshold + '/t - filling bunker';
+            reason = 'Normal: price $' + co2Price + '/t <= threshold $' + settings.co2PriceThreshold + '/t - filling bunker';
 
-        // ========== EMERGENCY MODE: Price above threshold but critical situation ==========
-        } else if (settings.co2Mode === 'emergency') {
-            if (co2Price > settings.co2EmergencyMaxPrice) {
-                console.log('[Auto-Buy] CO2 Emergency: Price $' + co2Price + '/t > max $' + settings.co2EmergencyMaxPrice + '/t - skipping');
-            } else if (bunker.co2 < settings.co2EmergencyBelow) {
-                var shipsAtPort = await getVesselsAtPortCount();
-
-                if (shipsAtPort >= settings.co2EmergencyShips) {
-                    if (co2Space < 0.5) {
-                        console.log('[Auto-Buy] CO2 Emergency: Bunker full');
-                        return false;
-                    }
-                    isEmergencyBuy = true;
-                    amountToBuy = Math.min(Math.ceil(co2Space), maxAffordable);
-                    reason = 'EMERGENCY: Bunker=' + bunker.co2.toFixed(1) + 't < ' + settings.co2EmergencyBelow + 't, ' + shipsAtPort + ' ships at port, price $' + co2Price + '/t <= max $' + settings.co2EmergencyMaxPrice + '/t';
-                }
-            }
-
-            // If Emergency didn't trigger, check Intelligent Mode
-            if (!isEmergencyBuy && settings.co2IntelligentMaxPrice) {
-                if (co2Price <= settings.co2IntelligentMaxPrice) {
-                    var readyVessels = await getVesselsReadyToDepart();
-                    if (readyVessels.length > 0) {
-                        var totalCO2Needed = await calculateTotalCO2Needed();
-                        var shortfall = Math.ceil(totalCO2Needed - bunker.co2);
-
-                        if (shortfall > 0) {
-                            amountToBuy = Math.min(shortfall, Math.floor(co2Space), maxAffordable);
-                            isIntelligentBuy = true;
-                            reason = 'Intelligent: Price $' + co2Price + '/t > threshold but ' + readyVessels.length + ' vessels need ' + totalCO2Needed.toFixed(1) + 't, bunker has ' + bunker.co2.toFixed(1) + 't (shortfall: ' + shortfall + 't)';
-                        }
-                    }
-                }
-            }
-
-        // ========== INTELLIGENT MODE ONLY (Emergency disabled) ==========
+        // ========== INTELLIGENT MODE: Buy shortfall only with optional conditions ==========
         } else if (settings.co2Mode === 'intelligent') {
+            // Check max price condition (always required)
             if (co2Price > settings.co2IntelligentMaxPrice) {
                 console.log('[Auto-Buy] CO2 Intelligent: Price $' + co2Price + '/t > max $' + settings.co2IntelligentMaxPrice + '/t - skipping');
                 return false;
             }
 
-            var readyVesselsInt = await getVesselsReadyToDepart();
-            if (readyVesselsInt.length === 0) {
+            // Check optional "bunker below" condition
+            if (settings.co2IntelligentBelowEnabled) {
+                if (bunker.co2 >= settings.co2IntelligentBelow) {
+                    console.log('[Auto-Buy] CO2 Intelligent: Bunker ' + bunker.co2.toFixed(1) + 't >= threshold ' + settings.co2IntelligentBelow + 't - skipping');
+                    return false;
+                }
+                console.log('[Auto-Buy] CO2 Intelligent: Bunker ' + bunker.co2.toFixed(1) + 't < threshold ' + settings.co2IntelligentBelow + 't - condition met');
+            }
+
+            // Get vessels for ships check and CO2 calculation
+            var vessels = await fetchVesselsAPI();
+            if (!vessels) {
+                console.log('[Auto-Buy] CO2 Intelligent: Could not fetch vessels - skipping');
+                return false;
+            }
+
+            // Check optional "min ships at port" condition
+            if (settings.co2IntelligentShipsEnabled) {
+                var shipsAtPort = vessels.filter(function(v) { return v.status === 'port'; }).length;
+                if (shipsAtPort < settings.co2IntelligentShips) {
+                    console.log('[Auto-Buy] CO2 Intelligent: Only ' + shipsAtPort + ' ships at port < required ' + settings.co2IntelligentShips + ' - skipping');
+                    return false;
+                }
+                console.log('[Auto-Buy] CO2 Intelligent: ' + shipsAtPort + ' ships at port >= required ' + settings.co2IntelligentShips + ' - condition met');
+            }
+
+            // Calculate CO2 shortfall for departing vessels
+            var readyVessels = vessels.filter(function(v) {
+                return v.status === 'port' && !v.is_parked && v.route_destination;
+            });
+
+            if (readyVessels.length === 0) {
                 console.log('[Auto-Buy] CO2 Intelligent: No vessels ready to depart - skipping');
                 return false;
             }
 
-            var totalCO2NeededInt = await calculateTotalCO2Needed();
-            var shortfallInt = Math.ceil(totalCO2NeededInt - bunker.co2);
+            var totalCO2Needed = 0;
+            for (var i = 0; i < readyVessels.length; i++) {
+                var vessel = readyVessels[i];
+                var distance = vessel.route_distance;
+                if (!distance || distance <= 0) continue;
 
-            if (shortfallInt > 0) {
-                amountToBuy = Math.min(shortfallInt, Math.floor(co2Space), maxAffordable);
-                isIntelligentBuy = true;
-                reason = 'Intelligent: Price $' + co2Price + '/t > threshold but ' + readyVesselsInt.length + ' vessels need ' + totalCO2NeededInt.toFixed(1) + 't, bunker has ' + bunker.co2.toFixed(1) + 't (shortfall: ' + shortfallInt + 't)';
+                var co2Needed = calculateCO2Consumption(vessel, distance);
+                totalCO2Needed += co2Needed || 0;
+            }
+
+            var shortfall = Math.ceil(totalCO2Needed - bunker.co2);
+
+            if (shortfall > 0) {
+                amountToBuy = Math.min(shortfall, Math.floor(co2Space), maxAffordable);
+                reason = 'Intelligent: ' + readyVessels.length + ' vessels need ' + totalCO2Needed.toFixed(1) + 't, bunker has ' + bunker.co2.toFixed(1) + 't (shortfall: ' + shortfall + 't)';
             } else {
-                console.log('[Auto-Buy] CO2 Intelligent: No shortfall, vessels need ' + totalCO2NeededInt.toFixed(1) + 't, bunker has ' + bunker.co2.toFixed(1) + 't - skipping');
+                console.log('[Auto-Buy] CO2 Intelligent: No shortfall, ' + readyVessels.length + ' vessels need ' + totalCO2Needed.toFixed(1) + 't, bunker has ' + bunker.co2.toFixed(1) + 't - skipping');
                 return false;
             }
 
         // ========== BASIC MODE ONLY: Price above threshold ==========
         } else {
-            console.log('[Auto-Buy] CO2: Price $' + co2Price + '/t > threshold $' + settings.co2PriceThreshold + '/t and emergency/intelligent disabled - skipping');
+            console.log('[Auto-Buy] CO2: Price $' + co2Price + '/t > threshold $' + settings.co2PriceThreshold + '/t and intelligent disabled - skipping');
             return false;
         }
 
@@ -1248,39 +1240,39 @@
             return createFixedMenu();
         }
 
-        var container = document.createElement('div');
-        container.id = 'rebelship-menu';
-        container.style.cssText = 'position:relative;display:inline-block;vertical-align:middle;margin-right:10px;margin-left:auto;';
+        var desktopContainer = document.createElement('div');
+        desktopContainer.id = 'rebelship-menu';
+        desktopContainer.style.cssText = 'position:relative;display:inline-block;vertical-align:middle;margin-right:10px;margin-left:auto;';
 
-        var btn = document.createElement('button');
-        btn.id = 'rebelship-menu-btn';
-        btn.innerHTML = REBELSHIP_LOGO;
-        btn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:36px;height:36px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:white;border:none;border-radius:6px;cursor:pointer;box-shadow:0 2px 4px rgba(0,0,0,0.2);';
-        btn.title = 'RebelShip Menu';
+        var desktopBtn = document.createElement('button');
+        desktopBtn.id = 'rebelship-menu-btn';
+        desktopBtn.innerHTML = REBELSHIP_LOGO;
+        desktopBtn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:36px;height:36px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:white;border:none;border-radius:6px;cursor:pointer;box-shadow:0 2px 4px rgba(0,0,0,0.2);';
+        desktopBtn.title = 'RebelShip Menu';
 
-        var dropdown = document.createElement('div');
-        dropdown.className = 'rebelship-dropdown';
-        dropdown.style.cssText = 'display:none;position:absolute;top:100%;right:0;background:#1f2937;border:1px solid #374151;border-radius:4px;min-width:180px;z-index:99999;box-shadow:0 4px 12px rgba(0,0,0,0.3);margin-top:4px;';
+        var desktopDropdown = document.createElement('div');
+        desktopDropdown.className = 'rebelship-dropdown';
+        desktopDropdown.style.cssText = 'display:none;position:absolute;top:100%;right:0;background:#1f2937;border:1px solid #374151;border-radius:4px;min-width:180px;z-index:99999;box-shadow:0 4px 12px rgba(0,0,0,0.3);margin-top:4px;';
 
-        container.appendChild(btn);
-        container.appendChild(dropdown);
+        desktopContainer.appendChild(desktopBtn);
+        desktopContainer.appendChild(desktopDropdown);
 
-        btn.addEventListener('click', function(e) {
+        desktopBtn.addEventListener('click', function(e) {
             e.stopPropagation();
-            dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
+            desktopDropdown.style.display = desktopDropdown.style.display === 'block' ? 'none' : 'block';
         });
 
         document.addEventListener('click', function(e) {
-            if (!container.contains(e.target)) {
-                dropdown.style.display = 'none';
+            if (!desktopContainer.contains(e.target)) {
+                desktopDropdown.style.display = 'none';
             }
         });
 
         if (messagingIcon.parentNode) {
-            messagingIcon.parentNode.insertBefore(container, messagingIcon);
+            messagingIcon.parentNode.insertBefore(desktopContainer, messagingIcon);
         }
 
-        return dropdown;
+        return desktopDropdown;
     }
 
     function addMenuItem(label, onClick) {
@@ -1413,20 +1405,11 @@
                                 <div id="fuel-settings-container">\
                                     <div class="setting-row"><span class="setting-label">Price Threshold</span><input type="number" id="ab-fuel-threshold" value="' + settings.fuelPriceThreshold + '" min="1"></div>\
                                     <div class="setting-row"><span class="setting-label">Min Cash to Keep</span><input type="text" id="ab-fuel-mincash" class="cash-input" value="' + formatNumber(settings.fuelMinCash) + '"></div>\
-                                    <div class="setting-row" style="margin-top:8px"><span class="setting-label">Additional Mode</span>\
-                                        <select id="ab-fuel-addmode" class="mode-select">\
-                                            <option value="off" ' + (settings.fuelMode === 'basic' || settings.fuelMode === 'off' ? 'selected' : '') + '>OFF</option>\
-                                            <option value="emergency" ' + (settings.fuelMode === 'emergency' ? 'selected' : '') + '>Emergency</option>\
-                                            <option value="intelligent" ' + (settings.fuelMode === 'intelligent' ? 'selected' : '') + '>Intelligent</option>\
-                                        </select>\
-                                    </div>\
-                                    <div class="section" id="fuel-intelligent-section"><div class="section-title">+ Intelligent Settings</div>\
+                                    <div class="setting-row" style="margin-top:8px"><label class="checkbox-label"><input type="checkbox" id="ab-fuel-intel-enabled" ' + (settings.fuelMode === 'intelligent' ? 'checked' : '') + '><span>+ Intelligent Mode</span></label></div>\
+                                    <div class="section" id="fuel-intelligent-section"><div class="section-title">Intelligent Settings (buy shortfall only)</div>\
                                         <div class="setting-row"><span class="setting-label">Max Price</span><input type="number" id="ab-fuel-intel-max" value="' + settings.fuelIntelligentMaxPrice + '" min="1"></div>\
-                                    </div>\
-                                    <div class="section" id="fuel-emergency-section"><div class="section-title">+ Emergency Settings</div>\
-                                        <div class="setting-row"><span class="setting-label">Below (t)</span><input type="number" id="ab-fuel-emerg-below" value="' + settings.fuelEmergencyBelow + '" min="0"></div>\
-                                        <div class="setting-row"><span class="setting-label">Ships at Port</span><input type="number" id="ab-fuel-emerg-ships" value="' + settings.fuelEmergencyShips + '" min="1"></div>\
-                                        <div class="setting-row"><span class="setting-label">Max Price</span><input type="number" id="ab-fuel-emerg-max" value="' + settings.fuelEmergencyMaxPrice + '" min="1"></div>\
+                                        <div class="setting-row"><label class="checkbox-label"><input type="checkbox" id="ab-fuel-intel-below-enabled" ' + (settings.fuelIntelligentBelowEnabled ? 'checked' : '') + '><span>Only if bunker below</span></label><input type="number" id="ab-fuel-intel-below" value="' + settings.fuelIntelligentBelow + '" min="0" style="width:60px;margin-left:5px">t</div>\
+                                        <div class="setting-row"><label class="checkbox-label"><input type="checkbox" id="ab-fuel-intel-ships-enabled" ' + (settings.fuelIntelligentShipsEnabled ? 'checked' : '') + '><span>Only if ships at port</span></label><input type="number" id="ab-fuel-intel-ships" value="' + settings.fuelIntelligentShips + '" min="1" style="width:60px;margin-left:5px"></div>\
                                     </div>\
                                 </div>\
                             </div>\
@@ -1438,20 +1421,11 @@
                                 <div id="co2-settings-container">\
                                     <div class="setting-row"><span class="setting-label">Price Threshold</span><input type="number" id="ab-co2-threshold" value="' + settings.co2PriceThreshold + '" min="1"></div>\
                                     <div class="setting-row"><span class="setting-label">Min Cash to Keep</span><input type="text" id="ab-co2-mincash" class="cash-input" value="' + formatNumber(settings.co2MinCash) + '"></div>\
-                                    <div class="setting-row" style="margin-top:8px"><span class="setting-label">Additional Mode</span>\
-                                        <select id="ab-co2-addmode" class="mode-select">\
-                                            <option value="off" ' + (settings.co2Mode === 'basic' || settings.co2Mode === 'off' ? 'selected' : '') + '>OFF</option>\
-                                            <option value="emergency" ' + (settings.co2Mode === 'emergency' ? 'selected' : '') + '>Emergency</option>\
-                                            <option value="intelligent" ' + (settings.co2Mode === 'intelligent' ? 'selected' : '') + '>Intelligent</option>\
-                                        </select>\
-                                    </div>\
-                                    <div class="section" id="co2-intelligent-section"><div class="section-title">+ Intelligent Settings</div>\
+                                    <div class="setting-row" style="margin-top:8px"><label class="checkbox-label"><input type="checkbox" id="ab-co2-intel-enabled" ' + (settings.co2Mode === 'intelligent' ? 'checked' : '') + '><span>+ Intelligent Mode</span></label></div>\
+                                    <div class="section" id="co2-intelligent-section"><div class="section-title">Intelligent Settings (buy shortfall only)</div>\
                                         <div class="setting-row"><span class="setting-label">Max Price</span><input type="number" id="ab-co2-intel-max" value="' + settings.co2IntelligentMaxPrice + '" min="1"></div>\
-                                    </div>\
-                                    <div class="section" id="co2-emergency-section"><div class="section-title">+ Emergency Settings</div>\
-                                        <div class="setting-row"><span class="setting-label">Below (t)</span><input type="number" id="ab-co2-emerg-below" value="' + settings.co2EmergencyBelow + '" min="0"></div>\
-                                        <div class="setting-row"><span class="setting-label">Ships at Port</span><input type="number" id="ab-co2-emerg-ships" value="' + settings.co2EmergencyShips + '" min="1"></div>\
-                                        <div class="setting-row"><span class="setting-label">Max Price</span><input type="number" id="ab-co2-emerg-max" value="' + settings.co2EmergencyMaxPrice + '" min="1"></div>\
+                                        <div class="setting-row"><label class="checkbox-label"><input type="checkbox" id="ab-co2-intel-below-enabled" ' + (settings.co2IntelligentBelowEnabled ? 'checked' : '') + '><span>Only if bunker below</span></label><input type="number" id="ab-co2-intel-below" value="' + settings.co2IntelligentBelow + '" min="0" style="width:60px;margin-left:5px">t</div>\
+                                        <div class="setting-row"><label class="checkbox-label"><input type="checkbox" id="ab-co2-intel-ships-enabled" ' + (settings.co2IntelligentShipsEnabled ? 'checked' : '') + '><span>Only if ships at port</span></label><input type="number" id="ab-co2-intel-ships" value="' + settings.co2IntelligentShips + '" min="1" style="width:60px;margin-left:5px"></div>\
                                     </div>\
                                 </div>\
                             </div>\
@@ -1465,21 +1439,17 @@
                 var fuelContainer = document.getElementById('fuel-settings-container');
                 if (fuelContainer) fuelContainer.style.display = fuelEnabled && fuelEnabled.checked ? 'block' : 'none';
 
-                var fuelAddMode = document.getElementById('ab-fuel-addmode');
+                var fuelIntelEnabled = document.getElementById('ab-fuel-intel-enabled');
                 var fuelIntelligent = document.getElementById('fuel-intelligent-section');
-                var fuelEmergency = document.getElementById('fuel-emergency-section');
-                if (fuelIntelligent) fuelIntelligent.style.display = fuelAddMode && fuelAddMode.value === 'intelligent' ? 'block' : 'none';
-                if (fuelEmergency) fuelEmergency.style.display = fuelAddMode && fuelAddMode.value === 'emergency' ? 'block' : 'none';
+                if (fuelIntelligent) fuelIntelligent.style.display = fuelIntelEnabled && fuelIntelEnabled.checked ? 'block' : 'none';
 
                 var co2Enabled = document.getElementById('ab-co2-enabled');
                 var co2Container = document.getElementById('co2-settings-container');
                 if (co2Container) co2Container.style.display = co2Enabled && co2Enabled.checked ? 'block' : 'none';
 
-                var co2AddMode = document.getElementById('ab-co2-addmode');
+                var co2IntelEnabled = document.getElementById('ab-co2-intel-enabled');
                 var co2Intelligent = document.getElementById('co2-intelligent-section');
-                var co2Emergency = document.getElementById('co2-emergency-section');
-                if (co2Intelligent) co2Intelligent.style.display = co2AddMode && co2AddMode.value === 'intelligent' ? 'block' : 'none';
-                if (co2Emergency) co2Emergency.style.display = co2AddMode && co2AddMode.value === 'emergency' ? 'block' : 'none';
+                if (co2Intelligent) co2Intelligent.style.display = co2IntelEnabled && co2IntelEnabled.checked ? 'block' : 'none';
             }
 
             updateSectionVisibility();
@@ -1488,28 +1458,30 @@
                 updateSectionVisibility();
 
                 var fuelEnabled = document.getElementById('ab-fuel-enabled');
-                var fuelAddMode = document.getElementById('ab-fuel-addmode');
-                var fuelMode = fuelEnabled && fuelEnabled.checked ? (fuelAddMode && fuelAddMode.value !== 'off' ? fuelAddMode.value : 'basic') : 'off';
+                var fuelIntelEnabled = document.getElementById('ab-fuel-intel-enabled');
+                var fuelMode = fuelEnabled && fuelEnabled.checked ? (fuelIntelEnabled && fuelIntelEnabled.checked ? 'intelligent' : 'basic') : 'off';
 
                 var co2Enabled = document.getElementById('ab-co2-enabled');
-                var co2AddMode = document.getElementById('ab-co2-addmode');
-                var co2Mode = co2Enabled && co2Enabled.checked ? (co2AddMode && co2AddMode.value !== 'off' ? co2AddMode.value : 'basic') : 'off';
+                var co2IntelEnabled = document.getElementById('ab-co2-intel-enabled');
+                var co2Mode = co2Enabled && co2Enabled.checked ? (co2IntelEnabled && co2IntelEnabled.checked ? 'intelligent' : 'basic') : 'off';
 
                 var newSettings = {
                     fuelMode: fuelMode,
                     fuelPriceThreshold: parseInt(document.getElementById('ab-fuel-threshold').value) || DEFAULT_SETTINGS.fuelPriceThreshold,
                     fuelMinCash: parseFormattedNumber(document.getElementById('ab-fuel-mincash').value) || DEFAULT_SETTINGS.fuelMinCash,
                     fuelIntelligentMaxPrice: parseInt(document.getElementById('ab-fuel-intel-max').value) || DEFAULT_SETTINGS.fuelIntelligentMaxPrice,
-                    fuelEmergencyBelow: parseInt(document.getElementById('ab-fuel-emerg-below').value) || DEFAULT_SETTINGS.fuelEmergencyBelow,
-                    fuelEmergencyShips: parseInt(document.getElementById('ab-fuel-emerg-ships').value) || DEFAULT_SETTINGS.fuelEmergencyShips,
-                    fuelEmergencyMaxPrice: parseInt(document.getElementById('ab-fuel-emerg-max').value) || DEFAULT_SETTINGS.fuelEmergencyMaxPrice,
+                    fuelIntelligentBelowEnabled: document.getElementById('ab-fuel-intel-below-enabled') && document.getElementById('ab-fuel-intel-below-enabled').checked,
+                    fuelIntelligentBelow: parseInt(document.getElementById('ab-fuel-intel-below').value) || DEFAULT_SETTINGS.fuelIntelligentBelow,
+                    fuelIntelligentShipsEnabled: document.getElementById('ab-fuel-intel-ships-enabled') && document.getElementById('ab-fuel-intel-ships-enabled').checked,
+                    fuelIntelligentShips: parseInt(document.getElementById('ab-fuel-intel-ships').value) || DEFAULT_SETTINGS.fuelIntelligentShips,
                     co2Mode: co2Mode,
                     co2PriceThreshold: parseInt(document.getElementById('ab-co2-threshold').value) || DEFAULT_SETTINGS.co2PriceThreshold,
                     co2MinCash: parseFormattedNumber(document.getElementById('ab-co2-mincash').value) || DEFAULT_SETTINGS.co2MinCash,
                     co2IntelligentMaxPrice: parseInt(document.getElementById('ab-co2-intel-max').value) || DEFAULT_SETTINGS.co2IntelligentMaxPrice,
-                    co2EmergencyBelow: parseInt(document.getElementById('ab-co2-emerg-below').value) || DEFAULT_SETTINGS.co2EmergencyBelow,
-                    co2EmergencyShips: parseInt(document.getElementById('ab-co2-emerg-ships').value) || DEFAULT_SETTINGS.co2EmergencyShips,
-                    co2EmergencyMaxPrice: parseInt(document.getElementById('ab-co2-emerg-max').value) || DEFAULT_SETTINGS.co2EmergencyMaxPrice,
+                    co2IntelligentBelowEnabled: document.getElementById('ab-co2-intel-below-enabled') && document.getElementById('ab-co2-intel-below-enabled').checked,
+                    co2IntelligentBelow: parseInt(document.getElementById('ab-co2-intel-below').value) || DEFAULT_SETTINGS.co2IntelligentBelow,
+                    co2IntelligentShipsEnabled: document.getElementById('ab-co2-intel-ships-enabled') && document.getElementById('ab-co2-intel-ships-enabled').checked,
+                    co2IntelligentShips: parseInt(document.getElementById('ab-co2-intel-ships').value) || DEFAULT_SETTINGS.co2IntelligentShips,
                     autoDepartEnabled: document.getElementById('ab-auto-depart') && document.getElementById('ab-auto-depart').checked
                 };
 
@@ -1594,7 +1566,7 @@
     }
 
     function init() {
-        console.log('[Auto-Buy] Initializing v9.0...');
+        console.log('[Auto-Buy] Initializing v10.0...');
 
         // Request notification permission early
         requestNotificationPermission();
