@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Bunker Price Display
 // @namespace    http://tampermonkey.net/
-// @version      3.0
+// @version      3.1
 // @description  Shows current fuel and CO2 bunker prices with fill levels - Desktop and Mobile
 // @author       https://github.com/justonlyforyou/
 // @order        22
@@ -156,19 +156,13 @@
         if (document.getElementById('bunker-fuel-mobile')) {
             fuelPriceElement = document.getElementById('bunker-fuel-mobile');
             co2PriceElement = document.getElementById('bunker-co2-mobile');
-            fuelFillElement = document.getElementById('bunker-fuel-fill-mobile');
-            co2FillElement = document.getElementById('bunker-co2-fill-mobile');
             return true;
         }
 
-        // Fuel: Fill% | Label | Price
+        // Mobile: Only prices in top bar (no fill % here)
+        // Fuel: Label | Price
         var fuelBox = document.createElement('div');
         fuelBox.style.cssText = 'display:flex !important;align-items:center !important;gap:5px !important;';
-        fuelFillElement = document.createElement('span');
-        fuelFillElement.id = 'bunker-fuel-fill-mobile';
-        fuelFillElement.style.cssText = 'font-weight:bold !important;';
-        fuelFillElement.textContent = '...';
-        fuelBox.appendChild(fuelFillElement);
         var fuelLabel = document.createElement('span');
         fuelLabel.style.cssText = 'color:#aaa !important;';
         fuelLabel.textContent = 'Fuel:';
@@ -179,14 +173,9 @@
         fuelPriceElement.textContent = '...';
         fuelBox.appendChild(fuelPriceElement);
 
-        // CO2: Fill% | Label | Price
+        // CO2: Label | Price
         var co2Box = document.createElement('div');
         co2Box.style.cssText = 'display:flex !important;align-items:center !important;gap:5px !important;';
-        co2FillElement = document.createElement('span');
-        co2FillElement.id = 'bunker-co2-fill-mobile';
-        co2FillElement.style.cssText = 'font-weight:bold !important;';
-        co2FillElement.textContent = '...';
-        co2Box.appendChild(co2FillElement);
         var co2Label = document.createElement('span');
         co2Label.style.cssText = 'color:#aaa !important;';
         co2Label.textContent = 'CO2:';
@@ -200,7 +189,49 @@
         row.insertBefore(co2Box, row.firstChild);
         row.insertBefore(fuelBox, row.firstChild);
 
+        // Mobile: Overlay % text on bunker circles
+        insertMobileBunkerOverlays();
+
         return true;
+    }
+
+    // Mobile: Overlay percentage text inside the bunker circles
+    function insertMobileBunkerOverlays() {
+        // Find the bunker circle containers on mobile
+        var chartElement = document.querySelector('.content.chart');
+        var ledElement = document.querySelector('.content.led');
+
+        if (chartElement && !document.getElementById('bunker-fuel-overlay')) {
+            // Make parent relative for absolute positioning
+            chartElement.style.position = 'relative !important';
+
+            // Hide the fill bar inside
+            var fuelBar = chartElement.querySelector('.bar-inner, .fill, .progress');
+            if (fuelBar) fuelBar.style.display = 'none !important';
+
+            // Create overlay text
+            fuelFillElement = document.createElement('div');
+            fuelFillElement.id = 'bunker-fuel-overlay';
+            fuelFillElement.style.cssText = 'position:absolute !important;top:50% !important;left:50% !important;transform:translate(-50%,-50%) !important;font-weight:bold !important;font-size:10px !important;color:#fff !important;text-shadow:0 0 2px #000 !important;z-index:10 !important;pointer-events:none !important;';
+            fuelFillElement.textContent = '...';
+            chartElement.appendChild(fuelFillElement);
+        }
+
+        if (ledElement && !document.getElementById('bunker-co2-overlay')) {
+            // Make parent relative for absolute positioning
+            ledElement.style.position = 'relative !important';
+
+            // Hide the fill/led inside
+            var co2Led = ledElement.querySelector('.led, .fill, .progress');
+            if (co2Led) co2Led.style.display = 'none !important';
+
+            // Create overlay text
+            co2FillElement = document.createElement('div');
+            co2FillElement.id = 'bunker-co2-overlay';
+            co2FillElement.style.cssText = 'position:absolute !important;top:50% !important;left:50% !important;transform:translate(-50%,-50%) !important;font-weight:bold !important;font-size:10px !important;color:#fff !important;text-shadow:0 0 2px #000 !important;z-index:10 !important;pointer-events:none !important;';
+            co2FillElement.textContent = '...';
+            ledElement.appendChild(co2FillElement);
+        }
     }
 
     function insertPriceDisplays() {
@@ -254,6 +285,7 @@
             // Update fill levels from Pinia
             var fillLevels = getBunkerFillLevels();
             if (fillLevels) {
+                // Desktop: update fill elements
                 if (fuelFillElement) {
                     fuelFillElement.textContent = fillLevels.fuelPercent + '%';
                     fuelFillElement.style.color = getFuelFillColor(fillLevels.fuelPercent);
@@ -261,6 +293,27 @@
                 if (co2FillElement) {
                     co2FillElement.textContent = fillLevels.co2Percent + '%';
                     co2FillElement.style.color = getCO2FillColor(fillLevels.co2Percent);
+                }
+
+                // Mobile: update overlay elements (try to find them if not set)
+                if (isMobile) {
+                    var fuelOverlay = document.getElementById('bunker-fuel-overlay');
+                    var co2Overlay = document.getElementById('bunker-co2-overlay');
+
+                    if (!fuelOverlay || !co2Overlay) {
+                        insertMobileBunkerOverlays();
+                        fuelOverlay = document.getElementById('bunker-fuel-overlay');
+                        co2Overlay = document.getElementById('bunker-co2-overlay');
+                    }
+
+                    if (fuelOverlay) {
+                        fuelOverlay.textContent = fillLevels.fuelPercent + '%';
+                        fuelOverlay.style.color = getFuelFillColor(fillLevels.fuelPercent);
+                    }
+                    if (co2Overlay) {
+                        co2Overlay.textContent = fillLevels.co2Percent + '%';
+                        co2Overlay.style.color = getCO2FillColor(fillLevels.co2Percent);
+                    }
                 }
             }
         } catch (err) {
