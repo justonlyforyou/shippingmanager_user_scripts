@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Bunker Price Display
 // @namespace    http://tampermonkey.net/
-// @version      3.3
+// @version      3.4
 // @description  Shows current fuel and CO2 bunker prices with fill levels - Desktop and Mobile
 // @author       https://github.com/justonlyforyou/
 // @order        22
@@ -197,60 +197,42 @@
 
     // Mobile: Replace bunker circles with percentage text
     function insertMobileBunkerOverlays() {
-        // Find the bunker wrappers in mobile header
-        var chartWrapper = document.querySelector('.chartWrapper');
-        var ledWrapper = document.querySelector('.ledWrapper');
+        if (!isMobile) return; // Only on mobile
 
-        if (chartWrapper && !document.getElementById('bunker-fuel-overlay')) {
-            // Hide the chart inside
-            var chart = chartWrapper.querySelector('.chart');
-            if (chart) chart.style.cssText = 'display:none !important;';
+        // Structure:
+        // <div class="content chart cursor-pointer"> <- has click handler
+        //   <div class="chartWrapper">
+        //     <div class="chart"><svg>...</svg></div>
+        //   </div>
+        // </div>
 
-            // Create percentage text
+        var fuelContainer = document.querySelector('.content.chart.cursor-pointer');
+        var co2Container = document.querySelector('.content.led.cursor-pointer');
+
+        if (fuelContainer && !document.getElementById('bunker-fuel-overlay')) {
+            // Hide the chartWrapper inside
+            var chartWrapper = fuelContainer.querySelector('.chartWrapper');
+            if (chartWrapper) chartWrapper.style.cssText = 'display:none !important;';
+
+            // Create percentage text (click already works on parent)
             fuelFillElement = document.createElement('span');
             fuelFillElement.id = 'bunker-fuel-overlay';
-            fuelFillElement.style.cssText = 'font-weight:bold !important;font-size:14px !important;color:#4ade80 !important;cursor:pointer !important;';
+            fuelFillElement.style.cssText = 'font-weight:bold !important;font-size:14px !important;color:#4ade80 !important;';
             fuelFillElement.textContent = '...%';
-
-            // Make it clickable - open fuel modal
-            fuelFillElement.addEventListener('click', function() {
-                // Trigger the same modal as clicking the chart
-                var pinia = getPinia();
-                if (pinia && pinia._s) {
-                    var modalStore = pinia._s.get('modal');
-                    if (modalStore && modalStore.render) {
-                        modalStore.render('fuelCo2', { initialPage: 'fuel' });
-                    }
-                }
-            });
-
-            chartWrapper.appendChild(fuelFillElement);
+            fuelContainer.appendChild(fuelFillElement);
         }
 
-        if (ledWrapper && !document.getElementById('bunker-co2-overlay')) {
-            // Hide the led inside
-            var ledInner = ledWrapper.querySelector('.led-container, .led, > div');
-            if (ledInner) ledInner.style.cssText = 'display:none !important;';
+        if (co2Container && !document.getElementById('bunker-co2-overlay')) {
+            // Hide the ledWrapper inside
+            var ledWrapper = co2Container.querySelector('.ledWrapper');
+            if (ledWrapper) ledWrapper.style.cssText = 'display:none !important;';
 
-            // Create percentage text
+            // Create percentage text (click already works on parent)
             co2FillElement = document.createElement('span');
             co2FillElement.id = 'bunker-co2-overlay';
-            co2FillElement.style.cssText = 'font-weight:bold !important;font-size:14px !important;color:#4ade80 !important;cursor:pointer !important;';
+            co2FillElement.style.cssText = 'font-weight:bold !important;font-size:14px !important;color:#4ade80 !important;';
             co2FillElement.textContent = '...%';
-
-            // Make it clickable - open CO2 modal
-            co2FillElement.addEventListener('click', function() {
-                // Trigger the same modal as clicking the led
-                var pinia = getPinia();
-                if (pinia && pinia._s) {
-                    var modalStore = pinia._s.get('modal');
-                    if (modalStore && modalStore.render) {
-                        modalStore.render('fuelCo2', { initialPage: 'co2' });
-                    }
-                }
-            });
-
-            ledWrapper.appendChild(co2FillElement);
+            co2Container.appendChild(co2FillElement);
         }
     }
 
