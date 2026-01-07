@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Bunker Price Display
 // @namespace    http://tampermonkey.net/
-// @version      3.1
+// @version      3.2
 // @description  Shows current fuel and CO2 bunker prices with fill levels - Desktop and Mobile
 // @author       https://github.com/justonlyforyou/
 // @order        22
@@ -195,41 +195,39 @@
         return true;
     }
 
-    // Mobile: Overlay percentage text inside the bunker circles
+    // Mobile: Replace bunker circles with percentage text
     function insertMobileBunkerOverlays() {
         // Find the bunker circle containers on mobile
         var chartElement = document.querySelector('.content.chart');
         var ledElement = document.querySelector('.content.led');
 
         if (chartElement && !document.getElementById('bunker-fuel-overlay')) {
-            // Make parent relative for absolute positioning
-            chartElement.style.position = 'relative !important';
+            // Hide ALL children (the circle graphics)
+            var children = chartElement.children;
+            for (var i = 0; i < children.length; i++) {
+                children[i].style.cssText = 'display:none !important;';
+            }
 
-            // Hide the fill bar inside
-            var fuelBar = chartElement.querySelector('.bar-inner, .fill, .progress');
-            if (fuelBar) fuelBar.style.display = 'none !important';
-
-            // Create overlay text
-            fuelFillElement = document.createElement('div');
+            // Create percentage text that replaces the circle
+            fuelFillElement = document.createElement('span');
             fuelFillElement.id = 'bunker-fuel-overlay';
-            fuelFillElement.style.cssText = 'position:absolute !important;top:50% !important;left:50% !important;transform:translate(-50%,-50%) !important;font-weight:bold !important;font-size:10px !important;color:#fff !important;text-shadow:0 0 2px #000 !important;z-index:10 !important;pointer-events:none !important;';
-            fuelFillElement.textContent = '...';
+            fuelFillElement.style.cssText = 'font-weight:bold !important;font-size:12px !important;color:#4ade80 !important;cursor:pointer !important;';
+            fuelFillElement.textContent = '...%';
             chartElement.appendChild(fuelFillElement);
         }
 
         if (ledElement && !document.getElementById('bunker-co2-overlay')) {
-            // Make parent relative for absolute positioning
-            ledElement.style.position = 'relative !important';
+            // Hide ALL children (the circle graphics)
+            var ledChildren = ledElement.children;
+            for (var j = 0; j < ledChildren.length; j++) {
+                ledChildren[j].style.cssText = 'display:none !important;';
+            }
 
-            // Hide the fill/led inside
-            var co2Led = ledElement.querySelector('.led, .fill, .progress');
-            if (co2Led) co2Led.style.display = 'none !important';
-
-            // Create overlay text
-            co2FillElement = document.createElement('div');
+            // Create percentage text that replaces the circle
+            co2FillElement = document.createElement('span');
             co2FillElement.id = 'bunker-co2-overlay';
-            co2FillElement.style.cssText = 'position:absolute !important;top:50% !important;left:50% !important;transform:translate(-50%,-50%) !important;font-weight:bold !important;font-size:10px !important;color:#fff !important;text-shadow:0 0 2px #000 !important;z-index:10 !important;pointer-events:none !important;';
-            co2FillElement.textContent = '...';
+            co2FillElement.style.cssText = 'font-weight:bold !important;font-size:12px !important;color:#4ade80 !important;cursor:pointer !important;';
+            co2FillElement.textContent = '...%';
             ledElement.appendChild(co2FillElement);
         }
     }
