@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Co-Op Tickets Display
 // @description Shows open Co-Op tickets, red dot on alliance tab when tickets available
-// @version     1.6
+// @version     1.9
 // @author      https://github.com/justonlyforyou/
 // @order       25
 // @match       https://shippingmanager.cc/*
@@ -101,6 +101,7 @@
             coopElement.textContent = 'Co-Op: ...';
             coopElement.addEventListener('click', openAllianceCoopTab);
 
+            // Insert before menu (same as reputation-display)
             var menu = row.querySelector('#rebelship-menu');
             if (menu) {
                 row.insertBefore(coopElement, menu);
@@ -197,5 +198,6 @@
         setInterval(updateCoopDisplay, 30000);
     }
 
-    setTimeout(init, isMobile ? 2000 : 1000);
+    // Must run after reputation-display (3000ms on mobile)
+    setTimeout(init, isMobile ? 3500 : 1000);
 })();
