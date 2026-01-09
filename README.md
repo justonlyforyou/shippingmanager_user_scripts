@@ -35,6 +35,7 @@ The easiest way to use these scripts is with **RebelShip Browser**, which has al
 | **reputation-display.user.js** | Displays your current reputation score in the header |
 | **map-unlock.user.js** | Unlocks additional map features and navigation options |
 | **enable-distance-filter.user.js** | Filter destination ports by distance ranges (< 1000nm, 1-3k, 3-6k, 6-10k, > 10k) in route creation |
+| **auto-expand-advanced.user.js** | Auto-expands "Advanced" menus + shows price % difference from auto price |
 
 ### Automation
 

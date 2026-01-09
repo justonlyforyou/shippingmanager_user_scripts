@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shipping Manager - Fix Alliance Member Exclude
 // @namespace    https://shippingmanager.cc/
-// @version      1.1
+// @version      1.2
 // @description  Fixes broken exclude buttons for CEO and adds missing ones for regular members
 // @author       https://github.com/justonlyforyou/
 // @order        51
@@ -117,6 +117,10 @@
     // ===========================================
 
     function fixCeoExcludeButton() {
+        // CEO can't kick themselves - skip
+        const myMember = getMyMember();
+        if (myMember?.role === 'ceo') return;
+
         const allButtons = document.querySelectorAll('button, .btn');
 
         for (const btn of allButtons) {
@@ -228,6 +232,10 @@
 
     function addMemberExcludeButtons() {
         if (!canKickMembers()) return;
+
+        // CEO already has working exclude buttons - skip
+        const myMember = getMyMember();
+        if (myMember?.role === 'ceo') return;
 
         const allianceStore = getAllianceStore();
         const userStore = getUserStore();
