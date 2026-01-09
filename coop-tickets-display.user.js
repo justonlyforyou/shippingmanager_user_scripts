@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Co-Op Tickets Display
 // @description Shows open Co-Op tickets, red dot on alliance tab when tickets available
-// @version     1.9
+// @version     2.0
 // @author      https://github.com/justonlyforyou/
 // @order       25
 // @match       https://shippingmanager.cc/*
@@ -97,8 +97,8 @@
 
             coopElement = document.createElement('div');
             coopElement.id = 'coop-tickets-display';
-            coopElement.style.cssText = 'display:flex;align-items:center;padding:2px 6px;border-radius:4px;font-size:12px;font-weight:bold;cursor:pointer;background:#4ade80;color:#333;';
-            coopElement.textContent = 'Co-Op: ...';
+            coopElement.style.cssText = 'display:flex;align-items:center;padding:0 2px;font-size:12px;font-weight:bold;cursor:pointer;color:#4ade80;';
+            coopElement.textContent = 'CoOp: ...';
             coopElement.addEventListener('click', openAllianceCoopTab);
 
             // Insert before menu (same as reputation-display)
@@ -180,8 +180,13 @@
         }
 
         if (el) {
-            el.textContent = 'Co-Op: ' + openTickets + '/' + maxTickets;
-            el.style.background = getCoopColor(openTickets);
+            if (isMobile) {
+                el.textContent = 'CoOp: ' + openTickets + '/' + maxTickets;
+                el.style.color = getCoopColor(openTickets);
+            } else {
+                el.textContent = 'Co-Op: ' + openTickets + '/' + maxTickets;
+                el.style.background = getCoopColor(openTickets);
+            }
         }
     }
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Reputation Display
 // @description Shows reputation next to company name, click to open Finance modal
-// @version     3.8
+// @version     3.9
 // @author      joseywales - Pimped by https://github.com/justonlyforyou/
 // @order       24
 // @match       https://shippingmanager.cc/*
@@ -52,7 +52,7 @@
 
             reputationElement = document.createElement('div');
             reputationElement.id = 'reputation-display';
-            reputationElement.style.cssText = 'display:flex;align-items:center;padding:2px 6px;border-radius:4px;font-size:12px;font-weight:bold;cursor:pointer;background:#fbbf24;color:#333;';
+            reputationElement.style.cssText = 'display:flex;align-items:center;padding:0 2px;font-size:12px;font-weight:bold;cursor:pointer;color:#fbbf24;';
             reputationElement.textContent = 'Rep: ...';
 
             reputationElement.addEventListener('click', () => {
@@ -121,8 +121,12 @@
 
             if (el) {
                 el.textContent = isMobile ? 'Rep: ' + rep + '%' : 'Reputation: ' + rep + '%';
-                el.style.background = getReputationColor(rep);
-                el.style.color = rep >= 80 ? '#333' : '#330000';
+                if (isMobile) {
+                    el.style.color = getReputationColor(rep);
+                } else {
+                    el.style.background = getReputationColor(rep);
+                    el.style.color = rep >= 80 ? '#333' : '#330000';
+                }
             }
         } catch (err) {
             console.error("[Reputation] Error:", err);
