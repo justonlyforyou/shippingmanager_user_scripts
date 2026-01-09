@@ -141,7 +141,7 @@
 
         const itemBtn = document.createElement('div');
         itemBtn.style.cssText = 'padding:10px 12px;cursor:pointer;color:#fff;font-size:13px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #374151;';
-        itemBtn.innerHTML = '<span>' + label + '</span>' + (hasSubmenu ? '<span style="font-size:10px;">&#9664;</span>' : '');
+        itemBtn.innerHTML = '<span>' + label + '</span>' + (hasSubmenu ? '<span style="font-size:14px;">&#9664;</span>' : '');
 
         itemBtn.addEventListener('mouseenter', () => itemBtn.style.background = '#374151');
         itemBtn.addEventListener('mouseleave', () => itemBtn.style.background = 'transparent');

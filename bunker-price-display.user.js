@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Bunker Price Display
 // @namespace    http://tampermonkey.net/
-// @version      3.6
+// @version      3.7
 // @description  Shows current fuel and CO2 bunker prices with fill levels - Desktop and Mobile
 // @author       https://github.com/justonlyforyou/
 // @order        22
@@ -162,7 +162,7 @@
         // Mobile: Only prices in top bar (no fill % here)
         // Fuel: Label | Price
         var fuelBox = document.createElement('div');
-        fuelBox.style.cssText = 'display:flex !important;align-items:center !important;gap:5px !important;';
+        fuelBox.style.cssText = 'display:flex !important;align-items:center !important;gap:5px !important;font-size:10px !important;';
         var fuelLabel = document.createElement('span');
         fuelLabel.style.cssText = 'color:#aaa !important;';
         fuelLabel.textContent = 'Fuel:';
@@ -175,7 +175,7 @@
 
         // CO2: Label | Price
         var co2Box = document.createElement('div');
-        co2Box.style.cssText = 'display:flex !important;align-items:center !important;gap:5px !important;';
+        co2Box.style.cssText = 'display:flex !important;align-items:center !important;gap:5px !important;font-size:10px !important;';
         var co2Label = document.createElement('span');
         co2Label.style.cssText = 'color:#aaa !important;';
         co2Label.textContent = 'CO2:';
@@ -217,7 +217,7 @@
             // Create percentage text (click already works on parent)
             fuelFillElement = document.createElement('span');
             fuelFillElement.id = 'bunker-fuel-overlay';
-            fuelFillElement.style.cssText = 'font-weight:bold !important;font-size:14px !important;color:#4ade80 !important;';
+            fuelFillElement.style.cssText = 'font-weight:bold !important;font-size:10px !important;color:#4ade80 !important;';
             fuelFillElement.textContent = '...%';
             fuelContainer.appendChild(fuelFillElement);
         }
@@ -230,7 +230,7 @@
             // Create percentage text (click already works on parent)
             co2FillElement = document.createElement('span');
             co2FillElement.id = 'bunker-co2-overlay';
-            co2FillElement.style.cssText = 'font-weight:bold !important;font-size:14px !important;color:#4ade80 !important;';
+            co2FillElement.style.cssText = 'font-weight:bold !important;font-size:10px !important;color:#4ade80 !important;';
             co2FillElement.textContent = '...%';
             co2Container.appendChild(co2FillElement);
         }

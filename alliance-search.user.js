@@ -968,7 +968,7 @@
             membersDiv.style.cssText = 'text-align:center;min-width:50px;';
             var freeSlots = 30 - (alliance.members || 0);
             membersDiv.innerHTML = '<div style="font-weight:600;color:#333;font-size:14px;">' + alliance.members + '/30</div>' +
-                '<div style="color:' + (freeSlots > 0 ? '#4ade80' : '#ef4444') + ';font-size:10px;">' + freeSlots + ' free</div>';
+                '<div style="color:' + (freeSlots > 0 ? '#4ade80' : '#ef4444') + ';font-size:14px;">' + freeSlots + ' free</div>';
 
             // 24h stats (departures + contribution)
             var statsDiv = document.createElement('div');
