@@ -97,7 +97,7 @@
 
             coopElement = document.createElement('div');
             coopElement.id = 'coop-tickets-display';
-            coopElement.style.cssText = 'display:flex !important;align-items:center !important;padding:0 !important;font-size:10px !important;font-weight:bold !important;cursor:pointer !important;color:#4ade80 !important;';
+            coopElement.style.cssText = 'display:flex !important;align-items:center !important;padding:0 !important;font-size:11px !important;font-weight:bold !important;cursor:pointer !important;color:#4ade80 !important;';
             coopElement.textContent = 'CoOp: ...';
             coopElement.addEventListener('click', openAllianceCoopTab);
 

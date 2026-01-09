@@ -52,7 +52,7 @@
 
             reputationElement = document.createElement('div');
             reputationElement.id = 'reputation-display';
-            reputationElement.style.cssText = 'display:flex !important;align-items:center !important;padding:0 !important;font-size:10px !important;font-weight:bold !important;cursor:pointer !important;color:#fbbf24 !important;';
+            reputationElement.style.cssText = 'display:flex !important;align-items:center !important;padding:0 !important;font-size:11px !important;font-weight:bold !important;cursor:pointer !important;color:#fbbf24 !important;';
             reputationElement.textContent = 'Rep: ...';
 
             reputationElement.addEventListener('click', () => {
