@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Co-Op Tickets Display
 // @description Shows open Co-Op tickets, red dot on alliance tab when tickets available
-// @version     2.1
+// @version     2.2
 // @author      https://github.com/justonlyforyou/
 // @order       25
 // @match       https://shippingmanager.cc/*
@@ -27,7 +27,7 @@
 
         var row = document.createElement('div');
         row.id = 'rebel-mobile-row';
-        row.style.cssText = 'position:fixed !important;top:0 !important;left:0 !important;right:0 !important;display:flex !important;justify-content:center !important;align-items:center !important;gap:2px !important;background:#1a1a2e !important;padding:4px 6px !important;font-size:14px !important;z-index:9999 !important;';
+        row.style.cssText = 'position:fixed !important;top:0 !important;left:0 !important;right:0 !important;display:flex !important;flex-wrap:nowrap !important;justify-content:center !important;align-items:center !important;gap:2px !important;background:#1a1a2e !important;padding:4px 6px !important;font-size:14px !important;z-index:9999 !important;';
         document.body.appendChild(row);
 
         var appContainer = document.querySelector('#app') || document.body.firstElementChild;

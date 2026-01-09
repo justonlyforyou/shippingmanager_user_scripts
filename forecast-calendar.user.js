@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Forecast Calendar
 // @namespace    http://tampermonkey.net/
-// @version      3.2
+// @version      3.3
 // @description  Embedded forecast calendar with page-flip navigation
 // @author       https://github.com/justonlyforyou/
 // @order        100
@@ -56,7 +56,7 @@
 
         var row = document.createElement('div');
         row.id = 'rebel-mobile-row';
-        row.style.cssText = 'position:fixed;top:0;left:0;right:0;display:flex;justify-content:center;align-items:center;gap:10px;background:#1a1a2e;padding:4px 6px;font-size:14px;z-index:9999;';
+        row.style.cssText = 'position:fixed !important;top:0 !important;left:0 !important;right:0 !important;display:flex !important;flex-wrap:nowrap !important;justify-content:center !important;align-items:center !important;gap:2px !important;background:#1a1a2e !important;padding:4px 6px !important;font-size:14px !important;z-index:9999 !important;';
 
         document.body.appendChild(row);
 

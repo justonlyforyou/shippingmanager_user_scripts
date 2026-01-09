@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Reputation Display
 // @description Shows reputation next to company name, click to open Finance modal
-// @version     4.0
+// @version     4.1
 // @author      joseywales - Pimped by https://github.com/justonlyforyou/
 // @order       24
 // @match       https://shippingmanager.cc/*
@@ -30,7 +30,7 @@
 
         var row = document.createElement('div');
         row.id = 'rebel-mobile-row';
-        row.style.cssText = 'position:fixed !important;top:0 !important;left:0 !important;right:0 !important;display:flex !important;justify-content:center !important;align-items:center !important;gap:2px !important;background:#1a1a2e !important;padding:4px 6px !important;font-size:14px !important;z-index:9999 !important;';
+        row.style.cssText = 'position:fixed !important;top:0 !important;left:0 !important;right:0 !important;display:flex !important;flex-wrap:nowrap !important;justify-content:center !important;align-items:center !important;gap:2px !important;background:#1a1a2e !important;padding:4px 6px !important;font-size:14px !important;z-index:9999 !important;';
 
         document.body.appendChild(row);
 
