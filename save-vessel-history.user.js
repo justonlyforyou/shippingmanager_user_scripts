@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Save Vessel History
 // @namespace    http://tampermonkey.net/
-// @version      2.8
+// @version      2.9
 // @description  Detect vessel history API calls and offer CSV download
 // @author       https://github.com/justonlyforyou/
 // @order        25
@@ -140,7 +140,7 @@
             const btn = document.createElement('button');
             btn.id = 'save-vessel-history-btn';
             btn.textContent = 'Export History';
-            btn.style.cssText = 'padding:4px 10px;background:#22c55e;color:white;border:none;border-radius:4px;cursor:pointer;font-weight:bold;font-size:12px;margin-left:auto;';
+            btn.style.cssText = 'padding:4px 10px;background:#4ade80;color:white;border:none;border-radius:4px;cursor:pointer;font-weight:bold;font-size:12px;margin-left:auto;';
 
             if (historyData) {
                 // We already have the data, save directly

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Reputation Display
 // @description Shows reputation next to company name, click to open Finance modal
-// @version     3.7
+// @version     3.8
 // @author      joseywales - Pimped by https://github.com/justonlyforyou/
 // @order       24
 // @match       https://shippingmanager.cc/*
@@ -18,9 +18,9 @@
     let reputationElement = null;
 
     function getReputationColor(rep) {
-        if (rep >= 80) return "#8fffa1";
-        if (rep >= 50) return "#fff176";
-        return "#ff8a80";
+        if (rep >= 80) return "#4ade80";
+        if (rep >= 50) return "#fbbf24";
+        return "#ef4444";
     }
 
     // Get or create shared mobile row (fixed at top)
@@ -52,7 +52,7 @@
 
             reputationElement = document.createElement('div');
             reputationElement.id = 'reputation-display';
-            reputationElement.style.cssText = 'display:flex;align-items:center;padding:2px 6px;border-radius:4px;font-size:12px;font-weight:bold;cursor:pointer;background:#ffdf5c;color:#333;';
+            reputationElement.style.cssText = 'display:flex;align-items:center;padding:2px 6px;border-radius:4px;font-size:12px;font-weight:bold;cursor:pointer;background:#fbbf24;color:#333;';
             reputationElement.textContent = 'Rep: ...';
 
             reputationElement.addEventListener('click', () => {
@@ -78,7 +78,7 @@
 
         reputationElement = document.createElement('div');
         reputationElement.id = 'reputation-display';
-        reputationElement.style.cssText = 'display:inline-flex;align-items:center;margin-left:10px;padding:2px 8px;border-radius:4px;font-size:13px;font-weight:bold;cursor:pointer;background:#ffdf5c;color:#333;';
+        reputationElement.style.cssText = 'display:inline-flex;align-items:center;margin-left:10px;padding:2px 8px;border-radius:4px;font-size:13px;font-weight:bold;cursor:pointer;background:#fbbf24;color:#333;';
         reputationElement.textContent = 'Reputation: ...';
 
         reputationElement.addEventListener('click', () => {

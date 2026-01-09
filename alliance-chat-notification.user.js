@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Alliance Chat Notification
 // @description Shows a red dot on Alliance button when there are unread messages
-// @version     2.2
+// @version     2.3
 // @author      https://github.com/justonlyforyou/
 // @order       18
 // @match       https://shippingmanager.cc/*
@@ -64,7 +64,7 @@
 
         var dot = document.createElement('div');
         dot.id = id;
-        dot.style.cssText = 'position:absolute !important;top:2px !important;right:5px !important;width:10px !important;height:10px !important;background:#ff0000 !important;border-radius:50% !important;display:none;box-shadow:0 0 6px rgba(255,0,0,0.8) !important;z-index:100 !important;pointer-events:none !important;';
+        dot.style.cssText = 'position:absolute !important;top:2px !important;right:5px !important;width:10px !important;height:10px !important;background:#ef4444 !important;border-radius:50% !important;display:none;box-shadow:0 0 6px rgba(239,68,68,0.8) !important;z-index:100 !important;pointer-events:none !important;';
 
         parent.appendChild(dot);
         return dot;
@@ -95,7 +95,7 @@
             // Create dot fresh each time to ensure correct positioning
             var dot = document.createElement('div');
             dot.id = 'alliance-btn-notify-dot';
-            dot.style.cssText = 'position:absolute !important;top:5px !important;right:5px !important;width:10px !important;height:10px !important;background:#ff0000 !important;border-radius:50% !important;box-shadow:0 0 6px rgba(255,0,0,0.8) !important;z-index:100 !important;pointer-events:none !important;';
+            dot.style.cssText = 'position:absolute !important;top:5px !important;right:5px !important;width:10px !important;height:10px !important;background:#ef4444 !important;border-radius:50% !important;box-shadow:0 0 6px rgba(239,68,68,0.8) !important;z-index:100 !important;pointer-events:none !important;';
             dot.style.display = hasUnread ? 'block' : 'none';
             wrapper.appendChild(dot);
         }
@@ -208,12 +208,13 @@
                 }
             });
 
-            console.log('[AllianceChatNotify] Newest:', newestMessageTimestamp, 'Last read:', lastReadTimestamp, 'Diff:', newestMessageTimestamp - lastReadTimestamp);
-
             // Check if there are unread messages
+            var wasUnread = hasUnread;
             if (newestMessageTimestamp > lastReadTimestamp) {
                 hasUnread = true;
-                console.log('[AllianceChatNotify] Unread messages detected!');
+                if (!wasUnread) {
+                    console.log('[AllianceChatNotify] Unread messages detected! Newest:', newestMessageTimestamp, 'Last read:', lastReadTimestamp);
+                }
             } else {
                 hasUnread = false;
             }

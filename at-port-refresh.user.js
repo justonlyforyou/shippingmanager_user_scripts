@@ -38,10 +38,8 @@
         var vesselStore = getVesselStore();
         if (vesselStore && vesselStore.fetchUserVessels) {
             vesselStore.fetchUserVessels();
-            log('Refreshed vessel store (At Port list)');
             return true;
         }
-        log('Vessel store not available');
         return false;
     }
 

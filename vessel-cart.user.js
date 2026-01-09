@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Vessel Shopping Cart
 // @description Add vessels to cart and bulk purchase them
-// @version     3.5
+// @version     3.6
 // @author      https://github.com/justonlyforyou/
 // @order       26
 // @match       https://shippingmanager.cc/*
@@ -478,7 +478,7 @@
         if (existing) existing.remove();
 
         const colors = {
-            success: '#10b981',
+            success: '#4ade80',
             error: '#ef4444',
             info: '#3b82f6'
         };
@@ -743,7 +743,7 @@
         const header = document.createElement('div');
         header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid #374151;background:#0f1420;';
         const checkoutText = hasUnpricedBuilds ? 'Checkout (est.)' : 'Checkout';
-        header.innerHTML = '<div style="display:flex;align-items:center;gap:10px;"><span style="color:#fff;font-size:18px;font-weight:600;">' + CART_ICON + ' Shopping Cart</span></div><div style="display:flex;gap:8px;"><button id="cart-close-btn" style="padding:8px 16px;background:#4b5563;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:500;">Close</button><button id="cart-checkout-btn" style="padding:8px 16px;background:' + (canAfford ? '#10b981' : '#6b7280') + ';color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:500;"' + (canAfford ? '' : ' disabled') + '>' + checkoutText + '</button></div>';
+        header.innerHTML = '<div style="display:flex;align-items:center;gap:10px;"><span style="color:#fff;font-size:18px;font-weight:600;">' + CART_ICON + ' Shopping Cart</span></div><div style="display:flex;gap:8px;"><button id="cart-close-btn" style="padding:8px 16px;background:#4b5563;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:500;">Close</button><button id="cart-checkout-btn" style="padding:8px 16px;background:' + (canAfford ? '#4ade80' : '#6b7280') + ';color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:500;"' + (canAfford ? '' : ' disabled') + '>' + checkoutText + '</button></div>';
 
         // Cart items container
         const itemsContainer = document.createElement('div');
@@ -806,7 +806,7 @@
 
             const itemDiv = document.createElement('div');
             itemDiv.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:12px;background:#252b3b;border-radius:8px;margin-bottom:8px;';
-            itemDiv.innerHTML = '<div style="flex:1;"><div style="color:#fff;font-weight:500;">' + escapeHtml(item.vessel.name) + (isBuild ? ' <span style="color:#f59e0b;font-size:11px;">[BUILD]</span>' : '') + '</div><div style="color:#9ca3af;font-size:12px;">' + escapeHtml(priceText) + '</div></div><div style="display:flex;align-items:center;gap:8px;"><button class="cart-qty-minus" data-key="' + key + '" style="width:28px;height:28px;background:#374151;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:16px;">-</button><span style="color:#fff;min-width:24px;text-align:center;">' + item.quantity + '</span><button class="cart-qty-plus" data-key="' + key + '" style="width:28px;height:28px;background:#374151;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:16px;">+</button><button class="cart-remove" data-key="' + key + '" style="width:28px;height:28px;background:#dc2626;color:#fff;border:none;border-radius:4px;cursor:pointer;margin-left:8px;" title="Remove">x</button></div><div style="min-width:80px;text-align:right;color:#10b981;font-weight:600;">' + totalPrice + '</div>';
+            itemDiv.innerHTML = '<div style="flex:1;"><div style="color:#fff;font-weight:500;">' + escapeHtml(item.vessel.name) + (isBuild ? ' <span style="color:#f59e0b;font-size:11px;">[BUILD]</span>' : '') + '</div><div style="color:#9ca3af;font-size:12px;">' + escapeHtml(priceText) + '</div></div><div style="display:flex;align-items:center;gap:8px;"><button class="cart-qty-minus" data-key="' + key + '" style="width:28px;height:28px;background:#374151;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:16px;">-</button><span style="color:#fff;min-width:24px;text-align:center;">' + item.quantity + '</span><button class="cart-qty-plus" data-key="' + key + '" style="width:28px;height:28px;background:#374151;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:16px;">+</button><button class="cart-remove" data-key="' + key + '" style="width:28px;height:28px;background:#dc2626;color:#fff;border:none;border-radius:4px;cursor:pointer;margin-left:8px;" title="Remove">x</button></div><div style="min-width:80px;text-align:right;color:#4ade80;font-weight:600;">' + totalPrice + '</div>';
             itemsContainer.appendChild(itemDiv);
         });
 
@@ -814,7 +814,7 @@
         const footer = document.createElement('div');
         footer.style.cssText = 'padding:16px 20px;border-top:1px solid #374151;background:#0f1420;';
         const costDisplay = '$' + formatNumber(purchaseTotal) + (hasUnpricedBuilds ? ' (est.)' : '');
-        footer.innerHTML = '<div style="display:flex;justify-content:space-between;margin-bottom:8px;"><span style="color:#9ca3af;">Total Items:</span><span style="color:#fff;font-weight:500;">' + totalItems + ' vessels' + (hasBuildItems ? ' (incl. ' + cart.filter(i => i.vessel.type === 'build').reduce((s, i) => s + i.quantity, 0) + ' builds)' : '') + '</span></div><div style="display:flex;justify-content:space-between;margin-bottom:8px;"><span style="color:#9ca3af;">Cash Available:</span><span style="color:#10b981;font-weight:500;">$' + formatNumber(userCash) + '</span></div><div style="display:flex;justify-content:space-between;"><span style="color:#fff;font-weight:600;">Total Cost:</span><span style="color:' + (canAfford ? '#10b981' : '#ef4444') + ';font-weight:700;font-size:18px;">' + costDisplay + '</span></div>';
+        footer.innerHTML = '<div style="display:flex;justify-content:space-between;margin-bottom:8px;"><span style="color:#9ca3af;">Total Items:</span><span style="color:#fff;font-weight:500;">' + totalItems + ' vessels' + (hasBuildItems ? ' (incl. ' + cart.filter(i => i.vessel.type === 'build').reduce((s, i) => s + i.quantity, 0) + ' builds)' : '') + '</span></div><div style="display:flex;justify-content:space-between;margin-bottom:8px;"><span style="color:#9ca3af;">Cash Available:</span><span style="color:#4ade80;font-weight:500;">$' + formatNumber(userCash) + '</span></div><div style="display:flex;justify-content:space-between;"><span style="color:#fff;font-weight:600;">Total Cost:</span><span style="color:' + (canAfford ? '#4ade80' : '#ef4444') + ';font-weight:700;font-size:18px;">' + costDisplay + '</span></div>';
 
         modal.appendChild(header);
         modal.appendChild(itemsContainer);
@@ -961,9 +961,9 @@
 
         progressEl.textContent = 'Checkout Complete!';
         if (errors.length > 0) {
-            statusEl.innerHTML = '<span style="color:#10b981;">' + successCount + ' purchased</span>, <span style="color:#ef4444;">' + failCount + ' failed</span><br><br><div style="text-align:left;max-height:150px;overflow-y:auto;font-size:12px;color:#ef4444;">' + errors.join('<br>') + '</div>';
+            statusEl.innerHTML = '<span style="color:#4ade80;">' + successCount + ' purchased</span>, <span style="color:#ef4444;">' + failCount + ' failed</span><br><br><div style="text-align:left;max-height:150px;overflow-y:auto;font-size:12px;color:#ef4444;">' + errors.join('<br>') + '</div>';
         } else {
-            statusEl.innerHTML = '<span style="color:#10b981;">' + successCount + ' purchased</span>';
+            statusEl.innerHTML = '<span style="color:#4ade80;">' + successCount + ' purchased</span>';
         }
 
         setTimeout(() => {

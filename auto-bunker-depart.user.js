@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Auto Bunker & Depart
 // @namespace    http://tampermonkey.net/
-// @version      10.0
+// @version      10.1
 // @description  Auto-buy fuel/CO2 and auto-depart vessels - works in background mode via direct API
 // @author       https://github.com/justonlyforyou/
 // @order        20
@@ -1325,7 +1325,7 @@
         .autobuy-settings .setting-info { font-size: 12px; color: #9ca3af; margin-top: 2px; font-style: italic; }\
         .autobuy-settings .section-title { font-size: 12px; font-weight: 600; color: #d1d5db; margin-bottom: 2px; text-transform: uppercase; }\
         .autobuy-settings .checkbox-label { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: bold; color: #f3f4f6; cursor: pointer; padding: 0; min-height: 26px; }\
-        .autobuy-settings .checkbox-label input[type="checkbox"] { width: 18px; height: 18px; accent-color: #22c55e; cursor: pointer; }\
+        .autobuy-settings .checkbox-label input[type="checkbox"] { width: 18px; height: 18px; accent-color: #4ade80; cursor: pointer; }\
         .autobuy-settings .price-box { background: rgba(59, 130, 246, 0.15); border: 1px solid rgba(59, 130, 246, 0.4); border-radius: 4px; padding: 4px; margin-bottom: 4px; display: flex; justify-content: space-around; }\
         .autobuy-settings .price-item { text-align: center; }\
         .autobuy-settings .price-label { font-size: 12px; color: #d1d5db; }\
