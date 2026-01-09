@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Alliance Search
 // @description Search all alliances by name and open their profile
-// @version     3.0
+// @version     3.1
 // @author      https://github.com/justonlyforyou/
 // @order       19
 // @match       https://shippingmanager.cc/*

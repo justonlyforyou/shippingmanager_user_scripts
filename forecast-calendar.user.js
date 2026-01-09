@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Forecast Calendar
 // @namespace    http://tampermonkey.net/
-// @version      3.3
+// @version      3.4
 // @description  Embedded forecast calendar with page-flip navigation
 // @author       https://github.com/justonlyforyou/
 // @order        100

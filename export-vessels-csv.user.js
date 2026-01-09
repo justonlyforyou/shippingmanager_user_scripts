@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Export All Vessels
 // @description Export all vessels with details as CSV
-// @version     1.2
+// @version     1.3
 // @author      https://github.com/justonlyforyou/
 // @order       28
 // @match       https://shippingmanager.cc/*

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Buy VIP Vessel
 // @description Quick access to purchase hidden VIP vessels using game modal
-// @version     1.8
+// @version     1.9
 // @author      https://github.com/justonlyforyou/
 // @order       27
 // @match       https://shippingmanager.cc/*
