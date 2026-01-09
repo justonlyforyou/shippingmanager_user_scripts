@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Reputation Display
 // @description Shows reputation next to company name, click to open Finance modal
-// @version     3.9
+// @version     4.0
 // @author      joseywales - Pimped by https://github.com/justonlyforyou/
 // @order       24
 // @match       https://shippingmanager.cc/*
@@ -30,7 +30,7 @@
 
         var row = document.createElement('div');
         row.id = 'rebel-mobile-row';
-        row.style.cssText = 'position:fixed;top:0;left:0;right:0;display:flex;justify-content:center;align-items:center;gap:4px;background:#1a1a2e;padding:4px 6px;font-size:14px;z-index:9999;';
+        row.style.cssText = 'position:fixed !important;top:0 !important;left:0 !important;right:0 !important;display:flex !important;justify-content:center !important;align-items:center !important;gap:2px !important;background:#1a1a2e !important;padding:4px 6px !important;font-size:14px !important;z-index:9999 !important;';
 
         document.body.appendChild(row);
 
@@ -52,7 +52,7 @@
 
             reputationElement = document.createElement('div');
             reputationElement.id = 'reputation-display';
-            reputationElement.style.cssText = 'display:flex;align-items:center;padding:0 2px;font-size:12px;font-weight:bold;cursor:pointer;color:#fbbf24;';
+            reputationElement.style.cssText = 'display:flex !important;align-items:center !important;padding:0 !important;font-size:12px !important;font-weight:bold !important;cursor:pointer !important;color:#fbbf24 !important;';
             reputationElement.textContent = 'Rep: ...';
 
             reputationElement.addEventListener('click', () => {
