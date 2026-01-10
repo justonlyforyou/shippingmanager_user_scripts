@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shipping Manager - Auto Repair
 // @namespace    https://rebelship.org/
-// @version      1.5
+// @version      2.2
 // @description  Auto-repair vessels when wear reaches threshold
 // @author       https://github.com/justonlyforyou/
 // @order        15
@@ -37,15 +37,16 @@
 
     // ========== DIRECT API FUNCTIONS (for background mode) ==========
     async function fetchWithCookie(url, options = {}) {
-        const defaultOptions = {
-            credentials: 'include',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'Accept': 'application/json',
-                ...options.headers
-            }
+        const mergedHeaders = {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            ...options.headers
         };
-        const response = await fetch(url, { ...defaultOptions, ...options });
+        const response = await fetch(url, {
+            credentials: 'include',
+            ...options,
+            headers: mergedHeaders
+        });
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
         }
@@ -53,54 +54,58 @@
     }
 
     async function fetchVessels() {
-        const data = await fetchWithCookie('https://shippingmanager.cc/api/vessel/get-vessels', {
+        const data = await fetchWithCookie('https://shippingmanager.cc/api/vessel/get-all-user-vessels', {
             method: 'POST',
-            body: ''
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ include_routes: false })
         });
-        return data.data || [];
-    }
-
-    async function fetchBunkerState() {
-        const data = await fetchWithCookie('https://shippingmanager.cc/api/bunker/get', {
-            method: 'POST',
-            body: ''
-        });
-        return {
-            cash: data.data?.cash || 0,
-            fuel: data.data?.fuel || 0,
-            co2: data.data?.co2 || 0,
-            maxFuel: data.data?.max_fuel || 0,
-            maxCO2: data.data?.max_co2 || 0
-        };
+        return data.data?.user_vessels || [];
     }
 
     async function fetchMaintenanceCost(vesselIds) {
         const data = await fetchWithCookie('https://shippingmanager.cc/api/maintenance/get', {
             method: 'POST',
-            body: `vessel_ids=${encodeURIComponent(JSON.stringify(vesselIds))}`
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ vessel_ids: JSON.stringify(vesselIds) })
         });
-        // Calculate total cost from individual vessel costs
         let totalCost = 0;
-        const vessels = data.data || [];
+        const vessels = data.data?.vessels || [];
         for (const vessel of vessels) {
             const wearMaintenance = vessel.maintenance_data?.find(m => m.type === 'wear');
-            if (wearMaintenance?.price) {
-                totalCost += wearMaintenance.price;
+            if (wearMaintenance) {
+                // Use discounted_price if available (subsidy applied), otherwise regular price
+                const cost = wearMaintenance.discounted_price || wearMaintenance.price || 0;
+                totalCost += cost;
             }
         }
-        return { vessels, totalCost };
+        return { vessels, totalCost, cash: data.user?.cash || 0 };
     }
 
     async function bulkRepairVessels(vesselIds) {
         const data = await fetchWithCookie('https://shippingmanager.cc/api/maintenance/do-wear-maintenance-bulk', {
             method: 'POST',
-            body: `vessel_ids=${encodeURIComponent(JSON.stringify(vesselIds))}`
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ vessel_ids: JSON.stringify(vesselIds) })
         });
         return {
             success: data.success,
             count: vesselIds.length,
             totalCost: data.data?.total_cost || 0
         };
+    }
+
+    function getUserCash() {
+        try {
+            const appEl = document.querySelector('#app');
+            if (!appEl || !appEl.__vue_app__) return null;
+            const app = appEl.__vue_app__;
+            const pinia = app._context.provides.pinia || app.config.globalProperties.$pinia;
+            if (!pinia || !pinia._s) return null;
+            const userStore = pinia._s.get('user');
+            return userStore?.cash || userStore?.user?.cash || null;
+        } catch {
+            return null;
+        }
     }
 
     // ========== CORE LOGIC ==========
@@ -138,34 +143,31 @@
 
             log(`Found ${vesselsNeedingRepair.length} vessels with wear >= ${settings.wearThreshold}%`);
 
-            // 3. Check cash balance
-            const bunker = await fetchBunkerState();
-
-            // 4. Get repair costs
+            // 3. Get repair cost and check cash
             const vesselIds = vesselsNeedingRepair.map(v => v.id);
             const costData = await fetchMaintenanceCost(vesselIds);
 
-            if (!costData.vessels || costData.vessels.length === 0) {
-                throw new Error('API returned no cost data');
+            // Get cash from Pinia or API response
+            const cash = getUserCash() || costData.cash || 0;
+            log(`Repair cost: $${costData.totalCost.toLocaleString()} | Cash: $${cash.toLocaleString()}`);
+
+            // 4. Check if we can afford it
+            if (settings.minCashAfterRepair > 0) {
+                const cashAfterRepair = cash - costData.totalCost;
+                if (cashAfterRepair < settings.minCashAfterRepair) {
+                    log(`Cannot repair: would leave $${cashAfterRepair.toLocaleString()}, need $${settings.minCashAfterRepair.toLocaleString()}`);
+                    result.error = 'insufficient_funds';
+                    return result;
+                }
             }
 
-            log(`Repair cost: $${costData.totalCost.toLocaleString()} | Available: $${bunker.cash.toLocaleString()}`);
-
-            // 5. Check if we can afford it while keeping minimum cash
-            const cashAfterRepair = bunker.cash - costData.totalCost;
-            if (cashAfterRepair < settings.minCashAfterRepair) {
-                log(`Cannot repair: would leave $${cashAfterRepair.toLocaleString()}, need $${settings.minCashAfterRepair.toLocaleString()}`);
-                result.error = 'insufficient_funds';
-                return result;
-            }
-
-            // 6. Execute repair
+            // 5. Execute repair
             const repairResult = await bulkRepairVessels(vesselIds);
             result.vesselsRepaired = repairResult.count;
             result.totalCost = costData.totalCost;
 
             // Show toast notification
-            const toastMessage = `Repaired ${repairResult.count} vessels for $${costData.totalCost.toLocaleString()}`;
+            const toastMessage = `Repaired ${repairResult.count} vessels for $${result.totalCost.toLocaleString()}`;
             log(toastMessage);
             showToast(toastMessage);
 
@@ -521,7 +523,7 @@
 
             // Event handlers
             document.getElementById('yf-cancel').addEventListener('click', () => {
-                modalStore.close();
+                modalStore.closeAll();
             });
 
             document.getElementById('yf-save').addEventListener('click', () => {
@@ -555,7 +557,7 @@
 
                 log(`Settings saved: threshold=${threshold}%, minCash=$${minCash}, enabled=${enabled}`);
                 showToast('Auto Repair settings saved');
-                modalStore.close();
+                modalStore.closeAll();
             });
         }, 150);
     }
