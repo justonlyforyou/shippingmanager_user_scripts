@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Export Messages
 // @description Export all messenger conversations as CSV or JSON
-// @version     1.3
+// @version     1.4
 // @author      https://github.com/justonlyforyou/
 // @order       29
 // @match       https://shippingmanager.cc/*
@@ -9,6 +9,7 @@
 // @run-at      document-end
 // @enabled     false
 // ==/UserScript==
+/* globals File, Blob, URL */
 
 (function() {
     'use strict';

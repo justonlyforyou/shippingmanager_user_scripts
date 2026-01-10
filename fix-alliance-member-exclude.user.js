@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shipping Manager - Fix Alliance Member Exclude
 // @namespace    https://shippingmanager.cc/
-// @version      1.2
+// @version      1.3
 // @description  Fixes broken exclude buttons for CEO and adds missing ones for regular members
 // @author       https://github.com/justonlyforyou/
 // @order        51
@@ -159,29 +159,29 @@
                 e.preventDefault();
                 e.stopPropagation();
 
-                const ceo = getCEO();
+                const currentCeo = getCEO();
                 const toast = getToastStore();
-                const Language = getLanguage();
+                const lang = getLanguage();
 
-                if (!ceo) {
+                if (!currentCeo) {
                     alert('CEO not found. Refresh the page.');
                     return;
                 }
 
-                console.log('[Exclude Fix] CEO exclude clicked:', ceo);
+                console.log('[Exclude Fix] CEO exclude clicked:', currentCeo);
 
-                const msg = Language?.text('Alliance/management/exclude_user_prompt', {'[company_name]': ceo.company_name})
-                    || `Remove ${ceo.company_name} from alliance?`;
+                const msg = lang?.text('Alliance/management/exclude_user_prompt', {'[company_name]': currentCeo.company_name})
+                    || `Remove ${currentCeo.company_name} from alliance?`;
 
                 if (toast) {
                     toast.prompt(msg, [
                         { text: 'Yes', buttonColor: 'red', value: true },
                         { text: 'No', value: false }
                     ]).then((confirmed) => {
-                        if (confirmed) doKick(ceo.user_id, ceo.company_name);
+                        if (confirmed) doKick(currentCeo.user_id, currentCeo.company_name);
                     });
                 } else if (confirm(msg)) {
-                    doKick(ceo.user_id, ceo.company_name);
+                    doKick(currentCeo.user_id, currentCeo.company_name);
                 }
             });
 
@@ -208,11 +208,11 @@
             e.stopPropagation();
 
             const toast = getToastStore();
-            const Language = getLanguage();
+            const lang = getLanguage();
 
             console.log('[Exclude Fix] Member exclude clicked:', member);
 
-            const msg = Language?.text('Alliance/management/exclude_user_prompt', {'[company_name]': member.company_name})
+            const msg = lang?.text('Alliance/management/exclude_user_prompt', {'[company_name]': member.company_name})
                 || `Remove ${member.company_name} from alliance?`;
 
             if (toast) {

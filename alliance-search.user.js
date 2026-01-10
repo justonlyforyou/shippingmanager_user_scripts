@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name        Shipping Manager - Alliance Search
 // @description Search all alliances by name and open their profile
-// @version     3.1
+// @version     3.2
 // @author      https://github.com/justonlyforyou/
 // @order       19
 // @match       https://shippingmanager.cc/*
 // @run-at      document-end
 // @enabled     false
 // ==/UserScript==
+/* globals Event */
 
 (function() {
     'use strict';
@@ -107,7 +108,7 @@
         try {
             var data = localStorage.getItem(STORAGE_META_KEY);
             return data ? JSON.parse(data) : null;
-        } catch (e) {
+        } catch {
             return null;
         }
     }
@@ -117,7 +118,7 @@
         try {
             var data = localStorage.getItem(STORAGE_PROGRESS_KEY);
             return data ? JSON.parse(data) : null;
-        } catch (e) {
+        } catch {
             return null;
         }
     }
@@ -417,17 +418,17 @@
         if (!messagingIcon) messagingIcon = document.querySelector('.messaging');
         if (!messagingIcon) return null;
 
-        var container = document.createElement('div');
+        container = document.createElement('div');
         container.id = 'rebelship-menu';
         container.style.cssText = 'position:relative;display:inline-block;vertical-align:middle;margin-right:10px;margin-left:auto;';
 
-        var btn = document.createElement('button');
+        btn = document.createElement('button');
         btn.id = 'rebelship-menu-btn';
         btn.innerHTML = REBELSHIP_LOGO;
         btn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:36px;height:36px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:white;border:none;border-radius:6px;cursor:pointer;box-shadow:0 2px 4px rgba(0,0,0,0.2);';
         btn.title = 'RebelShip Menu';
 
-        var dropdown = document.createElement('div');
+        dropdown = document.createElement('div');
         dropdown.className = 'rebelship-dropdown';
         dropdown.style.cssText = 'display:none;position:absolute;top:100%;right:0;background:#1f2937;border:1px solid #374151;border-radius:4px;min-width:180px;z-index:99999;box-shadow:0 4px 12px rgba(0,0,0,0.3);margin-top:4px;';
 
@@ -929,10 +930,10 @@
             item.style.cssText = 'padding:10px;border-bottom:1px solid #ddd;cursor:pointer;display:flex;align-items:center;gap:10px;';
 
             item.addEventListener('mouseenter', function() {
-                try { this.style.background = '#e5e5e5'; } catch(e) {}
+                try { this.style.background = '#e5e5e5'; } catch {}
             });
             item.addEventListener('mouseleave', function() {
-                try { this.style.background = 'transparent'; } catch(e) {}
+                try { this.style.background = 'transparent'; } catch {}
             });
 
             // Alliance logo

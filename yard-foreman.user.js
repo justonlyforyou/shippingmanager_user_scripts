@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shipping Manager - Auto Repair
 // @namespace    https://rebelship.org/
-// @version      2.3
+// @version      2.4
 // @description  Auto-repair vessels when wear reaches threshold
 // @author       https://github.com/justonlyforyou/
 // @order        15
@@ -29,14 +29,7 @@
     let monitorInterval = null;
     let isProcessing = false;
 
-    // ========== BACKGROUND MODE DETECTION ==========
-    // Check background mode dynamically (not at load time)
-    // Background mode = headless WebView without UI elements
-    function isBackgroundMode() {
-        return !document.getElementById('app') || !document.querySelector('.messaging');
-    }
-
-    // ========== DIRECT API FUNCTIONS (for background mode) ==========
+    // ========== DIRECT API FUNCTIONS ==========
     async function fetchWithCookie(url, options = {}) {
         const mergedHeaders = {
             'Content-Type': 'application/json',

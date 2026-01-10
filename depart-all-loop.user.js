@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Depart All Loop
 // @description Clicks Depart All button repeatedly until all vessels departed
-// @version     2.3
+// @version     2.4
 // @author      https://github.com/justonlyforyou/
 // @order       23
 // @match       https://shippingmanager.cc/*
@@ -13,17 +13,39 @@
 (function() {
     'use strict';
 
-    let running = false;
-    let loopBtn = null;
+    var running = false;
+    var loopBtn = null;
+    var lastDepartError = null;
 
-    function hasErrorNotification() {
-        const notifications = document.querySelectorAll('.singleNotification .content');
-        for (const n of notifications) {
-            if (n.textContent.includes('Not enough fuel')) {
-                return true;
+    // Intercept fetch to catch depart-all API errors
+    var originalFetch = window.fetch;
+    window.fetch = async function() {
+        var url = arguments[0];
+        var urlStr = typeof url === 'string' ? url : url.toString();
+
+        var response = await originalFetch.apply(this, arguments);
+
+        // Check depart-all response for errors
+        if (urlStr.includes('/route/depart-all')) {
+            try {
+                var clone = response.clone();
+                var data = await clone.json();
+                if (data.error) {
+                    lastDepartError = data.error;
+                    console.log('[DepartLoop] API error:', data.error);
+                } else {
+                    lastDepartError = null;
+                }
+            } catch {
+                // ignore
             }
         }
-        return false;
+
+        return response;
+    };
+
+    function hasNotEnoughFuel() {
+        return lastDepartError === 'not_enough_fuel';
     }
 
     async function getVesselsAtPort() {
@@ -87,9 +109,9 @@
             // Wait for response
             await new Promise(r => setTimeout(r, 2000));
 
-            // Check for error notification in DOM
-            if (hasErrorNotification()) {
-                console.log('[Loop] Stopping - Not enough fuel');
+            // Check API response for fuel error
+            if (hasNotEnoughFuel()) {
+                console.log('[Loop] Stopping - not_enough_fuel');
                 break;
             }
         }

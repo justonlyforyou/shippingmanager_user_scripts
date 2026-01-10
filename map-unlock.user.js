@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name        Shipping Manager - Premium Feature Unlocker
 // @description Unlocks premium map themes, tanker ops, metropolis and extended zoom
-// @version     1.0
+// @version     1.2
 // @author      https://github.com/justonlyforyou/
 // @order       10
 // @match       https://shippingmanager.cc/*
 // @run-at      document-end
 // @enabled     false
 // ==/UserScript==
+/* globals MutationObserver, Event */
 
 (function() {
     'use strict';
@@ -15,6 +16,7 @@
     if (window._rebelShipUnlockActive) return;
     window._rebelShipUnlockActive = true;
 
+    // eslint-disable-next-line no-secrets/no-secrets
     var TOKEN = 'sk.eyJ1Ijoic2hqb3J0aCIsImEiOiJjbGV0cHdodGwxaWZnM3NydnlvNHc4cG02In0.D5n6nIFb0JqhGA9lM_jRkw';
 
     var PREMIUM_THEMES = {
@@ -73,7 +75,7 @@
             var center = map.getCenter();
             map.panTo([center.lat + 0.0001, center.lng], {animate: false});
             setTimeout(function() { map.panTo([center.lat, center.lng], {animate: false}); }, 100);
-        } catch(e) {}
+        } catch {}
 
         console.log('[Map Unlock] Switched to premium theme:', themeName);
     }
@@ -102,13 +104,13 @@
             // Invalidate and redraw
             map.invalidateSize();
             map._resetView(map.getCenter(), map.getZoom(), true);
-        } catch(e) {
+        } catch {
             // Fallback: reload page section
             try {
                 var tileContainers = document.querySelectorAll('.leaflet-tile-container');
                 tileContainers.forEach(function(c) { c.innerHTML = ''; });
                 window.dispatchEvent(new Event('resize'));
-            } catch(e2) {}
+            } catch {}
         }
 
         console.log('[Map Unlock] Reset to standard tiles');
@@ -116,10 +118,14 @@
 
     // Auto-accept cookies
     function acceptCookies() {
-        var btn = document.querySelector('button.dark-green');
-        if (btn && btn.textContent.includes('accept')) {
-            btn.click();
-            return true;
+        // Find accept button inside cookie consent banner (language-independent)
+        var banner = document.querySelector('.cookieConsent');
+        if (banner) {
+            var btn = banner.querySelector('button.dark-green');
+            if (btn) {
+                btn.click();
+                return true;
+            }
         }
         return false;
     }
@@ -161,7 +167,7 @@
                     if (state.settings) state.settings.metropolis = newMetropolis;
                 });
             }
-        } catch(e) {}
+        } catch {}
     }
 
     // Unlock zoom range
@@ -176,7 +182,7 @@
                 mapStore.map.setMinZoom(1);
                 mapStore.map.setMaxZoom(18);
             }
-        } catch(e) {}
+        } catch {}
     }
 
     // Fix layer control - keep standard options, add premium options

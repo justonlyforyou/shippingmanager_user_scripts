@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name        Shipping Manager - Export All Vessels
 // @description Export all vessels with details as CSV
-// @version     1.3
+// @version     1.4
 // @author      https://github.com/justonlyforyou/
 // @order       28
 // @match       https://shippingmanager.cc/*
 // @run-at      document-end
 // @enabled     false
 // ==/UserScript==
+/* globals Blob, URL */
 
 (function() {
     'use strict';

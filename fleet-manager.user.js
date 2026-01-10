@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Mass-Moore/Resume
 // @namespace    http://tampermonkey.net/
-// @version      4.1
+// @version      4.2
 // @description  Mass Moor and Resume vessels with checkbox selection
 // @author       https://github.com/justonlyforyou/
 // @order        23
@@ -10,6 +10,7 @@
 // @run-at       document-end
 // @enabled      true
 // ==/UserScript==
+/* globals MutationObserver */
 
 (function() {
     'use strict';
@@ -41,7 +42,7 @@
             if (!appEl || !appEl.__vue_app__) return null;
             var app = appEl.__vue_app__;
             return app._context.provides.pinia || app.config.globalProperties.$pinia;
-        } catch (e) {
+        } catch {
             return null;
         }
     }
@@ -51,7 +52,7 @@
             var pinia = getPinia();
             if (!pinia || !pinia._s) return null;
             return pinia._s.get('toast');
-        } catch (e) {
+        } catch {
             return null;
         }
     }
@@ -110,7 +111,7 @@
             var pinia = getPinia();
             if (!pinia || !pinia._s) return null;
             return pinia._s.get('vessel');
-        } catch (e) {
+        } catch {
             return null;
         }
     }
@@ -200,9 +201,6 @@
             var checkbox = document.createElement('input');
             checkbox.type = 'checkbox';
             checkbox.style.cssText = 'width: 18px; height: 18px; cursor: pointer; accent-color: #22c55e;';
-
-            // Get vessel ID
-            var vesselId = getVesselIdFromRow(row);
 
             checkbox.addEventListener('change', function(e) {
                 e.stopPropagation();

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shipping Manager - Enable Distance Filter
 // @namespace    http://tampermonkey.net/
-// @version      8.0
+// @version      8.1
 // @description  Filter ports by distance when creating new routes
 // @order        30
 // @author       RebelShip
@@ -57,12 +57,6 @@
         var port = rs.ports.find(function(p) { return p.code === code; });
         if (!port) return null;
         return { lat: parseFloat(port.lat), lon: parseFloat(port.lon) };
-    }
-
-    function getPortByCode(code) {
-        var rs = getStore("route");
-        if (!rs || !rs.ports) return null;
-        return rs.ports.find(function(p) { return p.code === code; });
     }
 
     function clickShowAll() {

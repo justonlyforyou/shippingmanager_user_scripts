@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shipping Manager - Fix Alliance Edit Buttons
 // @namespace    https://shippingmanager.cc/
-// @version      1.2
+// @version      1.3
 // @description  Adds missing edit buttons for alliance name/description for interim_ceo
 // @author       https://github.com/justonlyforyou/
 // @order        53
@@ -10,6 +10,7 @@
 // @run-at       document-end
 // @enabled      false
 // ==/UserScript==
+/* globals prompt, Node */
 
 (function() {
     'use strict';
@@ -329,7 +330,6 @@
             // Skip if already processed
             if (div.dataset.smfixProcessed) continue;
 
-            const text = div.textContent?.trim();
             const directText = Array.from(div.childNodes)
                 .filter(n => n.nodeType === Node.TEXT_NODE)
                 .map(n => n.textContent.trim())

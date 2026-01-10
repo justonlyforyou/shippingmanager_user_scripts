@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shipping Manager - Demand Summary
 // @namespace    https://rebelship.org/
-// @version      4.4
+// @version      4.5
 // @description  Shows port demand with vessel capacity allocation overview
 // @author       https://github.com/justonlyforyou/
 // @order        25
@@ -818,9 +818,10 @@
             if (!pendingReturn) return;
 
             // Check if clicked on Back button in bottom controls
-            const target = e.target;
-            const isBackBtn = target.closest('#bottom-controls .control-btn') &&
-                              (target.textContent.trim() === 'Back' || target.closest('.control-btn').textContent.trim() === 'Back');
+            // Back button uses .light-blue class (language-independent)
+            var target = e.target;
+            var controlBtn = target.closest('#bottom-controls .control-btn');
+            var isBackBtn = controlBtn && controlBtn.classList.contains('light-blue');
 
             if (isBackBtn) {
                 e.preventDefault();

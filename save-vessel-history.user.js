@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Save Vessel History
 // @namespace    http://tampermonkey.net/
-// @version      2.9
+// @version      3.1
 // @description  Detect vessel history API calls and offer CSV download
 // @author       https://github.com/justonlyforyou/
 // @order        25
@@ -10,6 +10,7 @@
 // @run-at       document-end
 // @enabled     false
 // ==/UserScript==
+/* globals XMLHttpRequest, Blob, URL */
 
 (function() {
     'use strict';
@@ -88,7 +89,7 @@
                             const vesselName = data.data?.user_vessel?.name || 'Vessel';
 
                             showSaveButton(vesselName, vesselId, history);
-                        } catch (e) {
+                        } catch {
                             showSaveButton('Vessel', vesselId, null);
                         }
                     });
@@ -117,15 +118,13 @@
             retryCount++;
             console.log('[VesselHistory] tryInsert attempt', retryCount);
 
-            // Find the blackBarHeader containing "Voyage history"
+            // Find the blackBarHeader for voyage history section
+            // Use the LAST blackBarHeader in the modal (voyage history is at bottom)
+            // This is language-independent
             const headers = document.querySelectorAll('.blackBarHeader');
             let targetHeader = null;
-            for (const header of headers) {
-                const p = header.querySelector('p');
-                if (p && p.textContent.trim() === 'Voyage history') {
-                    targetHeader = header;
-                    break;
-                }
+            if (headers.length > 0) {
+                targetHeader = headers[headers.length - 1];
             }
 
             if (!targetHeader) {

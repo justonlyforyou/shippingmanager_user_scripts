@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Alliance Chat Notification
 // @description Shows a red dot on Alliance button when there are unread messages
-// @version     2.3
+// @version     2.5
 // @author      https://github.com/justonlyforyou/
 // @order       18
 // @match       https://shippingmanager.cc/*
@@ -110,29 +110,42 @@
         }
     }
 
-    // Find the Chat tab in the alliance modal
+    // Get Pinia modalStore
+    function getModalStore() {
+        try {
+            var appEl = document.querySelector('#app');
+            if (!appEl || !appEl.__vue_app__) return null;
+            var app = appEl.__vue_app__;
+            var pinia = app._context.provides.pinia || app.config.globalProperties.$pinia;
+            if (!pinia || !pinia._s) return null;
+            return pinia._s.get('modal');
+        } catch {
+            return null;
+        }
+    }
+
+    // Find the Chat tab in the alliance modal (language-independent via translation key)
     function findChatTab() {
-        var tabs = document.querySelectorAll('.tab.flex-centered');
-        for (var i = 0; i < tabs.length; i++) {
-            var tab = tabs[i];
-            if (tab.textContent.trim().toLowerCase().startsWith('chat')) {
-                return tab;
+        var modalStore = getModalStore();
+        if (modalStore && modalStore.modalSettings && modalStore.modalSettings.tabs) {
+            var tabs = modalStore.modalSettings.tabs;
+            var chatIndex = -1;
+            for (var i = 0; i < tabs.length; i++) {
+                var tab = tabs[i];
+                var title = tab.title || tab;
+                if (title === 'Alliance/chat') {
+                    chatIndex = i;
+                    break;
+                }
+            }
+            if (chatIndex >= 0) {
+                var domTabs = document.querySelectorAll('.tab.flex-centered');
+                if (domTabs[chatIndex]) {
+                    return domTabs[chatIndex];
+                }
             }
         }
         return null;
-    }
-
-    // Check if Chat tab is currently active/selected
-    function isChatTabSelected() {
-        var chatTab = findChatTab();
-        if (!chatTab) return false;
-
-        // Check if tab has active class or is selected
-        return chatTab.classList.contains('active') ||
-               chatTab.classList.contains('selected') ||
-               chatTab.getAttribute('aria-selected') === 'true' ||
-               chatTab.style.borderBottom !== '' ||
-               chatTab.querySelector('.active');
     }
 
     var cachedAllianceId = null;
@@ -263,9 +276,9 @@
                 isChatTabActive = true;
                 scheduleMarkAsRead();
             } else if (target.closest('.tab.flex-centered')) {
-                // Clicked on another tab
+                // Clicked on another tab (not chat tab)
                 var clickedTab = target.closest('.tab.flex-centered');
-                if (!clickedTab.textContent.trim().toLowerCase().startsWith('chat')) {
+                if (clickedTab !== chatTab) {
                     isChatTabActive = false;
                     cancelMarkAsRead();
                 }

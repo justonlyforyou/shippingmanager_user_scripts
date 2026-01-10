@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name        Shipping Manager - Auto Expand Advanced Settings
 // @description Automatically expands "Advanced" menus and shows price difference from auto price
-// @version     1.6
+// @version     1.7
 // @author      https://github.com/justonlyforyou/
 // @order       20
 // @match       https://shippingmanager.cc/*
 // @run-at      document-end
 // @enabled     true
 // ==/UserScript==
+/* globals MutationObserver */
 
 (function() {
     'use strict';
@@ -88,7 +89,7 @@
             var app = document.querySelector('#app');
             if (!app || !app.__vue_app__) return null;
             return app.__vue_app__._context.provides.pinia || app.__vue_app__.config.globalProperties.$pinia;
-        } catch (e) {
+        } catch {
             return null;
         }
     }
@@ -142,7 +143,7 @@
 
             // Fallback: Search all stores for selectedVessel or vessel with routes
             var found = null;
-            pinia._s.forEach(function(store, name) {
+            pinia._s.forEach(function(store) {
                 if (found) return;
                 try {
                     var props = ['selectedVessel', 'vessel', 'userVessel', 'trackedVessel'];
@@ -156,12 +157,12 @@
                             }
                         }
                     }
-                } catch (e) {}
+                } catch {}
             });
 
             if (found) return found;
 
-        } catch (e) {
+        } catch {
             // Silently fail
         }
         return null;
@@ -201,7 +202,7 @@
                 autoPricesCache[cacheKey] = data.data;
                 return data.data;
             }
-        } catch (e) {
+        } catch {
             // Silently fail
         }
         return null;
