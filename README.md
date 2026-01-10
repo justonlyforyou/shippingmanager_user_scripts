@@ -24,33 +24,53 @@ The easiest way to use these scripts is with **RebelShip Browser**, which has al
 
 ## Scripts
 
-### Gameplay Enhancements
+### Core Features
 
 | Script | Description |
 |--------|-------------|
+| **map-unlock.user.js** | Unlocks premium map themes, tanker ops, metropolis and extended zoom |
+| **yard-foreman.user.js** | Auto-repair vessels when wear reaches configurable threshold |
+
+### Fleet Management
+
+| Script | Description |
+|--------|-------------|
+| **fleet-manager.user.js** | Mass Moor and Resume vessels with checkbox selection in At Port, At Sea, and Anchored tabs |
 | **vessel-cart.user.js** | Shopping cart for vessels - bookmark ships, compare prices, bulk purchase |
 | **buy-vip-vessel.user.js** | Purchase VIP vessels directly - a feature not available in the base game |
-| **forecast-calendar.user.js** | Visual calendar showing cargo demand forecasts and market predictions |
-| **bunker-price-display.user.js** | Shows fuel and CO2 prices directly in the interface |
-| **reputation-display.user.js** | Displays your current reputation score in the header |
-| **map-unlock.user.js** | Unlocks additional map features and navigation options |
-| **enable-distance-filter.user.js** | Filter destination ports by distance ranges (< 1000nm, 1-3k, 3-6k, 6-10k, > 10k) in route creation |
-| **auto-expand-advanced.user.js** | Auto-expands "Advanced" menus + shows price % difference from auto price |
+| **at-port-refresh.user.js** | Automatically refreshes the At Port vessel list every 30 seconds |
 
 ### Automation
 
 | Script | Description |
 |--------|-------------|
-| **auto-buy-fuel-co2.user.js** | Auto-buy fuel and CO2 with 3 modes: Basic (price threshold), Intelligent (calculates vessel needs), Emergency (low bunker override) |
-| **auto-depart.user.js** | Automatically departs vessels when ready |
-| **depart-all-loop.user.js** | Continuously departs all ready vessels in a loop |
+| **auto-bunker-depart.user.js** | Auto-buy fuel/CO2 and auto-depart vessels - works in background mode via direct API |
+| **depart-all-loop.user.js** | Continuously clicks Depart All button until all vessels departed |
+
+### UI Enhancements
+
+| Script | Description |
+|--------|-------------|
+| **bunker-price-display.user.js** | Shows current fuel and CO2 bunker prices with fill levels |
+| **reputation-display.user.js** | Displays your current reputation score in the header |
+| **coop-tickets-display.user.js** | Shows open Co-Op tickets, red dot on alliance tab when tickets available |
+| **forecast-calendar.user.js** | Visual calendar showing cargo demand forecasts and market predictions |
+| **auto-expand-advanced.user.js** | Auto-expands "Advanced" menus + shows price % difference from auto price |
+| **enable-distance-filter.user.js** | Filter destination ports by distance ranges in route creation |
+
+### Alliance Features
+
+| Script | Description |
+|--------|-------------|
+| **alliance-chat-notification.user.js** | Shows a red dot on Alliance button when there are unread messages |
+| **alliance-search.user.js** | Search all alliances by name and open their profile |
 
 ### Data Export
 
 | Script | Description |
 |--------|-------------|
 | **export-vessels-csv.user.js** | Export your fleet data to CSV format |
-| **export-messages.user.js** | Export chat messages and conversations |
+| **export-messages.user.js** | Export chat messages and conversations as CSV or JSON |
 | **save-vessel-history.user.js** | Tracks and saves vessel purchase/sale history |
 
 ### Bug Fixes
@@ -59,6 +79,12 @@ The easiest way to use these scripts is with **RebelShip Browser**, which has al
 |--------|-------------|
 | **fix-alliance-member-exclude.user.js** | Fixes broken exclude buttons for CEO and adds missing ones for regular members |
 | **fix-alliance-edit-buttons.user.js** | Adds missing edit buttons for alliance name/description for interim_ceo |
+
+### Developer Tools
+
+| Script | Description |
+|--------|-------------|
+| **admin-view.user.js** | Enable admin/moderator UI elements (client-side only, for development) |
 
 ## Script Header Format
 
@@ -94,6 +120,7 @@ All scripts must include a UserScript metadata block at the top of the file. Thi
 | `@grant` | No | Permissions needed. Use `none` for standard scripts |
 | `@run-at` | No | When to inject: `document-start`, `document-end` (default), `document-idle` |
 | `@enabled` | No | Default state: `true` or `false`. Scripts default to disabled |
+| `@background-job-required` | No | Set to `true` if script needs background execution (Android) |
 
 ### Order Guidelines
 
@@ -101,10 +128,11 @@ Scripts are loaded and displayed in order from lowest to highest. Use these rang
 
 | Range | Category | Examples |
 |-------|----------|----------|
-| 10-19 | Core/Early | map-unlock (10) |
-| 20-29 | Automation | auto-buy-fuel-co2 (20), auto-depart (21) |
-| 30-39 | Bug Fixes | fix-alliance-edit-buttons (30) |
-| 50-59 | Export Tools | export-messages (52) |
+| 10-19 | Core/Early | map-unlock (10), yard-foreman (15) |
+| 20-29 | Automation/Display | auto-bunker-depart (20), bunker-price-display (22), fleet-manager (23), depart-all-loop (23) |
+| 30-39 | Route Tools | enable-distance-filter (30) |
+| 50-59 | Bug Fixes | fix-alliance-member-exclude (51), fix-alliance-edit-buttons (53) |
+| 100+ | Special/Optional | forecast-calendar (100) |
 
 ### Where Headers Are Used
 
@@ -119,10 +147,11 @@ Scripts are loaded and displayed in order from lowest to highest. Use these rang
 - **Mobile Detection**: Scripts automatically adapt their UI for mobile screens (width < 800px)
 - **Shared Mobile Row**: Mobile scripts share a common header row for compact display
 - **Non-Intrusive**: Scripts integrate seamlessly with the game's existing UI
+- **Background Mode**: Select scripts (yard-foreman, auto-bunker-depart) support background execution on Android
 
 ## Compatibility
 
-- Tested with Shipping Manager as of December 2025
+- Tested with Shipping Manager as of January 2026
 - Works with Tampermonkey, Violentmonkey, and Greasemonkey on supported browsers
 - Mobile support via GeckoView-based browsers
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Depart All Loop
 // @description Clicks Depart All button repeatedly until all vessels departed
-// @version     1.0
+// @version     2.3
 // @author      https://github.com/justonlyforyou/
 // @order       23
 // @match       https://shippingmanager.cc/*
@@ -45,15 +45,24 @@
         return atPort.length;
     }
 
+    function updateButtonState() {
+        if (!loopBtn) return;
+        const btnContent = loopBtn.querySelector('.btn-content-wrapper');
+        if (running) {
+            btnContent.textContent = 'Stop';
+            loopBtn.classList.remove('light-blue');
+            loopBtn.classList.add('red');
+        } else {
+            btnContent.textContent = 'Depart Loop';
+            loopBtn.classList.remove('red');
+            loopBtn.classList.add('light-blue');
+        }
+    }
 
     async function loop() {
         if (running) return;
         running = true;
-
-        if (loopBtn) {
-            loopBtn.textContent = 'Stop';
-            loopBtn.style.background = '#ef4444';
-        }
+        updateButtonState();
 
         console.log('[Loop] Start');
 
@@ -86,36 +95,53 @@
         }
 
         running = false;
-        if (loopBtn) {
-            loopBtn.textContent = 'Depart Loop';
-            loopBtn.style.background = '#3b82f6';
-        }
+        updateButtonState();
         console.log('[Loop] Done');
     }
 
     function stop() {
         running = false;
+        updateButtonState();
         console.log('[Loop] Stopped');
     }
 
+    function injectStyles() {
+        if (document.getElementById('depart-loop-style')) return;
+
+        const style = document.createElement('style');
+        style.id = 'depart-loop-style';
+        style.textContent = '.bottomWrapper.btn-group { position: absolute !important; bottom: 0 !important; left: 0 !important; width: 100% !important; } .buttonWrapper { position: absolute !important; bottom: 46px !important; left: 0 !important; width: 100% !important; padding: 0 2px !important; box-sizing: border-box !important; gap: 2px !important; }';
+        document.head.appendChild(style);
+    }
+
     function addButton() {
+        injectStyles();
+
         const orig = document.getElementById('depart-all-btn');
         if (!orig || document.getElementById('depart-loop-btn')) return;
 
-        const harborMenu = orig.closest('.harborMenu') || orig.closest('.harbor-menu') || orig.parentNode;
-        const menuWidth = harborMenu.offsetWidth;
+        const buttonWrapper = orig.closest('.buttonWrapper');
+        if (!buttonWrapper) return;
 
         const wrapper = document.createElement('div');
-        wrapper.style.cssText = 'grid-column: 1 / -1; width: 100%;';
+        wrapper.style.cssText = 'grid-column: 1 / -1; width: 100%; margin-top: 4px;';
 
         loopBtn = document.createElement('button');
         loopBtn.id = 'depart-loop-btn';
-        loopBtn.textContent = 'Depart Loop';
-        loopBtn.style.cssText = `display:block;width:${menuWidth - 20}px;margin:2px auto 4px;padding:6px;background:#3b82f6;color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:bold;`;
+        loopBtn.type = 'button';
+        loopBtn.className = 'btn btn-depart btn-block default light-blue';
+        loopBtn.style.width = '100%';
+
+        const btnContent = document.createElement('div');
+        btnContent.className = 'btn-content-wrapper fit-btn-text';
+        btnContent.style.fontSize = '14px';
+        btnContent.textContent = 'Depart Loop';
+
+        loopBtn.appendChild(btnContent);
         loopBtn.onclick = () => running ? stop() : loop();
 
         wrapper.appendChild(loopBtn);
-        harborMenu.appendChild(wrapper);
+        buttonWrapper.appendChild(wrapper);
     }
 
     setInterval(addButton, 1000);
