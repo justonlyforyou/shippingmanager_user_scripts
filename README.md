@@ -46,7 +46,6 @@ The easiest way to use these scripts is with **RebelShip Browser**, which has al
 |--------|-------------|
 | **auto-bunker-depart.user.js** | Auto-buy fuel/CO2 and auto-depart vessels - works in background mode via direct API |
 | **depart-all-loop.user.js** | Continuously clicks Depart All button until all vessels departed |
-| **fast-delivery.user.js** | Fast delivery for built vessels via drydock exploit - reduces delivery to 60 minutes |
 
 ### UI Enhancements
 
@@ -130,7 +129,7 @@ Scripts are loaded and displayed in order from lowest to highest. Use these rang
 | Range | Category | Examples |
 |-------|----------|----------|
 | 10-19 | Core/Early | map-unlock (10), yard-foreman (15) |
-| 20-29 | Automation/Display | auto-bunker-depart (20), bunker-price-display (22), fleet-manager (23), depart-all-loop (23), fast-delivery (24) |
+| 20-29 | Automation/Display | auto-bunker-depart (20), bunker-price-display (22), fleet-manager (23), depart-all-loop (23) |
 | 30-39 | Route Tools | enable-distance-filter (30) |
 | 50-59 | Bug Fixes | fix-alliance-member-exclude (51), fix-alliance-edit-buttons (53) |
 | 100+ | Special/Optional | forecast-calendar (100) |

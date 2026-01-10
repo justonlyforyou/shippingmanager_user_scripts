@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Reputation Display
 // @description Shows reputation next to company name, click to open Finance modal
-// @version     4.4
+// @version     4.5
 // @author      joseywales - Pimped by https://github.com/justonlyforyou/
 // @order       24
 // @match       https://shippingmanager.cc/*
@@ -52,7 +52,7 @@
 
             reputationElement = document.createElement('div');
             reputationElement.id = 'reputation-display';
-            reputationElement.style.cssText = 'display:flex !important;align-items:center !important;padding:0 !important;font-size:11px !important;font-weight:bold !important;cursor:pointer !important;color:#fbbf24 !important;';
+            reputationElement.style.cssText = 'display:flex !important;align-items:center !important;padding:0 !important;font-size:12px !important;font-weight:bold !important;cursor:pointer !important;color:#fbbf24 !important;';
             reputationElement.textContent = 'Rep: ...';
 
             reputationElement.addEventListener('click', () => {

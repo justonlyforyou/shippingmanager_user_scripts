@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Co-Op Tickets Display
 // @description Shows open Co-Op tickets, red dot on alliance tab when tickets available
-// @version     2.5
+// @version     2.7
 // @author      https://github.com/justonlyforyou/
 // @order       25
 // @match       https://shippingmanager.cc/*
@@ -97,7 +97,7 @@
 
             coopElement = document.createElement('div');
             coopElement.id = 'coop-tickets-display';
-            coopElement.style.cssText = 'display:flex !important;align-items:center !important;padding:0 !important;font-size:11px !important;font-weight:bold !important;cursor:pointer !important;color:#4ade80 !important;';
+            coopElement.style.cssText = 'display:flex !important;align-items:center !important;padding:0 !important;font-size:12px !important;font-weight:bold !important;cursor:pointer !important;color:#4ade80 !important;';
             coopElement.textContent = 'CoOp: ...';
             coopElement.addEventListener('click', openAllianceCoopTab);
 
@@ -117,7 +117,7 @@
         coopElement = document.createElement('div');
         coopElement.id = 'coop-tickets-display';
         coopElement.style.cssText = 'display:inline-flex;align-items:center;margin-left:10px;padding:2px 8px;border-radius:4px;font-size:13px;font-weight:bold;cursor:pointer;background:#4ade80;color:#333;';
-        coopElement.textContent = 'Co-Op: ...';
+        coopElement.textContent = 'CoOp: ...';
         coopElement.addEventListener('click', openAllianceCoopTab);
 
         var repDisplay = document.getElementById('reputation-display');
@@ -146,7 +146,7 @@
             if (!response.ok) return null;
             var data = await response.json();
             return data?.data?.alliance || null;
-        } catch (e) {
+        } catch {
             return null;
         }
     }
@@ -162,7 +162,7 @@
             if (!response.ok) return null;
             var data = await response.json();
             return data?.data?.pool?.direct || [];
-        } catch (e) {
+        } catch {
             return null;
         }
     }
@@ -184,7 +184,7 @@
                 el.textContent = 'CoOp: ' + openTickets + '/' + maxTickets;
                 el.style.color = getCoopColor(openTickets);
             } else {
-                el.textContent = 'Co-Op: ' + openTickets + '/' + maxTickets;
+                el.textContent = 'CoOp: ' + openTickets + '/' + maxTickets;
                 el.style.background = getCoopColor(openTickets);
             }
         }
