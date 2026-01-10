@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shipping Manager - Auto Repair
 // @namespace    https://rebelship.org/
-// @version      2.2
+// @version      2.3
 // @description  Auto-repair vessels when wear reaches threshold
 // @author       https://github.com/justonlyforyou/
 // @order        15
@@ -30,9 +30,10 @@
     let isProcessing = false;
 
     // ========== BACKGROUND MODE DETECTION ==========
+    // Check background mode dynamically (not at load time)
+    // Background mode = headless WebView without UI elements
     function isBackgroundMode() {
-        return typeof window.RebelShipBridge !== 'undefined' ||
-               (typeof window !== 'undefined' && window.location.href.includes('background=true'));
+        return !document.getElementById('app') || !document.querySelector('.messaging');
     }
 
     // ========== DIRECT API FUNCTIONS (for background mode) ==========
@@ -273,7 +274,9 @@
     function getOrCreateRebelShipMenu() {
         let menu = document.getElementById('rebelship-menu');
         if (menu) {
-            return menu.querySelector('.rebelship-dropdown');
+            // Menu exists - check if it has a dropdown we can use
+            let dropdown = menu.querySelector('.rebelship-dropdown');
+            if (dropdown) return dropdown;
         }
 
         // Mobile: insert into mobile row
@@ -563,23 +566,43 @@
     }
 
     // ========== INITIALIZATION ==========
+    let uiInitialized = false;
+    let uiRetryCount = 0;
+    const MAX_UI_RETRIES = 30; // Try for 30 seconds
+
+    function initUI() {
+        if (uiInitialized) return;
+
+        // Check if page is ready (has #app and .messaging)
+        const hasApp = document.getElementById('app');
+        const hasMessaging = document.querySelector('.messaging');
+
+        if (!hasApp || !hasMessaging) {
+            uiRetryCount++;
+            if (uiRetryCount < MAX_UI_RETRIES) {
+                setTimeout(initUI, 1000);
+                return;
+            }
+            log('Max UI retries reached, running in background mode');
+            return;
+        }
+
+        // Page is ready, add menu item
+        uiInitialized = true;
+        addMenuItem('Auto Repair', openSettingsModal);
+        log('Menu item added');
+    }
+
     function init() {
         log('Initializing...');
         loadSettings();
 
-        if (isBackgroundMode()) {
-            log('Running in BACKGROUND mode');
-            // In background mode, start monitoring immediately if enabled
-            if (settings.enabled) {
-                startMonitoring();
-            }
-        } else {
-            log('Running in BROWSER mode');
-            // In browser mode, add menu item (addMenuItem handles retry if menu not ready)
-            addMenuItem('Auto Repair', openSettingsModal);
-            if (settings.enabled) {
-                startMonitoring();
-            }
+        // Start UI initialization with retry
+        initUI();
+
+        // Start monitoring based on settings (works in both browser and background)
+        if (settings.enabled) {
+            setTimeout(startMonitoring, 3000);
         }
     }
 
@@ -592,10 +615,12 @@
         return await runRepairCheck();
     };
 
-    // Start when DOM is ready
+    // Wait for page ready - wait 2s for Vue to load
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
+        document.addEventListener('DOMContentLoaded', function() {
+            setTimeout(init, 2000);
+        });
     } else {
-        init();
+        setTimeout(init, 2000);
     }
 })();
