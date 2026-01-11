@@ -396,7 +396,7 @@
         }
 
         // Try parsing UTC+X format
-         
+        // eslint-disable-next-line security/detect-unsafe-regex
         const match = normalized.match(/^UTC([+-]?\d+(?:\.\d+)?)$/);
         if (match) {
             return parseFloat(match[1]);

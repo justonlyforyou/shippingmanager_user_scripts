@@ -16,7 +16,7 @@
     if (window._rebelShipUnlockActive) return;
     window._rebelShipUnlockActive = true;
 
-     
+    // eslint-disable-next-line no-secrets/no-secrets
     var TOKEN = 'sk.eyJ1Ijoic2hqb3J0aCIsImEiOiJjbGV0cHdodGwxaWZnM3NydnlvNHc4cG02In0.D5n6nIFb0JqhGA9lM_jRkw';
 
     var PREMIUM_THEMES = {

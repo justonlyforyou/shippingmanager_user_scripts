@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shipping Manager - Fast Delivery
 // @namespace    https://rebelship.org/
-// @version      1.4
+// @version      1.6
 // @description  Fast delivery for built vessels via drydock exploit
 // @author       https://github.com/justonlyforyou/
 // @order        24
@@ -10,7 +10,7 @@
 // @run-at       document-end
 // @enabled      false
 // ==/UserScript==
-/* globals CustomEvent */
+/* globals CustomEvent, MutationObserver */
 
 (function() {
     'use strict';
@@ -243,7 +243,6 @@
 
         // Check if any built vessels exist in pending
         const builtVessels = getBuiltPendingVessels();
-        log('Built vessels in pending: ' + builtVessels.length);
         if (builtVessels.length === 0) {
             if (existing) existing.remove();
             return;
@@ -509,12 +508,57 @@
     }
 
     // ============================================
-    // INITIALIZE
+    // INITIALIZE WITH MUTATION OBSERVER
     // ============================================
-    setInterval(() => {
-        injectCheckboxes();
-        injectButtons();
-    }, 1000);
+    let debounceTimer = null;
 
+    function debouncedInject() {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+            injectCheckboxes();
+            injectButtons();
+        }, 100);
+    }
+
+    function initObserver() {
+        // Watch for changes in the vessel listing area
+        const observer = new MutationObserver(function(mutations) {
+            let shouldInject = false;
+            for (const mutation of mutations) {
+                // Check if relevant elements changed
+                if (mutation.target.id === 'notifications-vessels-listing' ||
+                    mutation.target.classList?.contains('vesselList') ||
+                    mutation.target.classList?.contains('vesselRow') ||
+                    mutation.target.classList?.contains('header-text') ||
+                    mutation.addedNodes.length > 0) {
+                    shouldInject = true;
+                    break;
+                }
+            }
+            if (shouldInject) {
+                debouncedInject();
+            }
+        });
+
+        // Start observing when app is ready
+        function startObserving() {
+            const app = document.getElementById('app');
+            if (app) {
+                observer.observe(app, {
+                    childList: true,
+                    subtree: true
+                });
+                log('MutationObserver started');
+                // Initial injection
+                debouncedInject();
+            } else {
+                setTimeout(startObserving, 500);
+            }
+        }
+
+        startObserving();
+    }
+
+    initObserver();
     log('Script loaded');
 })();
