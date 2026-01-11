@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Vessel Shopping Cart
 // @description Add vessels to cart and bulk purchase them
-// @version     4.1
+// @version     4.5
 // @author      https://github.com/justonlyforyou/
 // @order       26
 // @match       https://shippingmanager.cc/*
@@ -138,16 +138,52 @@
                 return null;
             }
 
-            console.log('[VesselCart] Raw vessel data from Vue:', vesselData);
+            console.log('[VesselCart] Raw vessel data from Vue:', JSON.stringify(vesselData, null, 2));
+
+            // Determine vessel type
+            const vesselType = vesselData.capacity_type || vesselData.vessel_model || null;
+            console.log('[VesselCart] Vessel type:', vesselType);
+
+            // Extract capacity based on vessel type
+            // IMPORTANT: For tankers, the game divides BBL by 74 when storing!
+            // See fleet_b.js line 4031: e = this.$refs.tankerInput.valueAsNumber / 74
+            // So we need to multiply by 74 to get actual BBL value
+            let capacity = 0;
+            if (vesselData.capacity !== undefined && vesselData.capacity !== null) {
+                if (typeof vesselData.capacity === 'number') {
+                    capacity = vesselData.capacity;
+                    // For tankers on build page, multiply by 74 to get BBL
+                    if (vesselType === 'tanker') {
+                        capacity = Math.round(capacity * 74);
+                        console.log('[VesselCart] Tanker capacity converted: ' + vesselData.capacity + ' * 74 = ' + capacity + ' BBL');
+                    }
+                } else if (typeof vesselData.capacity === 'object') {
+                    // Object - extract based on vessel type (for existing vessels)
+                    if (vesselType === 'tanker') {
+                        capacity = (vesselData.capacity.fuel || 0) + (vesselData.capacity.crude_oil || 0);
+                    } else {
+                        capacity = (vesselData.capacity.dry || 0) + (vesselData.capacity.refrigerated || 0);
+                    }
+                }
+            }
+            // Also check capacity_max as fallback
+            if (capacity === 0 && vesselData.capacity_max) {
+                if (vesselType === 'tanker') {
+                    capacity = (vesselData.capacity_max.fuel || 0) + (vesselData.capacity_max.crude_oil || 0);
+                } else {
+                    capacity = (vesselData.capacity_max.dry || 0) + (vesselData.capacity_max.refrigerated || 0);
+                }
+            }
+            console.log('[VesselCart] Final capacity:', capacity);
 
             // Convert Vue component data to API format
             const config = {
                 name: vesselData.name || 'Custom Vessel',
                 ship_yard: vesselData.ship_yard || null,
-                vessel_model: vesselData.capacity_type || null,
+                vessel_model: vesselType,
                 engine_type: vesselData.engine_model ? (vesselData.engine_model.type || vesselData.engine_model) : null,
                 engine_kw: vesselData.engine_model ? (vesselData.engine_model.power || 0) : 0,
-                capacity: vesselData.capacity || 0,
+                capacity: capacity,
                 antifouling_model: vesselData.antifouling_model ? (vesselData.antifouling_model.model || vesselData.antifouling_model) : null,
                 bulbous: vesselData.bulbous ? 1 : 0,
                 enhanced_thrusters: vesselData.enhanced_thrusters ? 1 : 0,
@@ -279,9 +315,34 @@
         const existingIndex = cart.findIndex(item => getCartItemKey(item.vessel) === key);
 
         if (existingIndex > -1) {
+            const oldQty = cart[existingIndex].quantity;
             cart[existingIndex].quantity += quantity;
+            // For build items, expand ships array
+            if (vessel.type === 'build' && cart[existingIndex].ships) {
+                const baseName = vessel.buildConfig.name || vessel.name;
+                const basePort = vessel.buildConfig.ship_yard || '';
+                for (let i = 0; i < quantity; i++) {
+                    cart[existingIndex].ships.push({
+                        name: baseName + '_' + (oldQty + i + 1),
+                        port: basePort
+                    });
+                }
+            }
         } else {
-            cart.push({ vessel, quantity, key });
+            const item = { vessel, quantity, key };
+            // For build items, initialize ships array with individual configs
+            if (vessel.type === 'build') {
+                const baseName = vessel.buildConfig.name || vessel.name;
+                const basePort = vessel.buildConfig.ship_yard || '';
+                item.ships = [];
+                for (let i = 0; i < quantity; i++) {
+                    item.ships.push({
+                        name: quantity > 1 ? baseName + '_' + (i + 1) : baseName,
+                        port: basePort
+                    });
+                }
+            }
+            cart.push(item);
         }
 
         saveCart(cart);
@@ -300,10 +361,40 @@
         const cart = getCart();
         const index = cart.findIndex(item => (item.key || getCartItemKey(item.vessel)) === key);
         if (index > -1 && newQuantity > 0) {
-            cart[index].quantity = newQuantity;
+            const item = cart[index];
+            const oldQty = item.quantity;
+            item.quantity = newQuantity;
+
+            // For build items, adjust ships array
+            if (item.vessel.type === 'build' && item.ships) {
+                if (newQuantity > oldQty) {
+                    // Add new ships
+                    const baseName = item.vessel.buildConfig.name || item.vessel.name;
+                    const basePort = item.vessel.buildConfig.ship_yard || '';
+                    for (let i = oldQty; i < newQuantity; i++) {
+                        item.ships.push({
+                            name: baseName + '_' + (i + 1),
+                            port: basePort
+                        });
+                    }
+                } else if (newQuantity < oldQty) {
+                    // Remove ships from end
+                    item.ships = item.ships.slice(0, newQuantity);
+                }
+            }
             saveCart(cart);
         } else if (newQuantity <= 0) {
             removeFromCart(key);
+        }
+    }
+
+    // Update individual ship config (name/port) for build items
+    function updateShipConfig(cartKey, shipIndex, field, value) {
+        const cart = getCart();
+        const item = cart.find(i => (i.key || getCartItemKey(i.vessel)) === cartKey);
+        if (item && item.ships && item.ships[shipIndex]) {
+            item.ships[shipIndex][field] = value;
+            saveCart(cart);
         }
     }
 
@@ -334,6 +425,45 @@
             console.error('[VesselCart] Failed to get stores:', e);
             return null;
         }
+    }
+
+    // Get ports with drydock from game store
+    function getDrydockPorts() {
+        const stores = getStores();
+        if (!stores || !stores.game || !stores.game.ports) {
+            console.log('[VesselCart] No ports in game store');
+            return [];
+        }
+        return stores.game.ports
+            .filter(p => p.drydock !== null)
+            .sort((a, b) => a.code.localeCompare(b.code));
+    }
+
+    // Get anchor points info from stores
+    function getAnchorPointsInfo() {
+        const stores = getStores();
+        if (!stores) {
+            console.log('[VesselCart] No stores available for anchor points');
+            return null;
+        }
+
+        // Get total anchor points from user settings
+        const userStore = stores.user;
+        const totalAnchorPoints = userStore && userStore.settings ? userStore.settings.anchor_points : null;
+        if (totalAnchorPoints === null) {
+            console.log('[VesselCart] No anchor_points in user settings');
+            return null;
+        }
+
+        // Get current vessel count from vessel store
+        const vesselStore = stores.vessel;
+        const currentVessels = vesselStore && vesselStore.userVessels ? vesselStore.userVessels.length : 0;
+
+        return {
+            total: totalAnchorPoints,
+            currentVessels: currentVessels,
+            free: totalAnchorPoints - currentVessels
+        };
     }
 
     // Get vessel name from the modal UI
@@ -375,21 +505,17 @@
 
     // Get build configuration from injected script (runs in page context with Vue access)
     function getBuildConfig() {
-        // First check if we have a captured config from actual API call
-        if (window._rebelshipLastBuildConfig) {
-            console.log('[VesselCart] Using captured build config from intercepted API call');
-            return window._rebelshipLastBuildConfig;
-        }
-
-        // Use the injected function to read from Vue components
+        // ALWAYS read from Vue components to get current build state
+        // (Don't use _rebelshipLastBuildConfig - it's from a previous order, not current config!)
         if (typeof window._rebelshipGetBuildConfig === 'function') {
             const config = window._rebelshipGetBuildConfig();
             if (config) {
+                console.log('[VesselCart] Got build config from Vue:', config);
                 return config;
             }
         }
 
-        console.log('[VesselCart] Could not get build config');
+        console.log('[VesselCart] Could not get build config from Vue');
         return null;
     }
 
@@ -627,24 +753,24 @@
 
         // Cart items container
         const itemsContainer = document.createElement('div');
-        itemsContainer.style.cssText = 'padding:16px 20px;max-height:300px;overflow-y:auto;';
+        itemsContainer.style.cssText = 'padding:16px 20px;max-height:400px;overflow-y:auto;';
+
+        // Get drydock ports for build items
+        const drydockPorts = getDrydockPorts();
 
         // Build cart items
         cart.forEach(item => {
             const key = item.key || getCartItemKey(item.vessel);
             const isBuild = item.vessel.type === 'build';
 
-            let priceText, totalPrice;
             if (isBuild) {
-                // Show build details - handle objects by extracting value/name
+                // BUILD ITEM: Show config summary + individual ship rows
                 const cfg = item.vessel.buildConfig;
-                console.log('[VesselCart] Build config structure:', JSON.stringify(cfg, null, 2));
 
                 const getValue = (v) => {
                     if (v === null || v === undefined) return null;
                     if (typeof v === 'string' || typeof v === 'number') return v;
                     if (typeof v === 'object') {
-                        // Try common property names for the actual value
                         return v.value || v.name || v.id || v.type || v.label || JSON.stringify(v);
                     }
                     return String(v);
@@ -653,48 +779,84 @@
                 const details = [];
                 const model = getValue(cfg.vessel_model);
                 const capacity = getValue(cfg.capacity);
-                const shipyard = getValue(cfg.ship_yard);
                 const engine = getValue(cfg.engine_type);
                 const engineKw = getValue(cfg.engine_kw);
 
                 if (model) details.push(model);
                 if (capacity) details.push(formatNumber(capacity) + (model === 'tanker' ? ' BBL' : ' TEU'));
-                if (shipyard) details.push(shipyard);
                 if (engine) details.push(engine + (engineKw ? ' ' + formatNumber(engineKw) + 'kW' : ''));
 
-                // Add perks line
                 const perks = [];
                 if (cfg.bulbous) perks.push('Bulbous');
                 if (cfg.propeller_types) perks.push(cfg.propeller_types.replace(/_/g, ' '));
                 if (cfg.antifouling_model) perks.push('AF: ' + cfg.antifouling_model.replace(/_/g, ' '));
 
-                priceText = details.length > 0 ? details.join(' | ') : 'Build config';
+                let priceText = details.length > 0 ? details.join(' | ') : 'Build config';
                 if (perks.length > 0) {
                     priceText += ' [' + perks.join(', ') + ']';
                 }
 
-                // Use price from config if available
-                if (cfg.price && cfg.price > 0) {
-                    totalPrice = '$' + formatNumber(cfg.price * item.quantity);
-                } else {
-                    totalPrice = 'Build';
-                }
-            } else {
-                priceText = '$' + formatNumber(item.vessel.price) + ' each';
-                totalPrice = '$' + formatNumber(item.vessel.price * item.quantity);
-            }
+                const unitPrice = cfg.price && cfg.price > 0 ? cfg.price : 0;
+                const totalPrice = unitPrice > 0 ? '$' + formatNumber(unitPrice * item.quantity) : 'Build';
 
-            const itemDiv = document.createElement('div');
-            itemDiv.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:12px;background:#252b3b;border-radius:8px;margin-bottom:8px;';
-            itemDiv.innerHTML = '<div style="flex:1;"><div style="color:#fff;font-weight:500;">' + escapeHtml(item.vessel.name) + (isBuild ? ' <span style="color:#f59e0b;font-size:11px;">[BUILD]</span>' : '') + '</div><div style="color:#9ca3af;font-size:12px;">' + escapeHtml(priceText) + '</div></div><div style="display:flex;align-items:center;gap:8px;"><button class="cart-qty-minus" data-key="' + key + '" style="width:28px;height:28px;background:#374151;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:16px;">-</button><span style="color:#fff;min-width:24px;text-align:center;">' + item.quantity + '</span><button class="cart-qty-plus" data-key="' + key + '" style="width:28px;height:28px;background:#374151;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:16px;">+</button><button class="cart-remove" data-key="' + key + '" style="width:28px;height:28px;background:#dc2626;color:#fff;border:none;border-radius:4px;cursor:pointer;margin-left:8px;" title="Remove">x</button></div><div style="min-width:80px;text-align:right;color:#4ade80;font-weight:600;">' + totalPrice + '</div>';
-            itemsContainer.appendChild(itemDiv);
+                // Build config header
+                const headerDiv = document.createElement('div');
+                headerDiv.style.cssText = 'padding:12px;background:#252b3b;border-radius:8px 8px 0 0;margin-bottom:1px;border-left:3px solid #f59e0b;';
+                headerDiv.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;"><div style="flex:1;"><div style="color:#fff;font-weight:500;">' + escapeHtml(item.vessel.name) + ' <span style="color:#f59e0b;font-size:11px;">[BUILD x' + item.quantity + ']</span></div><div style="color:#9ca3af;font-size:11px;">' + escapeHtml(priceText) + '</div></div><div style="display:flex;align-items:center;gap:8px;"><button class="cart-qty-minus" data-key="' + key + '" style="width:24px;height:24px;background:#374151;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:14px;">-</button><span style="color:#fff;min-width:20px;text-align:center;font-size:12px;">' + item.quantity + '</span><button class="cart-qty-plus" data-key="' + key + '" style="width:24px;height:24px;background:#374151;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:14px;">+</button><button class="cart-remove" data-key="' + key + '" style="width:24px;height:24px;background:#dc2626;color:#fff;border:none;border-radius:4px;cursor:pointer;margin-left:4px;font-size:12px;" title="Remove">x</button></div><div style="min-width:70px;text-align:right;color:#4ade80;font-weight:600;font-size:13px;">' + totalPrice + '</div></div>';
+                itemsContainer.appendChild(headerDiv);
+
+                // Individual ship rows
+                const ships = item.ships || [];
+                ships.forEach((ship, idx) => {
+                    const shipDiv = document.createElement('div');
+                    shipDiv.style.cssText = 'padding:8px 12px;background:#1e2433;margin-bottom:1px;display:flex;align-items:center;gap:8px;' + (idx === ships.length - 1 ? 'border-radius:0 0 8px 8px;margin-bottom:8px;' : '');
+
+                    // Port dropdown
+                    let portOptions = '<option value="">Select Port</option>';
+                    drydockPorts.forEach(p => {
+                        const selected = ship.port === p.code ? ' selected' : '';
+                        portOptions += '<option value="' + p.code + '"' + selected + '>' + p.code + ' (' + p.country + ') [' + p.drydock + ']</option>';
+                    });
+
+                    shipDiv.innerHTML = '<span style="color:#6b7280;font-size:11px;min-width:20px;">#' + (idx + 1) + '</span>' +
+                        '<input type="text" class="ship-name-input" data-key="' + key + '" data-idx="' + idx + '" value="' + escapeHtml(ship.name) + '" style="flex:1;padding:4px 8px;background:#374151;border:1px solid #4b5563;border-radius:4px;color:#fff;font-size:12px;" placeholder="Ship name">' +
+                        '<select class="ship-port-select" data-key="' + key + '" data-idx="' + idx + '" style="width:140px;padding:4px;background:#374151;border:1px solid #4b5563;border-radius:4px;color:#fff;font-size:11px;">' + portOptions + '</select>';
+
+                    itemsContainer.appendChild(shipDiv);
+                });
+            } else {
+                // PURCHASE ITEM: Simple row
+                const priceText = '$' + formatNumber(item.vessel.price) + ' each';
+                const totalPrice = '$' + formatNumber(item.vessel.price * item.quantity);
+
+                const itemDiv = document.createElement('div');
+                itemDiv.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:12px;background:#252b3b;border-radius:8px;margin-bottom:8px;';
+                itemDiv.innerHTML = '<div style="flex:1;"><div style="color:#fff;font-weight:500;">' + escapeHtml(item.vessel.name) + '</div><div style="color:#9ca3af;font-size:12px;">' + escapeHtml(priceText) + '</div></div><div style="display:flex;align-items:center;gap:8px;"><button class="cart-qty-minus" data-key="' + key + '" style="width:28px;height:28px;background:#374151;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:16px;">-</button><span style="color:#fff;min-width:24px;text-align:center;">' + item.quantity + '</span><button class="cart-qty-plus" data-key="' + key + '" style="width:28px;height:28px;background:#374151;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:16px;">+</button><button class="cart-remove" data-key="' + key + '" style="width:28px;height:28px;background:#dc2626;color:#fff;border:none;border-radius:4px;cursor:pointer;margin-left:8px;" title="Remove">x</button></div><div style="min-width:80px;text-align:right;color:#4ade80;font-weight:600;">' + totalPrice + '</div>';
+                itemsContainer.appendChild(itemDiv);
+            }
         });
 
         // Footer with totals
         const footer = document.createElement('div');
         footer.style.cssText = 'padding:16px 20px;border-top:1px solid #374151;background:#0f1420;';
         const costDisplay = '$' + formatNumber(purchaseTotal) + (hasUnpricedBuilds ? ' (est.)' : '');
-        footer.innerHTML = '<div style="display:flex;justify-content:space-between;margin-bottom:8px;"><span style="color:#9ca3af;">Total Items:</span><span style="color:#fff;font-weight:500;">' + totalItems + ' vessels' + (hasBuildItems ? ' (incl. ' + cart.filter(i => i.vessel.type === 'build').reduce((s, i) => s + i.quantity, 0) + ' builds)' : '') + '</span></div><div style="display:flex;justify-content:space-between;margin-bottom:8px;"><span style="color:#9ca3af;">Cash Available:</span><span style="color:#4ade80;font-weight:500;">$' + formatNumber(userCash) + '</span></div><div style="display:flex;justify-content:space-between;"><span style="color:#fff;font-weight:600;">Total Cost:</span><span style="color:' + (canAfford ? '#4ade80' : '#ef4444') + ';font-weight:700;font-size:18px;">' + costDisplay + '</span></div>';
+
+        // Build footer HTML
+        let footerHtml = '<div style="display:flex;justify-content:space-between;margin-bottom:8px;"><span style="color:#9ca3af;">Total Items:</span><span style="color:#fff;font-weight:500;">' + totalItems + ' vessels' + (hasBuildItems ? ' (incl. ' + cart.filter(i => i.vessel.type === 'build').reduce((s, i) => s + i.quantity, 0) + ' builds)' : '') + '</span></div>';
+
+        // Anchor points info
+        const anchorInfo = getAnchorPointsInfo();
+        if (anchorInfo) {
+            const freeAfterPurchase = anchorInfo.free - totalItems;
+            const hasEnoughAnchors = freeAfterPurchase >= 0;
+            footerHtml += '<div style="display:flex;justify-content:space-between;margin-bottom:8px;"><span style="color:#9ca3af;">Anchor Points:</span><span style="color:#fff;font-weight:500;">' + anchorInfo.free + ' free / ' + anchorInfo.total + ' total</span></div>';
+            footerHtml += '<div style="display:flex;justify-content:space-between;margin-bottom:8px;"><span style="color:#9ca3af;">After Purchase:</span><span style="color:' + (hasEnoughAnchors ? '#4ade80' : '#ef4444') + ';font-weight:500;">' + freeAfterPurchase + ' free' + (hasEnoughAnchors ? '' : ' (not enough!)') + '</span></div>';
+        }
+
+        footerHtml += '<div style="display:flex;justify-content:space-between;margin-bottom:8px;"><span style="color:#9ca3af;">Cash Available:</span><span style="color:#4ade80;font-weight:500;">$' + formatNumber(userCash) + '</span></div>';
+        footerHtml += '<div style="display:flex;justify-content:space-between;"><span style="color:#fff;font-weight:600;">Total Cost:</span><span style="color:' + (canAfford ? '#4ade80' : '#ef4444') + ';font-weight:700;font-size:18px;">' + costDisplay + '</span></div>';
+
+        footer.innerHTML = footerHtml;
 
         modal.appendChild(header);
         modal.appendChild(itemsContainer);
@@ -756,6 +918,24 @@
                 }
             });
         });
+
+        // Ship name input handlers (for build items)
+        overlay.querySelectorAll('.ship-name-input').forEach(input => {
+            input.addEventListener('change', () => {
+                const key = input.dataset.key;
+                const idx = parseInt(input.dataset.idx);
+                updateShipConfig(key, idx, 'name', input.value);
+            });
+        });
+
+        // Ship port select handlers (for build items)
+        overlay.querySelectorAll('.ship-port-select').forEach(select => {
+            select.addEventListener('change', () => {
+                const key = select.dataset.key;
+                const idx = parseInt(select.dataset.idx);
+                updateShipConfig(key, idx, 'port', select.value);
+            });
+        });
     }
 
     // Process checkout - purchase all vessels
@@ -780,7 +960,11 @@
         for (const item of cart) {
             for (let i = 0; i < item.quantity; i++) {
                 currentPurchase++;
-                const vesselName = item.vessel.name + (item.quantity > 1 ? '_' + (i + 1) : '');
+
+                // Get ship config from ships array (for build items) or generate default
+                const shipConfig = item.ships && item.ships[i] ? item.ships[i] : null;
+                const vesselName = shipConfig ? shipConfig.name : (item.vessel.name + (item.quantity > 1 ? '_' + (i + 1) : ''));
+
                 progressEl.textContent = 'Processing ' + currentPurchase + '/' + totalPurchases;
                 statusEl.textContent = vesselName + ' (' + (i + 1) + '/' + item.quantity + ')';
 
@@ -788,13 +972,21 @@
                     let response, endpoint, body;
 
                     if (item.vessel.type === 'build' && item.vessel.buildConfig) {
-                        // Build new vessel
+                        // Build new vessel - use individual ship config
                         endpoint = '/api/vessel/build-vessel';
                         const buildConfig = { ...item.vessel.buildConfig };
-                        // Make name unique for multiple builds
-                        if (item.quantity > 1) {
+
+                        // Use name and port from ships array
+                        if (shipConfig) {
+                            buildConfig.name = shipConfig.name;
+                            if (shipConfig.port) {
+                                buildConfig.ship_yard = shipConfig.port;
+                            }
+                        } else if (item.quantity > 1) {
+                            // Fallback: Make name unique for multiple builds
                             buildConfig.name = buildConfig.name + '_' + (i + 1);
                         }
+
                         body = JSON.stringify(buildConfig);
                         console.log('[VesselCart] Building vessel:', buildConfig);
                     } else {
