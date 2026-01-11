@@ -924,7 +924,7 @@
     }
 
     function formatNumber(num) {
-        // eslint-disable-next-line security/detect-unsafe-regex
+         
         return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
     }
 

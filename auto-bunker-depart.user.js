@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Auto Bunker & Depart
 // @namespace    http://tampermonkey.net/
-// @version      10.3
+// @version      10.4
 // @description  Auto-buy fuel/CO2 and auto-depart vessels - works in background mode via direct API
 // @author       https://github.com/justonlyforyou/
 // @order        20
@@ -42,6 +42,8 @@
         co2IntelligentBelow: 500,
         co2IntelligentShipsEnabled: false,
         co2IntelligentShips: 5,
+        // Avoid negative CO2 bunker (refill after departures)
+        avoidNegativeCO2: false,
         // Auto-Depart
         autoDepartEnabled: false
     };
@@ -535,23 +537,20 @@
     }
 
     /**
-     * Calculate fuel consumption using game formula
-     * Formula: fuel_kg_per_nm = capacity * sqrt(speed) * fuel_factor / 40
-     * Then: fuel_kg = distance * (actual_speed / ref_speed) * kg_per_nm_ref
+     * Calculate fuel consumption using game formula (from app.js module 2576)
+     * Game formula: fuel_kg = capacity * distance * sqrt(actualSpeed) * fuel_factor / 40
      */
     function calculateFuelConsumption(vessel, distance, actualSpeed) {
         var capacity = getVesselCapacity(vessel);
         if (capacity <= 0 || distance <= 0 || actualSpeed <= 0) return 0;
 
-        var refSpeed = vessel.max_speed || actualSpeed;
         var fuelFactor = vessel.fuel_factor || 1;
 
-        // Calculate kg per nm at reference speed
-        var kgPerNmRef = capacity * Math.sqrt(refSpeed) * fuelFactor / 40;
-
-        // Calculate actual fuel consumption
-        var fuelKg = distance * (actualSpeed / refSpeed) * kgPerNmRef;
-        return fuelKg / 1000; // Return in tons
+        // Correct game formula: capacity * distance * sqrt(actualSpeed) * fuel_factor / 40
+        var fuelKg = capacity * distance * Math.sqrt(actualSpeed) * fuelFactor / 40;
+        var fuelTons = fuelKg / 1000;
+        // Add 2% safety margin for rounding differences
+        return fuelTons * 1.02;
     }
 
     /**
@@ -612,7 +611,11 @@
 
             var speed = vessel.route_speed || vessel.max_speed;
             var fuelNeeded = vessel.route_fuel_required || vessel.fuel_required;
-            if (!fuelNeeded) {
+            if (fuelNeeded) {
+                // Add 2% buffer to game's fuel requirement
+                fuelNeeded = fuelNeeded * 1.02;
+            } else {
+                // calculateFuelConsumption already includes 2% buffer
                 fuelNeeded = calculateFuelConsumption(vessel, distance, speed) * 1000;
             }
             totalFuel += fuelNeeded || 0;
@@ -704,7 +707,11 @@
 
                 var speed = vessel.route_speed || vessel.max_speed;
                 var fuelNeeded = vessel.route_fuel_required || vessel.fuel_required;
-                if (!fuelNeeded) {
+                if (fuelNeeded) {
+                    // Add 2% buffer to game's fuel requirement
+                    fuelNeeded = fuelNeeded * 1.02;
+                } else {
+                    // calculateFuelConsumption already includes 2% buffer
                     fuelNeeded = calculateFuelConsumption(vessel, distance, speed) * 1000;
                 }
                 totalFuelNeeded += (fuelNeeded || 0) / 1000;
@@ -848,9 +855,13 @@
     async function departSingleVessel(vessel, bunker) {
         // Calculate fuel needed for this vessel
         var fuelNeeded = vessel.route_fuel_required || vessel.fuel_required;
-        if (!fuelNeeded) {
+        if (fuelNeeded) {
+            // Add 2% buffer to game's fuel requirement
+            fuelNeeded = fuelNeeded * 1.02;
+        } else {
             var distance = vessel.route_distance;
             var speed = vessel.route_speed || vessel.max_speed;
+            // calculateFuelConsumption already includes 2% buffer
             fuelNeeded = calculateFuelConsumption(vessel, distance, speed) * 1000;
         }
         fuelNeeded = fuelNeeded / 1000; // Convert to tons
@@ -932,6 +943,34 @@
 
             // Show summary notification
             notify('Departed ' + departed + ' ships - Income: $' + Math.round(totalIncome), 'success', 'depart');
+
+            // AVOID NEGATIVE CO2: After all departures, refill CO2 if negative
+            if (settings.avoidNegativeCO2) {
+                try {
+                    var freshBunker = await fetchBunkerStateAPI();
+                    if (freshBunker && freshBunker.co2 < 0) {
+                        var prices = await fetchPricesAPI();
+                        if (prices && prices.co2 > 0) {
+                            var co2Needed = Math.ceil(Math.abs(freshBunker.co2)) + 1;
+                            var co2Space = freshBunker.maxCO2 - freshBunker.co2;
+                            var minCash = settings.co2MinCash;
+                            var cashAvailable = Math.max(0, freshBunker.cash - minCash);
+                            var maxAffordable = Math.floor(cashAvailable / prices.co2);
+                            var amountToBuy = Math.min(co2Needed, Math.floor(co2Space), maxAffordable);
+
+                            if (amountToBuy > 0) {
+                                console.log('[Auto-Depart] Avoid negative CO2: Bunker at ' + freshBunker.co2.toFixed(1) + 't, buying ' + amountToBuy + 't @ $' + prices.co2 + '/t');
+                                var co2Result = await purchaseCO2API(amountToBuy);
+                                if (co2Result && co2Result.success) {
+                                    notify('CO2 refill: ' + amountToBuy + 't @ $' + prices.co2 + '/t', 'success', 'co2');
+                                }
+                            }
+                        }
+                    }
+                } catch (co2Error) {
+                    console.log('[Auto-Depart] Avoid negative CO2 failed:', co2Error.message);
+                }
+            }
 
             // Refresh UI data
             refreshGameData();
@@ -1427,6 +1466,7 @@
                                         <div class="setting-row"><label class="checkbox-label"><input type="checkbox" id="ab-co2-intel-below-enabled" ' + (settings.co2IntelligentBelowEnabled ? 'checked' : '') + '><span>Only if bunker below</span></label><input type="number" id="ab-co2-intel-below" value="' + settings.co2IntelligentBelow + '" min="0" style="width:60px;margin-left:5px">t</div>\
                                         <div class="setting-row"><label class="checkbox-label"><input type="checkbox" id="ab-co2-intel-ships-enabled" ' + (settings.co2IntelligentShipsEnabled ? 'checked' : '') + '><span>Only if ships at port</span></label><input type="number" id="ab-co2-intel-ships" value="' + settings.co2IntelligentShips + '" min="1" style="width:60px;margin-left:5px"></div>\
                                     </div>\
+                                    <div class="setting-row" style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(34,197,94,0.2)"><label class="checkbox-label"><input type="checkbox" id="ab-avoid-negative-co2" ' + (settings.avoidNegativeCO2 ? 'checked' : '') + '><span>Avoid negative CO2 (refill after departures)</span></label></div>\
                                 </div>\
                             </div>\
                         </div>\
@@ -1482,6 +1522,7 @@
                     co2IntelligentBelow: parseInt(document.getElementById('ab-co2-intel-below').value) || DEFAULT_SETTINGS.co2IntelligentBelow,
                     co2IntelligentShipsEnabled: document.getElementById('ab-co2-intel-ships-enabled') && document.getElementById('ab-co2-intel-ships-enabled').checked,
                     co2IntelligentShips: parseInt(document.getElementById('ab-co2-intel-ships').value) || DEFAULT_SETTINGS.co2IntelligentShips,
+                    avoidNegativeCO2: document.getElementById('ab-avoid-negative-co2') && document.getElementById('ab-avoid-negative-co2').checked,
                     autoDepartEnabled: document.getElementById('ab-auto-depart') && document.getElementById('ab-auto-depart').checked
                 };
 

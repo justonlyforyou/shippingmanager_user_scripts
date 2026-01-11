@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shipping Manager - Demand Summary
 // @namespace    https://rebelship.org/
-// @version      4.5
+// @version      4.6
 // @description  Shows port demand with vessel capacity allocation overview
 // @author       https://github.com/justonlyforyou/
 // @order        25
@@ -585,23 +585,39 @@
         tooltip.innerHTML = html;
 
         // Position tooltip near the row
-        const rect = rowElement.getBoundingClientRect();
-        const tooltipWidth = 250;
-        let left = rect.right + 10;
-        let top = rect.top;
+        // First show it off-screen to measure actual height
+        tooltip.style.visibility = 'hidden';
+        tooltip.style.display = 'block';
+        var tooltipHeight = tooltip.offsetHeight;
+        var tooltipWidth = tooltip.offsetWidth;
+        tooltip.style.visibility = 'visible';
 
-        // Keep tooltip in viewport
+        var rect = rowElement.getBoundingClientRect();
+        var left = rect.right + 10;
+        var top = rect.top;
+
+        // Keep tooltip horizontally in viewport
         if (left + tooltipWidth > window.innerWidth) {
             left = rect.left - tooltipWidth - 10;
         }
-        if (top + 200 > window.innerHeight) {
-            top = window.innerHeight - 220;
+        if (left < 10) left = 10;
+
+        // Keep tooltip vertically in viewport
+        // If tooltip would go below viewport, flip it above the row or cap it
+        if (top + tooltipHeight > window.innerHeight - 10) {
+            // Try positioning above the row
+            var topAbove = rect.bottom - tooltipHeight;
+            if (topAbove >= 10) {
+                top = topAbove;
+            } else {
+                // Can't fit above either, position at bottom of viewport
+                top = window.innerHeight - tooltipHeight - 10;
+            }
         }
         if (top < 10) top = 10;
 
         tooltip.style.left = left + 'px';
         tooltip.style.top = top + 'px';
-        tooltip.style.display = 'block';
 
         // Attach refresh button handler
         const refreshBtn = document.getElementById('tooltip-refresh-btn');
