@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Vessel Shopping Cart
 // @description Add vessels to cart and bulk purchase them
-// @version     4.0
+// @version     4.1
 // @author      https://github.com/justonlyforyou/
 // @order       26
 // @match       https://shippingmanager.cc/*
@@ -533,8 +533,9 @@
                 return;
             }
 
-            btn.style.cssText = 'display:flex;align-items:center;gap:2px;padding:2px 6px;background:#f59e0b;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;';
+            btn.style.cssText = 'display:flex;align-items:center;gap:2px;padding:2px 6px;background:#f59e0b;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;margin-right:3px;';
 
+            // Position at far right, just before rebelship-menu
             var rebelMenu = document.getElementById('rebelship-menu');
             if (rebelMenu) {
                 row.insertBefore(btn, rebelMenu);
@@ -924,7 +925,7 @@
     }
 
     function formatNumber(num) {
-         
+        // eslint-disable-next-line security/detect-unsafe-regex
         return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
     }
 
