@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Co-Op Tickets Display
 // @description Shows open Co-Op tickets, auto-sends COOP vessels to alliance members
-// @version     4.1
+// @version     4.2
 // @author      https://github.com/justonlyforyou/
 // @order       25
 // @match       https://shippingmanager.cc/*
@@ -108,9 +108,12 @@
     }
 
     // ========== AUTO COOP LOGIC ==========
-    async function runAutoCoop() {
-        if (!settings.autoSendEnabled || isProcessing) {
-            return { skipped: true, reason: !settings.autoSendEnabled ? 'disabled' : 'processing' };
+    async function runAutoCoop(manual) {
+        if (isProcessing) {
+            return { skipped: true, reason: 'processing' };
+        }
+        if (!manual && !settings.autoSendEnabled) {
+            return { skipped: true, reason: 'disabled' };
         }
 
         isProcessing = true;
@@ -583,7 +586,7 @@
             document.getElementById('fh-run-now').addEventListener('click', async function() {
                 this.disabled = true;
                 this.textContent = 'Running...';
-                await runAutoCoop();
+                await runAutoCoop(true);
                 this.textContent = 'Run Now';
                 this.disabled = false;
             });
@@ -619,7 +622,7 @@
     }
 
     function init() {
-        log('Initializing v4.1...');
+        log('Initializing v4.2...');
         loadSettings();
         initUI();
         updateCoopDisplay();
