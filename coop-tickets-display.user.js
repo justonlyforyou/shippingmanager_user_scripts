@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Co-Op Tickets Display
-// @description Shows open Co-Op tickets, auto-sends COOP vessels (Fair Hand)
-// @version     4.0
+// @description Shows open Co-Op tickets, auto-sends COOP vessels to alliance members
+// @version     3.1
 // @author      https://github.com/justonlyforyou/
 // @order       25
 // @match       https://shippingmanager.cc/*
@@ -14,7 +14,7 @@
 (function() {
     'use strict';
 
-    var SCRIPT_NAME = 'Fair Hand';
+    var SCRIPT_NAME = 'CoOp';
     var STORAGE_KEY = 'rebelship_coop_settings';
     var isMobile = window.innerWidth < 1024;
     var coopElement = null;
@@ -107,8 +107,8 @@
         return data;
     }
 
-    // ========== FAIR HAND LOGIC ==========
-    async function runFairHand() {
+    // ========== AUTO COOP LOGIC ==========
+    async function runAutoCoop() {
         if (!settings.autoSendEnabled || isProcessing) {
             return { skipped: true, reason: !settings.autoSendEnabled ? 'disabled' : 'processing' };
         }
@@ -117,7 +117,7 @@
         var result = { totalSent: 0, totalRequested: 0, results: [] };
 
         try {
-            log('Starting Fair Hand distribution...');
+            log('Starting Auto-COOP distribution...');
 
             // Fetch all data in parallel
             var [coopData, contactData, memberSettings] = await Promise.all([
@@ -181,7 +181,7 @@
 
             if (eligibleMembers.length === 0) {
                 log('No eligible members found');
-                showToast('Fair Hand: No eligible members', 'warning');
+                showToast('CoOp: No eligible members', 'warning');
                 return result;
             }
 
@@ -232,7 +232,7 @@
             log('Distribution complete: ' + result.totalSent + '/' + result.totalRequested + ' vessels');
 
             if (result.totalSent > 0) {
-                showToast('Fair Hand: Sent ' + result.totalSent + ' vessels to ' + result.results.filter(function(r) { return r.departed > 0; }).length + ' members', 'success');
+                showToast('CoOp: Sent ' + result.totalSent + ' vessels to ' + result.results.filter(function(r) { return r.departed > 0; }).length + ' members', 'success');
             }
 
             return result;
@@ -264,7 +264,7 @@
         // Web Notification API
         if ('Notification' in window && Notification.permission === 'granted') {
             try {
-                new Notification(title, { body: message, icon: 'https://shippingmanager.cc/favicon.ico', tag: 'fair-hand' });
+                new Notification(title, { body: message, icon: 'https://shippingmanager.cc/favicon.ico', tag: 'coop' });
             } catch (e) { }
         }
     }
@@ -507,7 +507,8 @@
         container.appendChild(dropdown);
         btn.addEventListener('click', function(e) { e.stopPropagation(); dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block'; });
         document.addEventListener('click', function(e) { if (!container.contains(e.target)) dropdown.style.display = 'none'; });
-        if (messagingIcon.parentNode) messagingIcon.parentNode.insertBefore(container, messagingIcon);
+        if (!messagingIcon.parentNode) return null;
+        messagingIcon.parentNode.insertBefore(container, messagingIcon);
         return dropdown;
     }
 
@@ -539,7 +540,7 @@
 
         setTimeout(function() {
             if (modalStore.modalSettings) {
-                modalStore.modalSettings.title = 'Fair Hand Settings';
+                modalStore.modalSettings.title = 'CoOp Settings';
                 modalStore.modalSettings.navigation = [];
                 modalStore.modalSettings.controls = [];
             }
@@ -582,7 +583,7 @@
             document.getElementById('fh-run-now').addEventListener('click', async function() {
                 this.disabled = true;
                 this.textContent = 'Running...';
-                await runFairHand();
+                await runAutoCoop();
                 this.textContent = 'Run Now';
                 this.disabled = false;
             });
@@ -592,7 +593,7 @@
                 settings.systemNotifications = document.getElementById('fh-notifications').checked;
                 saveSettings();
                 log('Settings saved: autoSend=' + settings.autoSendEnabled + ', notifications=' + settings.systemNotifications);
-                showToast('Fair Hand settings saved', 'success');
+                showToast('CoOp settings saved', 'success');
                 modalStore.closeAll();
             });
         }, 150);
@@ -613,12 +614,12 @@
             return;
         }
         uiInitialized = true;
-        addMenuItem('Fair Hand', openSettingsModal);
+        addMenuItem('CoOp', openSettingsModal);
         log('Menu item added');
     }
 
     function init() {
-        log('Initializing v4.0...');
+        log('Initializing v3.1...');
         loadSettings();
         initUI();
         updateCoopDisplay();
@@ -626,10 +627,10 @@
     }
 
     // Expose for Android BackgroundScriptService
-    window.rebelshipRunFairHand = async function() {
+    window.rebelshipRunAutoCoop = async function() {
         loadSettings();
         if (!settings.autoSendEnabled) return { skipped: true, reason: 'disabled' };
-        return await runFairHand();
+        return await runAutoCoop();
     };
 
     // Wait for page ready
