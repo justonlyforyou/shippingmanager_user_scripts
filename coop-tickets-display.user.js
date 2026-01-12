@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Co-Op Tickets Display
 // @description Shows open Co-Op tickets, auto-sends COOP vessels to alliance members
-// @version     3.1
+// @version     4.1
 // @author      https://github.com/justonlyforyou/
 // @order       25
 // @match       https://shippingmanager.cc/*
@@ -619,7 +619,7 @@
     }
 
     function init() {
-        log('Initializing v3.1...');
+        log('Initializing v4.1...');
         loadSettings();
         initUI();
         updateCoopDisplay();
