@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Auto Bunker & Depart
 // @namespace    http://tampermonkey.net/
-// @version      10.4
+// @version      10.5
 // @description  Auto-buy fuel/CO2 and auto-depart vessels - works in background mode via direct API
 // @author       https://github.com/justonlyforyou/
 // @order        20
@@ -45,7 +45,9 @@
         // Avoid negative CO2 bunker (refill after departures)
         avoidNegativeCO2: false,
         // Auto-Depart
-        autoDepartEnabled: false
+        autoDepartEnabled: false,
+        // System notifications
+        systemNotifications: false
     };
 
     const isMobile = window.innerWidth < 1024;
@@ -470,8 +472,15 @@
 
     /**
      * Show system notification via Web Notification API
+     * Only sends if systemNotifications setting is enabled
      */
     function showSystemNotification(message, _type) {
+        // Check if system notifications are enabled
+        var currentSettings = loadSettings();
+        if (!currentSettings.systemNotifications) {
+            return;
+        }
+
         if (typeof Notification === 'undefined') {
             console.log('[Auto-Buy] Notification API not available');
             return;
@@ -495,6 +504,7 @@
             new Notification('Auto Bunker & Depart', {
                 body: message,
                 tag: tag,
+                icon: 'https://shippingmanager.cc/favicon.ico',
                 requireInteraction: false
             });
             console.log('[Auto-Buy] System notification created');
@@ -1472,6 +1482,7 @@
                         </div>\
                     </div>\
                     <div class="section"><div class="setting-row"><label class="checkbox-label"><input type="checkbox" id="ab-auto-depart" ' + (settings.autoDepartEnabled ? 'checked' : '') + '><span>Auto-Depart (depart all ships in port)</span></label></div></div>\
+                    <div class="section"><div class="setting-row"><label class="checkbox-label"><input type="checkbox" id="ab-system-notifications" ' + (settings.systemNotifications ? 'checked' : '') + '><span>System Notifications (push notifications for actions)</span></label></div></div>\
                 </div>';
 
             function updateSectionVisibility() {
@@ -1523,7 +1534,8 @@
                     co2IntelligentShipsEnabled: document.getElementById('ab-co2-intel-ships-enabled') && document.getElementById('ab-co2-intel-ships-enabled').checked,
                     co2IntelligentShips: parseInt(document.getElementById('ab-co2-intel-ships').value) || DEFAULT_SETTINGS.co2IntelligentShips,
                     avoidNegativeCO2: document.getElementById('ab-avoid-negative-co2') && document.getElementById('ab-avoid-negative-co2').checked,
-                    autoDepartEnabled: document.getElementById('ab-auto-depart') && document.getElementById('ab-auto-depart').checked
+                    autoDepartEnabled: document.getElementById('ab-auto-depart') && document.getElementById('ab-auto-depart').checked,
+                    systemNotifications: document.getElementById('ab-system-notifications') && document.getElementById('ab-system-notifications').checked
                 };
 
                 saveSettings(newSettings);

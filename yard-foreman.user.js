@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shipping Manager - Auto Repair
 // @namespace    https://rebelship.org/
-// @version      2.4
+// @version      2.5
 // @description  Auto-repair vessels when wear reaches threshold
 // @author       https://github.com/justonlyforyou/
 // @order        15
@@ -24,7 +24,8 @@
     let settings = {
         enabled: false,
         wearThreshold: 50,      // Repair when wear >= this %
-        minCashAfterRepair: 0   // Keep at least this much cash
+        minCashAfterRepair: 0,  // Keep at least this much cash
+        systemNotifications: false // Send system/push notifications
     };
     let monitorInterval = null;
     let isProcessing = false;
@@ -238,6 +239,43 @@
         }
     }
 
+    function sendSystemNotification(title, message) {
+        if (!settings.systemNotifications) return;
+
+        // 1. Android bridge notification
+        if (typeof window.RebelShipNotify !== 'undefined' && window.RebelShipNotify.notify) {
+            try {
+                window.RebelShipNotify.notify(title + ': ' + message);
+                log('Android notification sent');
+                return;
+            } catch (e) {
+                log('Android notification failed: ' + e.message, 'error');
+            }
+        }
+
+        // 2. Web Notification API fallback
+        if ('Notification' in window) {
+            if (Notification.permission === 'granted') {
+                try {
+                    new Notification(title, {
+                        body: message,
+                        icon: 'https://shippingmanager.cc/favicon.ico',
+                        tag: 'yard-foreman'
+                    });
+                    log('Web notification sent');
+                } catch (e) {
+                    log('Web notification failed: ' + e.message, 'error');
+                }
+            } else if (Notification.permission !== 'denied') {
+                Notification.requestPermission().then(function(permission) {
+                    if (permission === 'granted') {
+                        sendSystemNotification(title, message);
+                    }
+                });
+            }
+        }
+    }
+
     // ========== UI: REBELSHIP MENU ==========
     const isMobile = window.innerWidth < 1024;
 
@@ -434,18 +472,8 @@
             log('Toast store not found', 'error');
         }
 
-        // 2. Android bridge notification
-        if (typeof window.RebelShipNotify !== 'undefined') {
-            try {
-                if (type === 'error' && window.RebelShipNotify.error) {
-                    window.RebelShipNotify.error(message);
-                } else if (window.RebelShipNotify.notify) {
-                    window.RebelShipNotify.notify(message);
-                }
-            } catch {
-                // Ignore
-            }
-        }
+        // 2. System notification (if enabled)
+        sendSystemNotification(SCRIPT_NAME, message);
     }
 
     function openSettingsModal() {
@@ -495,7 +523,7 @@
                         </div>
                     </div>
 
-                    <div style="margin-bottom:24px;">
+                    <div style="margin-bottom:20px;">
                         <label style="display:block;margin-bottom:8px;font-size:14px;font-weight:700;color:#01125d;">
                             Minimum Cash Balance
                         </label>
@@ -503,6 +531,17 @@
                                class="redesign" style="width:100%;height:2.5rem;padding:0 1rem;background:#ebe9ea;border:0;border-radius:7px;color:#01125d;font-size:16px;font-family:Lato,sans-serif;text-align:center;box-sizing:border-box;">
                         <div style="font-size:12px;color:#626b90;margin-top:6px;">
                             Keep at least this much cash after repairs
+                        </div>
+                    </div>
+
+                    <div style="margin-bottom:24px;">
+                        <label style="display:flex;align-items:center;cursor:pointer;font-weight:700;font-size:14px;">
+                            <input type="checkbox" id="yf-notifications" ${settings.systemNotifications ? 'checked' : ''}
+                                   style="width:18px;height:18px;margin-right:10px;accent-color:#0db8f4;cursor:pointer;">
+                            <span>System Notifications</span>
+                        </label>
+                        <div style="font-size:12px;color:#626b90;margin-top:6px;margin-left:28px;">
+                            Send push notifications when repairs are executed
                         </div>
                     </div>
 
@@ -526,6 +565,7 @@
                 const enabled = document.getElementById('yf-enabled').checked;
                 const threshold = parseInt(document.getElementById('yf-threshold').value, 10);
                 const minCash = parseInt(document.getElementById('yf-mincash').value, 10);
+                const notifications = document.getElementById('yf-notifications').checked;
 
                 // Validate
                 if (isNaN(threshold) || threshold < 1 || threshold > 99) {
@@ -542,6 +582,7 @@
                 settings.enabled = enabled;
                 settings.wearThreshold = threshold;
                 settings.minCashAfterRepair = minCash;
+                settings.systemNotifications = notifications;
                 saveSettings();
 
                 // Start/stop monitoring based on enabled state
