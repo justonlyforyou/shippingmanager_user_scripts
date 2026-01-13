@@ -2,7 +2,7 @@
 // @name         ShippingManager - Auto Bunker-Refill & Depart
 // @namespace    http://tampermonkey.net/
 // @description  Auto-buy fuel/CO2 and auto-depart vessels - works in background mode via direct API
-// @version     10.8
+// @version      11.1
 // @author       https://github.com/justonlyforyou/
 // @order        20
 // @match        https://shippingmanager.cc/*
@@ -209,6 +209,10 @@
      */
     async function purchaseFuelAPI(amountTons, pricePerTon) {
         try {
+            if (amountTons <= 0) {
+                console.log('[Auto-Buy] Fuel purchase skipped - amount is 0 or negative');
+                return { success: false, error: 'Amount <= 0' };
+            }
             var amountKg = Math.floor(amountTons * 1000);
             console.log('[Auto-Buy] Purchasing ' + amountTons.toFixed(0) + 't fuel @ $' + pricePerTon + '/t');
 
@@ -245,6 +249,10 @@
      */
     async function purchaseCO2API(amountTons, pricePerTon) {
         try {
+            if (amountTons <= 0) {
+                console.log('[Auto-Buy] CO2 purchase skipped - amount is 0 or negative');
+                return { success: false, error: 'Amount <= 0' };
+            }
             var amountKg = Math.floor(amountTons * 1000);
             console.log('[Auto-Buy] Purchasing ' + amountTons.toFixed(0) + 't CO2 @ $' + pricePerTon + '/t');
 
@@ -465,10 +473,6 @@
         showSystemNotification(message, type);
     }
 
-    // Legacy wrapper for compatibility
-    function showToast(message, type) {
-        notify(message, type, 'general');
-    }
 
     /**
      * Show system notification via Web Notification API
@@ -611,28 +615,6 @@
         return ready;
     }
 
-    async function calculateTotalFuelNeeded() {
-        var vessels = await getVesselsReadyToDepart();
-        var totalFuel = 0;
-        for (var i = 0; i < vessels.length; i++) {
-            var vessel = vessels[i];
-            var distance = vessel.route_distance;
-            if (!distance || distance <= 0) continue;
-
-            var speed = vessel.route_speed || vessel.max_speed;
-            var fuelNeeded = vessel.route_fuel_required || vessel.fuel_required;
-            if (fuelNeeded) {
-                // Add 2% buffer to game's fuel requirement
-                fuelNeeded = fuelNeeded * 1.02;
-            } else {
-                // calculateFuelConsumption already includes 2% buffer
-                fuelNeeded = calculateFuelConsumption(vessel, distance, speed) * 1000;
-            }
-            totalFuel += fuelNeeded || 0;
-        }
-        return totalFuel / 1000;
-    }
-
     // ============================================
     // AUTO-REBUY LOGIC (matching copilot - Barrel Boss / Atmosphere Broker)
     // Mode Priority:
@@ -668,8 +650,9 @@
         // ========== INTELLIGENT MODE: Buy shortfall only with optional conditions ==========
         } else if (settings.fuelMode === 'intelligent') {
             // Check max price condition (always required)
-            if (fuelPrice > settings.fuelIntelligentMaxPrice) {
-                console.log('[Auto-Buy] Fuel Intelligent: Price $' + fuelPrice + '/t > max $' + settings.fuelIntelligentMaxPrice + '/t - skipping');
+            var maxFuelPrice = parseInt(settings.fuelIntelligentMaxPrice, 10);
+            if (!maxFuelPrice || isNaN(maxFuelPrice) || fuelPrice > maxFuelPrice) {
+                console.log('[Auto-Buy] Fuel Intelligent: Price $' + fuelPrice + '/t > max $' + maxFuelPrice + '/t - skipping');
                 return false;
             }
 
@@ -777,8 +760,9 @@
         // ========== INTELLIGENT MODE: Buy shortfall only with optional conditions ==========
         } else if (settings.co2Mode === 'intelligent') {
             // Check max price condition (always required)
-            if (co2Price > settings.co2IntelligentMaxPrice) {
-                console.log('[Auto-Buy] CO2 Intelligent: Price $' + co2Price + '/t > max $' + settings.co2IntelligentMaxPrice + '/t - skipping');
+            var maxCO2Price = parseInt(settings.co2IntelligentMaxPrice, 10);
+            if (!maxCO2Price || isNaN(maxCO2Price) || co2Price > maxCO2Price) {
+                console.log('[Auto-Buy] CO2 Intelligent: Price $' + co2Price + '/t > max $' + maxCO2Price + '/t - skipping');
                 return false;
             }
 
@@ -959,21 +943,18 @@
                 try {
                     var freshBunker = await fetchBunkerStateAPI();
                     if (freshBunker && freshBunker.co2 < 0) {
-                        var prices = await fetchPricesAPI();
-                        if (prices && prices.co2 > 0) {
+                        var co2Prices = await fetchPricesAPI();
+                        if (co2Prices && co2Prices.co2Price > 0) {
                             var co2Needed = Math.ceil(Math.abs(freshBunker.co2)) + 1;
                             var co2Space = freshBunker.maxCO2 - freshBunker.co2;
                             var minCash = settings.co2MinCash;
                             var cashAvailable = Math.max(0, freshBunker.cash - minCash);
-                            var maxAffordable = Math.floor(cashAvailable / prices.co2);
+                            var maxAffordable = Math.floor(cashAvailable / co2Prices.co2Price);
                             var amountToBuy = Math.min(co2Needed, Math.floor(co2Space), maxAffordable);
 
                             if (amountToBuy > 0) {
-                                console.log('[Auto-Depart] Avoid negative CO2: Bunker at ' + freshBunker.co2.toFixed(1) + 't, buying ' + amountToBuy + 't @ $' + prices.co2 + '/t');
-                                var co2Result = await purchaseCO2API(amountToBuy);
-                                if (co2Result && co2Result.success) {
-                                    notify('CO2 refill: ' + amountToBuy + 't @ $' + prices.co2 + '/t', 'success', 'co2');
-                                }
+                                console.log('[Auto-Depart] Avoid negative CO2: Bunker at ' + freshBunker.co2.toFixed(1) + 't, buying ' + amountToBuy + 't @ $' + co2Prices.co2Price + '/t');
+                                await purchaseCO2API(amountToBuy, co2Prices.co2Price);
                             }
                         }
                     }
@@ -1092,33 +1073,7 @@
                     if (!bunker) break;
                 }
 
-                // STEP 4: CHECK FUEL THRESHOLD BEFORE DEPARTING
-                // Only depart if we have enough fuel in bunker
-                var readyVessels = await getVesselsReadyToDepart();
-                if (readyVessels.length > 0 && settings.autoDepartEnabled) {
-                    var totalFuelNeeded = await calculateTotalFuelNeeded();
-                    if (bunker.fuel < totalFuelNeeded) {
-                        console.log('[Auto-Loop] Not enough fuel! Have: ' + bunker.fuel.toFixed(0) + 't, Need: ' + totalFuelNeeded.toFixed(0) + 't');
-
-                        // Try emergency buy if fuel mode is enabled
-                        if (settings.fuelMode !== 'off') {
-                            console.log('[Auto-Loop] Attempting emergency fuel buy...');
-                            var emergencyBuy = await purchaseFuelAPI(Math.min(bunker.maxFuel - bunker.fuel, totalFuelNeeded - bunker.fuel + 100), prices.fuelPrice);
-                            if (!emergencyBuy.success) {
-                                console.log('[Auto-Loop] Cannot buy fuel, stopping');
-                                showToast('Auto-depart stopped: not enough fuel', 'error');
-                                break;
-                            }
-                            bunker = await getBunkerData();
-                            if (!bunker) break;
-                        } else {
-                            console.log('[Auto-Loop] Fuel mode off, cannot buy');
-                            break;
-                        }
-                    }
-                }
-
-                // STEP 5: DEPART VESSELS
+                // STEP 4: DEPART VESSELS (one by one, stops when fuel runs out)
                 if (!settings.autoDepartEnabled) {
                     console.log('[Auto-Loop] Auto-depart disabled, done');
                     break;
@@ -1362,24 +1317,23 @@
     // SETTINGS MODAL (UI mode only)
     // ============================================
     var SETTINGS_CSS = '\
-        .autobuy-settings { padding: 8px 8px 20px 8px; color: #fff; font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 16px; height: 100%; overflow-y: auto; }\
-        .autobuy-settings .columns { display: flex; gap: 12px; }\
+        .autobuy-settings { padding: 20px; color: #01125d; font-family: Lato, sans-serif; font-size: 16px; height: 100%; overflow-y: auto; }\
+        .autobuy-settings .columns { display: flex; gap: 16px; }\
         .autobuy-settings .column { flex: 1; min-width: 0; }\
-        .autobuy-settings h3 { margin: 0 0 2px 0; font-size: 16px; font-weight: 600; color: #93c5fd; border-bottom: 1px solid #4b5563; padding-bottom: 2px; }\
-        .autobuy-settings .mode-select { width: 100%; padding: 8px; border: 1px solid #4b5563; border-radius: 4px; background: #1f2937; color: #fff; font-size: 16px; cursor: pointer; box-sizing: border-box; }\
-        .autobuy-settings .section { background: rgba(255,255,255,0.05); border-radius: 6px; padding: 4px 8px; margin-bottom: 2px; }\
-        .autobuy-settings .setting-row { display: flex; flex-direction: column; align-items: stretch; margin-bottom: 4px; }\
-        .autobuy-settings .setting-label { font-size: 13px; color: #9ca3af; margin-bottom: 2px; }\
-        .autobuy-settings input[type="number"], .autobuy-settings input.cash-input { width: 100%; padding: 6px 8px; border: 1px solid #4b5563; border-radius: 4px; background: #1f2937; color: #fff; font-size: 15px; text-align: right; box-sizing: border-box; }\
-        .autobuy-settings .setting-info { font-size: 12px; color: #9ca3af; margin-top: 2px; font-style: italic; }\
-        .autobuy-settings .section-title { font-size: 12px; font-weight: 600; color: #d1d5db; margin-bottom: 2px; text-transform: uppercase; }\
-        .autobuy-settings .checkbox-label { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: bold; color: #f3f4f6; cursor: pointer; padding: 0; min-height: 26px; }\
-        .autobuy-settings .checkbox-label input[type="checkbox"] { width: 18px; height: 18px; accent-color: #4ade80; cursor: pointer; }\
-        .autobuy-settings .price-box { background: rgba(59, 130, 246, 0.15); border: 1px solid rgba(59, 130, 246, 0.4); border-radius: 4px; padding: 4px; margin-bottom: 4px; display: flex; justify-content: space-around; }\
+        .autobuy-settings h3 { margin: 0 0 8px 0; font-size: 16px; font-weight: 700; color: #01125d; border-bottom: 1px solid #d1d5db; padding-bottom: 6px; }\
+        .autobuy-settings .mode-select { width: 100%; height: 2.5rem; padding: 0 1rem; border: 0; border-radius: 7px; background: #ebe9ea; color: #01125d; font-size: 16px; font-family: Lato, sans-serif; cursor: pointer; box-sizing: border-box; }\
+        .autobuy-settings .section { background: rgba(1,18,93,0.03); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }\
+        .autobuy-settings .setting-row { display: flex; flex-direction: column; align-items: stretch; margin-bottom: 8px; }\
+        .autobuy-settings .setting-label { font-size: 14px; font-weight: 700; color: #01125d; margin-bottom: 4px; }\
+        .autobuy-settings input[type="number"], .autobuy-settings input.cash-input { width: 100%; height: 2.5rem; padding: 0 1rem; border: 0; border-radius: 7px; background: #ebe9ea; color: #01125d; font-size: 16px; font-family: Lato, sans-serif; text-align: center; box-sizing: border-box; }\
+        .autobuy-settings .setting-info { font-size: 12px; color: #626b90; margin-top: 4px; }\
+        .autobuy-settings .section-title { font-size: 12px; font-weight: 600; color: #626b90; margin-bottom: 6px; text-transform: uppercase; }\
+        .autobuy-settings .checkbox-label { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 600; color: #01125d; cursor: pointer; padding: 0; min-height: 28px; }\
+        .autobuy-settings .checkbox-label input[type="checkbox"] { width: 18px; height: 18px; accent-color: #0db8f4; cursor: pointer; }\
+        .autobuy-settings .price-box { background: rgba(13,184,244,0.1); border: 1px solid rgba(13,184,244,0.3); border-radius: 8px; padding: 10px; margin-bottom: 12px; display: flex; justify-content: space-around; }\
         .autobuy-settings .price-item { text-align: center; }\
-        .autobuy-settings .price-label { font-size: 12px; color: #d1d5db; }\
-        .autobuy-settings .price-value { font-size: 16px; font-weight: 600; color: #fff; }\
-        #modal-container.autobuy-mode, #modal-container.autobuy-mode #modal-content, #modal-container.autobuy-mode #central-container { background: #1e2235 !important; }\
+        .autobuy-settings .price-label { font-size: 12px; color: #626b90; font-weight: 600; }\
+        .autobuy-settings .price-value { font-size: 18px; font-weight: 700; color: #01125d; }\
         #modal-container.autobuy-mode #bottom-controls, #modal-container.autobuy-mode #bottom-nav, #modal-container.autobuy-mode #top-nav { display: none !important; }\
     ';
 
@@ -1457,8 +1411,10 @@
                                     <div class="setting-row" style="margin-top:8px"><label class="checkbox-label"><input type="checkbox" id="ab-fuel-intel-enabled" ' + (settings.fuelMode === 'intelligent' ? 'checked' : '') + '><span>+ Intelligent Mode</span></label></div>\
                                     <div class="section" id="fuel-intelligent-section"><div class="section-title">Intelligent Settings (buy shortfall only)</div>\
                                         <div class="setting-row"><span class="setting-label">Max Price</span><input type="number" id="ab-fuel-intel-max" value="' + settings.fuelIntelligentMaxPrice + '" min="1"></div>\
-                                        <div class="setting-row"><label class="checkbox-label"><input type="checkbox" id="ab-fuel-intel-below-enabled" ' + (settings.fuelIntelligentBelowEnabled ? 'checked' : '') + '><span>Only if bunker below</span></label><input type="number" id="ab-fuel-intel-below" value="' + settings.fuelIntelligentBelow + '" min="0" style="width:60px;margin-left:5px">t</div>\
-                                        <div class="setting-row"><label class="checkbox-label"><input type="checkbox" id="ab-fuel-intel-ships-enabled" ' + (settings.fuelIntelligentShipsEnabled ? 'checked' : '') + '><span>Only if ships at port</span></label><input type="number" id="ab-fuel-intel-ships" value="' + settings.fuelIntelligentShips + '" min="1" style="width:60px;margin-left:5px"></div>\
+                                        <div class="setting-row"><label class="checkbox-label"><input type="checkbox" id="ab-fuel-intel-below-enabled" ' + (settings.fuelIntelligentBelowEnabled ? 'checked' : '') + '><span>Only if bunker below (t)</span></label></div>\
+                                        <div class="setting-row"><input type="number" id="ab-fuel-intel-below" value="' + settings.fuelIntelligentBelow + '" min="0"></div>\
+                                        <div class="setting-row"><label class="checkbox-label"><input type="checkbox" id="ab-fuel-intel-ships-enabled" ' + (settings.fuelIntelligentShipsEnabled ? 'checked' : '') + '><span>Only if ships at port</span></label></div>\
+                                        <div class="setting-row"><input type="number" id="ab-fuel-intel-ships" value="' + settings.fuelIntelligentShips + '" min="1"></div>\
                                     </div>\
                                 </div>\
                             </div>\
@@ -1473,8 +1429,10 @@
                                     <div class="setting-row" style="margin-top:8px"><label class="checkbox-label"><input type="checkbox" id="ab-co2-intel-enabled" ' + (settings.co2Mode === 'intelligent' ? 'checked' : '') + '><span>+ Intelligent Mode</span></label></div>\
                                     <div class="section" id="co2-intelligent-section"><div class="section-title">Intelligent Settings (buy shortfall only)</div>\
                                         <div class="setting-row"><span class="setting-label">Max Price</span><input type="number" id="ab-co2-intel-max" value="' + settings.co2IntelligentMaxPrice + '" min="1"></div>\
-                                        <div class="setting-row"><label class="checkbox-label"><input type="checkbox" id="ab-co2-intel-below-enabled" ' + (settings.co2IntelligentBelowEnabled ? 'checked' : '') + '><span>Only if bunker below</span></label><input type="number" id="ab-co2-intel-below" value="' + settings.co2IntelligentBelow + '" min="0" style="width:60px;margin-left:5px">t</div>\
-                                        <div class="setting-row"><label class="checkbox-label"><input type="checkbox" id="ab-co2-intel-ships-enabled" ' + (settings.co2IntelligentShipsEnabled ? 'checked' : '') + '><span>Only if ships at port</span></label><input type="number" id="ab-co2-intel-ships" value="' + settings.co2IntelligentShips + '" min="1" style="width:60px;margin-left:5px"></div>\
+                                        <div class="setting-row"><label class="checkbox-label"><input type="checkbox" id="ab-co2-intel-below-enabled" ' + (settings.co2IntelligentBelowEnabled ? 'checked' : '') + '><span>Only if bunker below (t)</span></label></div>\
+                                        <div class="setting-row"><input type="number" id="ab-co2-intel-below" value="' + settings.co2IntelligentBelow + '" min="0"></div>\
+                                        <div class="setting-row"><label class="checkbox-label"><input type="checkbox" id="ab-co2-intel-ships-enabled" ' + (settings.co2IntelligentShipsEnabled ? 'checked' : '') + '><span>Only if ships at port</span></label></div>\
+                                        <div class="setting-row"><input type="number" id="ab-co2-intel-ships" value="' + settings.co2IntelligentShips + '" min="1"></div>\
                                     </div>\
                                     <div class="setting-row" style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(34,197,94,0.2)"><label class="checkbox-label"><input type="checkbox" id="ab-avoid-negative-co2" ' + (settings.avoidNegativeCO2 ? 'checked' : '') + '><span>Avoid negative CO2 (refill after departures)</span></label></div>\
                                 </div>\

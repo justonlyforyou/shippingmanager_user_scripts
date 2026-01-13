@@ -2,7 +2,7 @@
 // @name         ShippingManager - Auto Drydock & Route Settings Manager
 // @namespace    https://rebelship.org/
 // @description  Unified drydock management: bug prevention, route settings persistence, auto-drydock, pre-departure sync.
-// @version     2.3
+// @version     3.1
 // @author       https://github.com/justonlyforyou/
 // @order        29
 // @match        https://shippingmanager.cc/*
@@ -45,7 +45,7 @@
         }
     }
 
-    log('v2.1 loaded');
+    log('v3.0 loaded');
 
     // ============================================
     // STORAGE - All data in one localStorage key
@@ -205,6 +205,56 @@
     function getPendingRouteSettingsCount() {
         var storage = getStorage();
         return Object.keys(storage.pendingRouteSettings).length;
+    }
+
+    // Clean up stale pending entries (vessels that no longer exist, have no routes, or values already match)
+    async function cleanupStalePendingSettings() {
+        var storage = getStorage();
+        var pendingIds = Object.keys(storage.pendingRouteSettings);
+        if (pendingIds.length === 0) return;
+
+        var vessels = await fetchVesselData();
+        if (!vessels || vessels.length === 0) return;
+
+        var vesselMap = new Map(vessels.map(function(v) { return [v.id, v]; }));
+        var removed = 0;
+
+        for (var i = 0; i < pendingIds.length; i++) {
+            var vesselId = parseInt(pendingIds[i]);
+            var vessel = vesselMap.get(vesselId);
+            var pending = storage.pendingRouteSettings[vesselId];
+            var pendingName = pending ? pending.name : 'Unknown';
+
+            // Remove if vessel doesn't exist or has no route
+            if (!vessel || !vessel.route_origin || !vessel.route_destination) {
+                log('Removing stale pending settings for ' + pendingName + ' (vessel gone or no route)');
+                delete storage.pendingRouteSettings[vesselId];
+                removed++;
+                continue;
+            }
+
+            // Remove if pending values match current values (already applied)
+            var speedMatch = pending.speed === undefined || pending.speed === vessel.route_speed;
+            var guardsMatch = pending.guards === undefined || pending.guards === vessel.route_guards;
+            var pricesMatch = true;
+            if (pending.prices && vessel.prices) {
+                pricesMatch = (pending.prices.dry === undefined || pending.prices.dry === vessel.prices.dry) &&
+                              (pending.prices.refrigerated === undefined || pending.prices.refrigerated === vessel.prices.refrigerated) &&
+                              (pending.prices.fuel === undefined || pending.prices.fuel === vessel.prices.fuel) &&
+                              (pending.prices.crude_oil === undefined || pending.prices.crude_oil === vessel.prices.crude_oil);
+            }
+
+            if (speedMatch && guardsMatch && pricesMatch) {
+                log('Removing pending settings for ' + pendingName + ' (values already match current)');
+                delete storage.pendingRouteSettings[vesselId];
+                removed++;
+            }
+        }
+
+        if (removed > 0) {
+            saveStorage(storage);
+            log('Cleaned up ' + removed + ' stale pending entries');
+        }
     }
 
     // ============================================
@@ -1029,6 +1079,50 @@
     var rsActiveSubtab = 'cargo';
     var rsSettingsTabAdded = false;
     var rsCachedVessels = null;
+    var rsCachedAutoPrices = null;
+
+    // Try to fetch auto prices from Co-Pilot server
+    async function rsFetchAutoPrices() {
+        try {
+            var response = await fetch('https://localhost:12346/api/analytics/route-settings', {
+                method: 'GET',
+                credentials: 'include'
+            });
+            if (!response.ok) return null;
+            var data = await response.json();
+            if (data && data.routeSettings) {
+                // Build map of vesselId -> autoprice data
+                var priceMap = {};
+                data.routeSettings.forEach(function(s) {
+                    priceMap[s.vesselId] = {
+                        dry: s.autopriceDry,
+                        refrigerated: s.autopriceRefrigerated,
+                        fuel: s.autopriceFuel,
+                        crude_oil: s.autopriceCrude
+                    };
+                });
+                log('Fetched auto prices from Co-Pilot for ' + Object.keys(priceMap).length + ' vessels');
+                return priceMap;
+            }
+        } catch (e) {
+            log('Could not fetch auto prices from Co-Pilot (not running?): ' + e.message);
+        }
+        return null;
+    }
+
+    function rsGetAutoPrice(vesselId, key) {
+        if (!rsCachedAutoPrices) return null;
+        var ap = rsCachedAutoPrices[vesselId];
+        if (!ap) return null;
+        return ap[key];
+    }
+
+    function rsCalcPctDiff(current, auto) {
+        if (auto === null || auto === undefined || auto === 0) return '-';
+        if (current === null || current === undefined || current === '') return '-';
+        var pct = ((current - auto) / auto * 100).toFixed(1);
+        return (pct > 0 ? '+' : '') + pct + '%';
+    }
 
     function rsEscapeHtml(str) {
         if (!str) return '';
@@ -1061,6 +1155,11 @@
     }
 
     function rsGetHijackingRisk(vessel) {
+        // Use vessel.hijacking_risk directly (current route's risk)
+        if (vessel.hijacking_risk !== undefined && vessel.hijacking_risk !== null) {
+            return vessel.hijacking_risk;
+        }
+        // Fallback: search in routes array
         if (!vessel.routes || !vessel.routes.length) return 0;
         var activeRoute = vessel.routes.find(function(r) {
             return r.origin === vessel.route_origin && r.destination === vessel.route_destination;
@@ -1084,7 +1183,20 @@
         if (v.status === 'port') {
             return { code: 'P', tooltip: 'In Port', cssClass: 'status-p' };
         }
-        return { code: '?', tooltip: 'Unknown', cssClass: '' };
+        if (v.status === 'maintenance') {
+            return { code: 'M', tooltip: 'Maintenance', cssClass: 'status-m' };
+        }
+        if (v.status === 'drydock') {
+            return { code: 'D', tooltip: 'Drydock', cssClass: 'status-d' };
+        }
+        if (v.status === 'loading') {
+            return { code: 'L', tooltip: 'Loading', cssClass: 'status-e' };
+        }
+        if (v.status === 'unloading') {
+            return { code: 'U', tooltip: 'Unloading', cssClass: 'status-e' };
+        }
+        console.log('[RS] Unknown status for', v.name, ':', v.status, v);
+        return { code: '?', tooltip: 'Status: ' + v.status, cssClass: '' };
     }
 
     function rsHandleChange(e) {
@@ -1209,7 +1321,9 @@
         });
 
         try {
-            rsCachedVessels = await fetchVesselData();
+            var results = await Promise.all([fetchVesselData(), rsFetchAutoPrices()]);
+            rsCachedVessels = results[0];
+            rsCachedAutoPrices = results[1];
             rsRenderTable();
         } catch (err) {
             log('Failed to refresh vessels: ' + err.message, 'error');
@@ -1227,12 +1341,20 @@
         var pricesDry = v.prices ? v.prices.dry : null;
         var pricesRef = v.prices ? v.prices.refrigerated : null;
 
+        // Get auto prices from Co-Pilot
+        var autoDry = rsGetAutoPrice(v.id, 'dry');
+        var autoRef = rsGetAutoPrice(v.id, 'refrigerated');
+
+        // Calculate % difference
+        var dryPctDiff = rsCalcPctDiff(pricesDry, autoDry);
+        var refPctDiff = rsCalcPctDiff(pricesRef, autoRef);
+
         // Check for pending settings
         var pending = getPendingRouteSettings(v.id);
         var hasPending = pending !== null;
 
         // Build HTML with pending indicators
-        var speedHtml = '<input type="number" min="1" max="' + v.max_speed + '" data-vessel-id="' + v.id + '" data-change-key="speed" data-original="' + v.route_speed + '" value="' + v.route_speed + '">';
+        var speedHtml = '<input type="number" class="speed-input" min="1" max="' + v.max_speed + '" data-vessel-id="' + v.id + '" data-change-key="speed" data-original="' + v.route_speed + '" value="' + v.route_speed + '">';
         if (hasPending && pending.speed !== undefined && pending.speed !== v.route_speed) {
             speedHtml += '<div class="pending-value" title="Will apply at next departure">' + pending.speed + '</div>';
         }
@@ -1247,20 +1369,27 @@
             refHtml += '<div class="pending-value">' + pending.prices.refrigerated + '</div>';
         }
 
-        var guardsHtml = '<select data-vessel-id="' + v.id + '" data-change-key="guards" data-original="' + v.route_guards + '">' +
-            [0,1,2,3,4,5,6,7,8,9,10].map(function(i) { return '<option value="' + i + '"' + (i === v.route_guards ? ' selected' : '') + '>' + i + '</option>'; }).join('') +
+        var currentGuards = parseInt(v.route_guards, 10) || 0;
+        var guardsHtml = '<select data-vessel-id="' + v.id + '" data-change-key="guards" data-original="' + currentGuards + '">' +
+            [0,1,2,3,4,5,6,7,8,9,10].map(function(i) { return '<option value="' + i + '"' + (i === currentGuards ? ' selected' : '') + '>' + i + '</option>'; }).join('') +
             '</select>';
-        if (hasPending && pending.guards !== undefined && pending.guards !== v.route_guards) {
-            guardsHtml += '<div class="pending-value">' + pending.guards + '</div>';
-        }
 
-        return '<tr data-vessel-id="' + v.id + '" class="' + (hasPending ? 'has-pending' : '') + '">' +
+        // Format auto price display
+        var autoDisplay = autoDry !== null ? '$' + autoDry.toFixed(2) : '-';
+        var dryPctClass = dryPctDiff !== '-' && parseFloat(dryPctDiff) > 0 ? 'pct-positive' : (dryPctDiff !== '-' && parseFloat(dryPctDiff) < 0 ? 'pct-negative' : '');
+        var refPctClass = refPctDiff !== '-' && parseFloat(refPctDiff) > 0 ? 'pct-positive' : (refPctDiff !== '-' && parseFloat(refPctDiff) < 0 ? 'pct-negative' : '');
+
+        return '<tr data-vessel-id="' + v.id + '">' +
             '<td class="status-cell"><span class="status-icon ' + statusInfo.cssClass + '" title="' + statusInfo.tooltip + '">' + statusInfo.code + '</span></td>' +
             '<td class="route-cell" title="' + rsEscapeHtml(v.route_origin) + ' - ' + rsEscapeHtml(v.route_destination) + '">' + route + '</td>' +
             '<td class="name-cell">' + rsEscapeHtml(v.name) + '</td>' +
             '<td class="num">' + speedHtml + '</td>' +
+            '<td class="num max-speed">' + v.max_speed + '</td>' +
+            '<td class="num auto-price">' + autoDisplay + '</td>' +
             '<td class="num">' + dryHtml + '</td>' +
+            '<td class="num pct-diff ' + dryPctClass + '">' + dryPctDiff + '</td>' +
             '<td class="num">' + refHtml + '</td>' +
+            '<td class="num pct-diff ' + refPctClass + '">' + refPctDiff + '</td>' +
             '<td class="num">' + guardsHtml + '</td>' +
             '<td class="num ' + riskClass + '">' + risk + '%</td>' +
         '</tr>';
@@ -1275,40 +1404,41 @@
         var pricesFuel = v.prices ? v.prices.fuel : null;
         var pricesCrude = v.prices ? v.prices.crude_oil : null;
 
-        // Check for pending settings
-        var pending = getPendingRouteSettings(v.id);
-        var hasPending = pending !== null;
+        // Get auto prices from Co-Pilot
+        var autoFuel = rsGetAutoPrice(v.id, 'fuel');
+        var autoCrude = rsGetAutoPrice(v.id, 'crude_oil');
 
-        // Build HTML with pending indicators
-        var speedHtml = '<input type="number" min="1" max="' + v.max_speed + '" data-vessel-id="' + v.id + '" data-change-key="speed" data-original="' + v.route_speed + '" value="' + v.route_speed + '">';
-        if (hasPending && pending.speed !== undefined && pending.speed !== v.route_speed) {
-            speedHtml += '<div class="pending-value" title="Will apply at next departure">' + pending.speed + '</div>';
-        }
+        // Calculate % difference
+        var fuelPctDiff = rsCalcPctDiff(pricesFuel, autoFuel);
+        var crudePctDiff = rsCalcPctDiff(pricesCrude, autoCrude);
+
+        var speedHtml = '<input type="number" class="speed-input" min="1" max="' + v.max_speed + '" data-vessel-id="' + v.id + '" data-change-key="speed" data-original="' + v.route_speed + '" value="' + v.route_speed + '">';
 
         var fuelHtml = '<input type="number" step="0.01" data-vessel-id="' + v.id + '" data-change-key="price_fuel" data-original="' + (pricesFuel !== null ? pricesFuel : '') + '" value="' + (pricesFuel !== null ? pricesFuel : '') + '" placeholder="-">';
-        if (hasPending && pending.prices && pending.prices.fuel !== undefined && pending.prices.fuel !== pricesFuel) {
-            fuelHtml += '<div class="pending-value">' + pending.prices.fuel + '</div>';
-        }
 
         var crudeHtml = '<input type="number" step="0.01" data-vessel-id="' + v.id + '" data-change-key="price_crude" data-original="' + (pricesCrude !== null ? pricesCrude : '') + '" value="' + (pricesCrude !== null ? pricesCrude : '') + '" placeholder="-">';
-        if (hasPending && pending.prices && pending.prices.crude_oil !== undefined && pending.prices.crude_oil !== pricesCrude) {
-            crudeHtml += '<div class="pending-value">' + pending.prices.crude_oil + '</div>';
-        }
 
-        var guardsHtml = '<select data-vessel-id="' + v.id + '" data-change-key="guards" data-original="' + v.route_guards + '">' +
-            [0,1,2,3,4,5,6,7,8,9,10].map(function(i) { return '<option value="' + i + '"' + (i === v.route_guards ? ' selected' : '') + '>' + i + '</option>'; }).join('') +
+        var currentGuards = parseInt(v.route_guards, 10) || 0;
+        var guardsHtml = '<select data-vessel-id="' + v.id + '" data-change-key="guards" data-original="' + currentGuards + '">' +
+            [0,1,2,3,4,5,6,7,8,9,10].map(function(i) { return '<option value="' + i + '"' + (i === currentGuards ? ' selected' : '') + '>' + i + '</option>'; }).join('') +
             '</select>';
-        if (hasPending && pending.guards !== undefined && pending.guards !== v.route_guards) {
-            guardsHtml += '<div class="pending-value">' + pending.guards + '</div>';
-        }
 
-        return '<tr data-vessel-id="' + v.id + '" class="' + (hasPending ? 'has-pending' : '') + '">' +
+        // Format auto price display
+        var autoDisplay = autoFuel !== null ? '$' + autoFuel.toFixed(2) : '-';
+        var fuelPctClass = fuelPctDiff !== '-' && parseFloat(fuelPctDiff) > 0 ? 'pct-positive' : (fuelPctDiff !== '-' && parseFloat(fuelPctDiff) < 0 ? 'pct-negative' : '');
+        var crudePctClass = crudePctDiff !== '-' && parseFloat(crudePctDiff) > 0 ? 'pct-positive' : (crudePctDiff !== '-' && parseFloat(crudePctDiff) < 0 ? 'pct-negative' : '');
+
+        return '<tr data-vessel-id="' + v.id + '">' +
             '<td class="status-cell"><span class="status-icon ' + statusInfo.cssClass + '" title="' + statusInfo.tooltip + '">' + statusInfo.code + '</span></td>' +
             '<td class="route-cell" title="' + rsEscapeHtml(v.route_origin) + ' - ' + rsEscapeHtml(v.route_destination) + '">' + route + '</td>' +
             '<td class="name-cell">' + rsEscapeHtml(v.name) + '</td>' +
             '<td class="num">' + speedHtml + '</td>' +
+            '<td class="num max-speed">' + v.max_speed + '</td>' +
+            '<td class="num auto-price">' + autoDisplay + '</td>' +
             '<td class="num">' + fuelHtml + '</td>' +
+            '<td class="num pct-diff ' + fuelPctClass + '">' + fuelPctDiff + '</td>' +
             '<td class="num">' + crudeHtml + '</td>' +
+            '<td class="num pct-diff ' + crudePctClass + '">' + crudePctDiff + '</td>' +
             '<td class="num">' + guardsHtml + '</td>' +
             '<td class="num ' + riskClass + '">' + risk + '%</td>' +
         '</tr>';
@@ -1335,18 +1465,26 @@
               '<th>Route</th>' +
               '<th>Vessel</th>' +
               '<th class="num">Speed</th>' +
-              '<th class="num" title="Input: Configured price. Orange: Pending price">Dry</th>' +
-              '<th class="num" title="Input: Configured price. Orange: Pending price">Ref</th>' +
-              '<th class="num">Guards</th>' +
-              '<th class="num" title="Hijack Risk on this route">Risk</th>'
+              '<th class="num">Max</th>' +
+              '<th class="num">Auto</th>' +
+              '<th class="num">Dry</th>' +
+              '<th class="num">%</th>' +
+              '<th class="num">Ref</th>' +
+              '<th class="num">%</th>' +
+              '<th class="num">Grd</th>' +
+              '<th class="num">Risk</th>'
             : '<th class="th-status" title="Status">S</th>' +
               '<th>Route</th>' +
               '<th>Vessel</th>' +
               '<th class="num">Speed</th>' +
-              '<th class="num" title="Input: Configured price. Orange: Pending price">Fuel</th>' +
-              '<th class="num" title="Input: Configured price. Orange: Pending price">Crude</th>' +
-              '<th class="num">Guards</th>' +
-              '<th class="num" title="Hijack Risk on this route">Risk</th>';
+              '<th class="num">Max</th>' +
+              '<th class="num">Auto</th>' +
+              '<th class="num">Fuel</th>' +
+              '<th class="num">%</th>' +
+              '<th class="num">Crude</th>' +
+              '<th class="num">%</th>' +
+              '<th class="num">Grd</th>' +
+              '<th class="num">Risk</th>';
 
         var rows = filtered.map(function(v) {
             return isCargo ? rsRenderCargoRow(v) : rsRenderTankerRow(v);
@@ -1384,9 +1522,11 @@
 
         container.querySelector('.rs-save-btn').addEventListener('click', rsSaveRouteSettings);
 
-        fetchVesselData()
-            .then(function(vessels) {
-                rsCachedVessels = vessels;
+        // Fetch both vessel data and auto prices in parallel
+        Promise.all([fetchVesselData(), rsFetchAutoPrices()])
+            .then(function(results) {
+                rsCachedVessels = results[0];
+                rsCachedAutoPrices = results[1];
                 rsRenderTable();
             })
             .catch(function(err) {
@@ -1424,44 +1564,53 @@
 
         var style = document.createElement('style');
         style.textContent = '\
-            #rs-settings-container { width:100%; height:100%; display:flex; flex-direction:column; background:#f5f5f5; color:#01125d; font-family:Lato,sans-serif; font-size:12px; }\
-            .rs-header { display:flex; align-items:center; gap:6px; padding:6px 8px; background:#e8e8e8; border-bottom:1px solid #ccc; }\
-            .rs-subtab { padding:4px 10px; background:#fff; color:#01125d; border:1px solid #ccc; border-radius:4px; cursor:pointer; font-size:11px; font-weight:600; }\
+            #rs-settings-container { width:100%; height:100%; display:flex; flex-direction:column; background:#f5f5f5; color:#01125d; font-family:Lato,sans-serif; font-size:11px; }\
+            .rs-header { display:flex; align-items:center; gap:4px; padding:4px 6px; background:#e8e8e8; border-bottom:1px solid #ccc; }\
+            .rs-subtab { padding:3px 8px; background:#fff; color:#01125d; border:1px solid #ccc; border-radius:3px; cursor:pointer; font-size:10px; font-weight:600; }\
             .rs-subtab:hover { background:#ddd; }\
             .rs-subtab.active { background:#0db8f4; color:#fff; border-color:#0db8f4; }\
-            .rs-save-btn { margin-left:auto; padding:4px 12px; background:#22c55e; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:11px; font-weight:600; opacity:0.4; }\
+            .rs-save-btn { margin-left:auto; padding:3px 10px; background:#22c55e; color:#fff; border:none; border-radius:3px; cursor:pointer; font-size:10px; font-weight:600; opacity:0.4; }\
             .rs-save-btn.has-changes { opacity:1; }\
-            .rs-status { font-size:10px; color:#666; margin-left:8px; }\
+            .rs-status { font-size:9px; color:#666; margin-left:6px; }\
             .rs-status.success { color:#22c55e; }\
             .rs-status.error { color:#ef4444; }\
-            .rs-table-wrapper { flex:1; overflow:auto; position:relative; z-index:0; }\
-            .rs-table { width:100%; border-collapse:collapse; font-size:11px; position:relative; }\
-            .rs-table thead { position:sticky; top:0; background:#e0e0e0; }\
-            .rs-table th { padding:4px 3px; text-align:left; font-weight:600; color:#01125d; border-bottom:1px solid #ccc; white-space:nowrap; background:#e0e0e0; }\
-            .rs-table th.num { text-align:center; }\
-            .rs-table td { padding:2px 3px; border-bottom:1px solid #ddd; vertical-align:middle; }\
+            .rs-table-wrapper { flex:1; overflow:auto; position:relative; z-index:0; padding-bottom:100px; }\
+            .rs-table { width:100%; border-collapse:collapse; font-size:10px; position:relative; }\
+            .rs-table thead { position:sticky; top:0; background:#e0e0e0; z-index:1; }\
+            .rs-table th { padding:3px 2px; text-align:left; font-weight:600; color:#01125d; border-bottom:1px solid #ccc; white-space:nowrap; background:#e0e0e0; font-size:10px; }\
+            .rs-table th.num, .rs-table th.th-status { text-align:center; }\
+            .rs-table td { padding:1px 2px; border-bottom:1px solid #ddd; vertical-align:middle; }\
             .rs-table td.num { text-align:center; }\
+            .rs-table td.max-speed { color:#666; font-size:9px; }\
+            .rs-table td.auto-price { color:#666; font-size:9px; }\
+            .rs-table td.pct-diff { color:#666; font-size:9px; }\
             .rs-table tr:hover { background:#e8f4fc; }\
             .rs-table .warning { color:#d97706; }\
-            .rs-table .status-cell { width:24px; text-align:center; padding:2px; }\
-            .rs-table .status-icon { display:inline-block; width:20px; height:16px; line-height:16px; text-align:center; font-size:9px; font-weight:700; border-radius:2px; cursor:help; }\
+            .rs-table .status-cell { width:22px; text-align:center; padding:1px; }\
+            .rs-table .status-icon { display:inline-block; width:18px; height:14px; line-height:14px; text-align:center; font-size:8px; font-weight:700; border-radius:2px; cursor:help; }\
             .rs-table .status-icon.status-e { background:#3b82f6; color:#fff; }\
             .rs-table .status-icon.status-p { background:#22c55e; color:#fff; }\
             .rs-table .status-icon.status-a { background:#f59e0b; color:#fff; }\
             .rs-table .status-icon.status-mp, .rs-table .status-icon.status-me { background:#8b5cf6; color:#fff; }\
-            .rs-table .route-cell { font-size:10px; white-space:nowrap; }\
-            .rs-table .name-cell { max-width:100px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }\
-            .rs-table input[type="number"] { width:42px; padding:2px 3px; background:#fff; border:1px solid #ccc; border-radius:2px; color:#01125d; font-size:11px; text-align:center; }\
+            .rs-table .status-icon.status-m { background:#ef4444; color:#fff; }\
+            .rs-table .status-icon.status-d { background:#6366f1; color:#fff; }\
+            .rs-table .route-cell { font-size:9px; white-space:nowrap; }\
+            .rs-table .name-cell { max-width:90px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; }\
+            .rs-table input[type="number"] { width:32px; padding:1px 2px; margin:0; background:#fff; border:1px solid #ccc; border-radius:2px; color:#01125d; font-size:10px; text-align:right; box-sizing:border-box; -moz-appearance:textfield; }\
+            .rs-table input.speed-input { width:24px; }\
+            .rs-table .pct-positive { color:#22c55e; }\
+            .rs-table .pct-negative { color:#ef4444; }\
+            .rs-table input[type="number"]::-webkit-outer-spin-button, .rs-table input[type="number"]::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }\
             .rs-table input[type="number"]:focus { outline:none; border-color:#0db8f4; }\
             .rs-table input.changed { background:#fef3c7; border-color:#f59e0b; }\
             .rs-table input:disabled { background:#eee; color:#999; }\
-            .rs-table select { padding:2px; background:#fff; border:1px solid #ccc; border-radius:2px; color:#01125d; font-size:11px; cursor:pointer; }\
+            .rs-table select { padding:1px 2px; background:#fff; border:1px solid #ccc; border-radius:2px; color:#01125d; font-size:10px; cursor:pointer; }\
             .rs-table select:focus { outline:none; border-color:#0db8f4; }\
             .rs-table select.changed { background:#fef3c7; border-color:#f59e0b; }\
             .rs-table select:disabled { background:#eee; color:#999; }\
             .rs-loading, .rs-error, .rs-no-data { padding:20px; text-align:center; color:#666; }\
             .rs-error { color:#ef4444; }\
-            .rs-table .pending-value { font-size:9px; color:#8b5cf6; font-weight:600; margin-top:1px; }\
+            .rs-table .pending-value { font-size:8px; color:#8b5cf6; font-weight:600; margin-top:1px; }\
             .rs-table tr.has-pending { background:#f5f3ff; }\
         ';
         centralContainer.appendChild(style);
@@ -1572,6 +1721,9 @@
             requestNotificationPermission();
             initUI();
             rsWatchRoutesModal();
+
+            // Clean up stale pending entries on startup
+            setTimeout(cleanupStalePendingSettings, 3000);
 
             var settings = getSettings();
             if (settings.autoDrydockEnabled) {
