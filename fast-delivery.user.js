@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Shipping Manager - Fast Delivery
+// @name         Shipping Manager - Fast Delivery (Bug-Using)
 // @namespace    https://rebelship.org/
 // @version      1.6
-// @description  Fast delivery for built vessels via drydock exploit
+// @description  Fast delivery for built vessels via drydock exploit. Sends pending vessels in drydock, for resetting the delivery time with the maintenance end ;)
 // @author       https://github.com/justonlyforyou/
 // @order        24
 // @match        https://shippingmanager.cc/*

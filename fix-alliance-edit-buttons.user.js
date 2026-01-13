@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         Shipping Manager - Fix Alliance Edit Buttons
+// @name         Shipping Manager - Fix Alliance Edit Buttons for INTERIM CEO
 // @namespace    https://shippingmanager.cc/
 // @version      1.3
 // @description  Adds missing edit buttons for alliance name/description for interim_ceo

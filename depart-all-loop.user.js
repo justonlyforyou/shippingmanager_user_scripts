@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name        Shipping Manager - Depart All Loop
+// @name        Shipping Manager - Depart All Loop Button
 // @description Clicks Depart All button repeatedly until all vessels departed
-// @version     2.4
 // @author      https://github.com/justonlyforyou/
+// @version     2.4
 // @order       23
 // @match       https://shippingmanager.cc/*
 // @grant       none

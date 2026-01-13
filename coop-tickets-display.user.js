@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name        Shipping Manager - Co-Op Tickets Display
+// @name        Shipping Manager - Auto Co-Op & Co-Op Header Display
 // @description Shows open Co-Op tickets, auto-sends COOP vessels to alliance members
-// @version     4.2
+// @version     5.6
 // @author      https://github.com/justonlyforyou/
-// @order       25
+// @order       20
 // @match       https://shippingmanager.cc/*
 // @grant       none
 // @run-at      document-end
@@ -53,7 +53,7 @@
         if (typeof window.RebelShipBridge !== 'undefined' && window.RebelShipBridge.syncSettings) {
             try {
                 window.RebelShipBridge.syncSettings(STORAGE_KEY, JSON.stringify(settings));
-            } catch (e) {
+            } catch {
                 // Ignore sync errors
             }
         }
@@ -135,7 +135,8 @@
             var settingsData = memberSettings.data || [];
 
             if (available === 0) {
-                log('No COOP vessels available to send');
+                log('No COOP tickets available');
+                showToast('CoOp: No tickets available (0/' + coopCache.cap + ')', 'warning');
                 return result;
             }
 
@@ -236,12 +237,17 @@
 
             if (result.totalSent > 0) {
                 showToast('CoOp: Sent ' + result.totalSent + ' vessels to ' + result.results.filter(function(r) { return r.departed > 0; }).length + ' members', 'success');
+            } else if (result.totalRequested > 0) {
+                showToast('CoOp: All sends failed', 'error');
+            } else {
+                showToast('CoOp: Nothing to send', 'warning');
             }
 
             return result;
 
         } catch (e) {
             log('Error: ' + e.message);
+            showToast('CoOp Error: ' + e.message, 'error');
             return { error: e.message };
         } finally {
             isProcessing = false;
@@ -253,6 +259,12 @@
         console.log('[' + SCRIPT_NAME + '] ' + message);
     }
 
+    function requestNotificationPermission() {
+        if ('Notification' in window && Notification.permission === 'default') {
+            Notification.requestPermission();
+        }
+    }
+
     function sendSystemNotification(title, message) {
         if (!settings.systemNotifications) return;
 
@@ -261,14 +273,22 @@
             try {
                 window.RebelShipNotify.notify(title + ': ' + message);
                 return;
-            } catch (e) { }
+            } catch { }
         }
 
         // Web Notification API
-        if ('Notification' in window && Notification.permission === 'granted') {
-            try {
-                new Notification(title, { body: message, icon: 'https://shippingmanager.cc/favicon.ico', tag: 'coop' });
-            } catch (e) { }
+        if ('Notification' in window) {
+            if (Notification.permission === 'granted') {
+                try {
+                    new Notification(title, { body: message, icon: 'https://shippingmanager.cc/favicon.ico', tag: 'coop' });
+                } catch { }
+            } else if (Notification.permission === 'default') {
+                Notification.requestPermission().then(function(permission) {
+                    if (permission === 'granted') {
+                        new Notification(title, { body: message, icon: 'https://shippingmanager.cc/favicon.ico', tag: 'coop' });
+                    }
+                });
+            }
         }
     }
 
@@ -293,7 +313,7 @@
             var pinia = app._context.provides.pinia || app.config.globalProperties.$pinia;
             if (!pinia || !pinia._s) return null;
             return pinia._s.get('toast');
-        } catch (e) {
+        } catch {
             return null;
         }
     }
@@ -311,41 +331,27 @@
                 coopStore: pinia._s.get('coop'),
                 modalStore: pinia._s.get('modal')
             };
-        } catch (e) {
+        } catch {
             return null;
         }
     }
 
-    function getAllianceData() {
-        var stores = getStores();
-        if (!stores || !stores.allianceStore) return null;
-        var allianceStore = stores.allianceStore;
-        if (allianceStore.alliance) return allianceStore.alliance.value || allianceStore.alliance;
-        if (allianceStore.$state && allianceStore.$state.alliance) return allianceStore.$state.alliance;
-        return null;
-    }
+    // Cache for coop data from API
+    var coopCache = { available: 0, cap: 0, lastFetch: 0 };
 
-    function getCoopPool() {
-        var stores = getStores();
-        if (!stores) return [];
-        if (stores.coopStore) {
-            var coopStore = stores.coopStore;
-            if (coopStore.pool) {
-                var pool = coopStore.pool.value || coopStore.pool;
-                return pool.direct || pool || [];
+    async function refreshCoopCache() {
+        try {
+            var data = await fetchCoopData();
+            if (data && data.data && data.data.coop) {
+                coopCache.available = data.data.coop.available;
+                // coop_boost takes priority over cap (alliance benefit)
+                coopCache.cap = data.data.coop.coop_boost || data.data.coop.cap;
+                coopCache.lastFetch = Date.now();
             }
-            if (coopStore.$state && coopStore.$state.pool) {
-                return coopStore.$state.pool.direct || coopStore.$state.pool || [];
-            }
+        } catch {
+            // Ignore fetch errors, use cached data
         }
-        if (stores.allianceStore) {
-            var allianceStore = stores.allianceStore;
-            if (allianceStore.coopPool) {
-                var pool = allianceStore.coopPool.value || allianceStore.coopPool;
-                return pool.direct || pool || [];
-            }
-        }
-        return [];
+        return coopCache;
     }
 
     // ========== UI: DISPLAY ==========
@@ -358,21 +364,30 @@
         if (existing) return existing;
         var row = document.createElement('div');
         row.id = 'rebel-mobile-row';
-        row.style.cssText = 'position:fixed !important;top:0 !important;left:0 !important;right:0 !important;display:flex !important;flex-wrap:nowrap !important;justify-content:center !important;align-items:center !important;gap:4px !important;background:#1a1a2e !important;padding:4px 6px !important;font-size:14px !important;z-index:9999 !important;';
-        document.body.appendChild(row);
+        row.style.cssText = 'position:fixed !important;top:0 !important;left:0 !important;right:0 !important;display:flex !important;flex-wrap:nowrap !important;justify-content:space-between !important;align-items:center !important;gap:4px !important;background:#1a1a2e !important;padding:4px 6px !important;font-size:14px !important;z-index:9999 !important;';
+        var leftSection = document.createElement('div'); leftSection.id = 'rebel-mobile-left'; leftSection.style.cssText = 'display:flex;align-items:center;gap:4px;'; row.appendChild(leftSection); var rightSection = document.createElement('div'); rightSection.id = 'rebel-mobile-right'; rightSection.style.cssText = 'display:flex;align-items:center;gap:4px;'; row.appendChild(rightSection); document.body.appendChild(row);
         var appContainer = document.querySelector('#app') || document.body.firstElementChild;
         if (appContainer) appContainer.style.marginTop = '2px';
         return row;
     }
 
+    // Click Co-op tab (index 1): Overview, Co-op, Chat, Settings
     function clickCoopTab() {
-        var tabs = document.querySelectorAll('.tab');
-        for (var i = 0; i < tabs.length; i++) {
-            var text = tabs[i].textContent.trim().toLowerCase();
-            if (text.includes('co-op') || text === 'coop') {
-                tabs[i].click();
-                return true;
-            }
+        var topNav = document.querySelector('#top-nav');
+        if (!topNav) return false;
+        var tabs = topNav.querySelectorAll('.tab.flex-centered');
+        if (tabs.length >= 2) {
+            var tab = tabs[1];
+            // Delay click to let Vue finish mounting, prevents game JS error
+            setTimeout(function() {
+                var event = new window.MouseEvent('click', {
+                    view: window,
+                    bubbles: true,
+                    cancelable: true
+                });
+                tab.dispatchEvent(event);
+            }, 500);
+            return true;
         }
         return false;
     }
@@ -381,7 +396,17 @@
         var allianceBtn = document.getElementById('alliance-modal-btn');
         if (allianceBtn) {
             allianceBtn.click();
-            setTimeout(clickCoopTab, 400);
+            // Wait for #top-nav to appear, then click after modal is stable
+            var attempts = 0;
+            var maxAttempts = 20;
+            var checkInterval = setInterval(function() {
+                attempts++;
+                if (clickCoopTab()) {
+                    clearInterval(checkInterval);
+                } else if (attempts >= maxAttempts) {
+                    clearInterval(checkInterval);
+                }
+            }, 150);
         }
     }
 
@@ -417,19 +442,19 @@
             coopElement = document.createElement('div');
             coopElement.id = 'coop-tickets-display';
             coopElement.style.cssText = 'display:flex !important;align-items:center !important;padding:0 !important;font-size:13px !important;font-weight:bold !important;cursor:pointer !important;color:#4ade80 !important;';
-            coopElement.textContent = 'CoOp: ...';
+            coopElement.textContent = 'CO-OP: ...';
             coopElement.addEventListener('click', openAllianceCoopTab);
-            var menu = row.querySelector('#rebelship-menu');
-            if (menu) row.insertBefore(coopElement, menu);
+            var leftSection = document.getElementById('rebel-mobile-left');
+            if (leftSection) leftSection.appendChild(coopElement);
             else row.appendChild(coopElement);
             return coopElement;
         }
         var companyContent = document.querySelector('.companyContent');
         if (!companyContent) return null;
-        coopElement = document.createElement('div');
+        coopElement = document.createElement('span');
         coopElement.id = 'coop-tickets-display';
-        coopElement.style.cssText = 'display:inline-flex;align-items:center;margin-left:10px;padding:2px 8px;border-radius:4px;font-size:13px;font-weight:bold;cursor:pointer;background:#4ade80;color:#333;';
-        coopElement.textContent = 'CoOp: ...';
+        coopElement.style.cssText = 'margin-left:4px !important;font-size:13px !important;cursor:pointer;color:#4ade80;text-decoration:underline;';
+        coopElement.textContent = 'CO-OP: ...';
         coopElement.addEventListener('click', openAllianceCoopTab);
         var repDisplay = document.getElementById('reputation-display');
         if (repDisplay && repDisplay.parentNode) {
@@ -442,29 +467,28 @@
         return coopElement;
     }
 
-    function updateCoopDisplay() {
-        var allianceData = getAllianceData();
-        if (!allianceData || !allianceData.id) {
-            var el = document.getElementById('coop-tickets-display');
-            if (el) el.style.display = 'none';
+    async function updateCoopDisplay() {
+        await refreshCoopCache();
+        var available = coopCache.available;
+        var cap = coopCache.cap;
+        // Hide if no coop data (not in alliance)
+        if (cap === 0) {
+            var existing = document.getElementById('coop-tickets-display');
+            if (existing) existing.style.display = 'none';
             return;
         }
-        var pool = getCoopPool();
-        var openTickets = Array.isArray(pool) ? pool.length : 0;
-        var maxTickets = allianceData.benefit ? allianceData.benefit.coop_boost : 0;
-        updateAllianceTabDot(openTickets > 0);
+        updateAllianceTabDot(available > 0);
         var el = document.getElementById('coop-tickets-display');
         if (!el) el = createCoopDisplay();
         if (el) {
             el.style.display = '';
-            el.textContent = 'CoOp: ' + openTickets + '/' + maxTickets;
-            if (isMobile) el.style.color = getCoopColor(openTickets);
-            else el.style.background = getCoopColor(openTickets);
+            el.textContent = 'CO-OP: ' + available + '/' + cap;
+            el.style.color = getCoopColor(available);
         }
     }
 
     // ========== UI: REBELSHIP MENU ==========
-    var REBELSHIP_LOGO = '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M20 21c-1.39 0-2.78-.47-4-1.32-2.44 1.71-5.56 1.71-8 0C6.78 20.53 5.39 21 4 21H2v2h2c1.38 0 2.74-.35 4-.99 2.52 1.29 5.48 1.29 8 0 1.26.65 2.62.99 4 .99h2v-2h-2zM3.95 19H4c1.6 0 3.02-.88 4-2 .98 1.12 2.4 2 4 2s3.02-.88 4-2c.98 1.12 2.4 2 4 2h.05l1.89-6.68c.08-.26.06-.54-.06-.78s-.34-.42-.6-.5L20 10.62V6c0-1.1-.9-2-2-2h-3V1H9v3H6c-1.1 0-2 .9-2 2v4.62l-1.29.42c-.26.08-.48.26-.6.5s-.15.52-.06.78L3.95 19zM6 6h12v3.97L12 8 6 9.97V6z"/></svg>';
+    var REBELSHIP_LOGO = '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><path d="M20 21c-1.39 0-2.78-.47-4-1.32-2.44 1.71-5.56 1.71-8 0C6.78 20.53 5.39 21 4 21H2v2h2c1.38 0 2.74-.35 4-.99 2.52 1.29 5.48 1.29 8 0 1.26.65 2.62.99 4 .99h2v-2h-2zM3.95 19H4c1.6 0 3.02-.88 4-2 .98 1.12 2.4 2 4 2s3.02-.88 4-2c.98 1.12 2.4 2 4 2h.05l1.89-6.68c.08-.26.06-.54-.06-.78s-.34-.42-.6-.5L20 10.62V6c0-1.1-.9-2-2-2h-3V1H9v3H6c-1.1 0-2 .9-2 2v4.62l-1.29.42c-.26.08-.48.26-.6.5s-.15.52-.06.78L3.95 19zM6 6h12v3.97L12 8 6 9.97V6z"/></svg>';
 
     function getOrCreateRebelShipMenu() {
         var menu = document.getElementById('rebelship-menu');
@@ -477,33 +501,33 @@
             if (!row) return null;
             var container = document.createElement('div');
             container.id = 'rebelship-menu';
-            container.style.cssText = 'position:relative;display:inline-block;margin-left:auto;';
+            container.style.cssText = 'position:relative;display:inline-block;;';
             var btn = document.createElement('button');
             btn.id = 'rebelship-menu-btn';
             btn.innerHTML = REBELSHIP_LOGO;
             btn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:18px;height:18px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:white;border:none;border-radius:6px;cursor:pointer;';
             btn.title = 'RebelShip Menu';
-            var dropdown = document.createElement('div');
+            dropdown = document.createElement('div');
             dropdown.className = 'rebelship-dropdown';
             dropdown.style.cssText = 'display:none;position:absolute;top:100%;right:0;background:#1f2937;border:1px solid #374151;border-radius:4px;min-width:200px;z-index:99999;box-shadow:0 4px 12px rgba(0,0,0,0.3);margin-top:4px;';
             container.appendChild(btn);
             container.appendChild(dropdown);
             btn.addEventListener('click', function(e) { e.stopPropagation(); dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block'; });
             document.addEventListener('click', function(e) { if (!container.contains(e.target)) dropdown.style.display = 'none'; });
-            row.appendChild(container);
+            var rightSection = document.getElementById('rebel-mobile-right'); if (rightSection) { rightSection.appendChild(container); } else { row.appendChild(container); }
             return dropdown;
         }
         var messagingIcon = document.querySelector('div.messaging.cursor-pointer') || document.querySelector('.messaging');
         if (!messagingIcon) return null;
-        var container = document.createElement('div');
+        container = document.createElement('div');
         container.id = 'rebelship-menu';
-        container.style.cssText = 'position:relative;display:inline-block;vertical-align:middle;margin-right:10px;margin-left:auto;';
-        var btn = document.createElement('button');
+        container.style.cssText = 'position:relative;display:inline-block;vertical-align:middle;margin-right:4px !important;margin-left:auto;';
+        btn = document.createElement('button');
         btn.id = 'rebelship-menu-btn';
         btn.innerHTML = REBELSHIP_LOGO;
-        btn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:36px;height:36px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:white;border:none;border-radius:6px;cursor:pointer;box-shadow:0 2px 4px rgba(0,0,0,0.2);';
+        btn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:28px;height:28px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:white;border:none;border-radius:6px;cursor:pointer;box-shadow:0 2px 4px rgba(0,0,0,0.2);';
         btn.title = 'RebelShip Menu';
-        var dropdown = document.createElement('div');
+        dropdown = document.createElement('div');
         dropdown.className = 'rebelship-dropdown';
         dropdown.style.cssText = 'display:none;position:absolute;top:100%;right:0;background:#1f2937;border:1px solid #374151;border-radius:4px;min-width:200px;z-index:99999;box-shadow:0 4px 12px rgba(0,0,0,0.3);margin-top:4px;';
         container.appendChild(btn);
@@ -573,13 +597,9 @@
                             Send push notifications when COOP vessels are distributed\
                         </div>\
                     </div>\
-                    <div style="display:flex;gap:12px;justify-content:center;margin-top:30px;">\
-                        <button id="fh-run-now" class="btn" style="padding:10px 24px;background:linear-gradient(180deg,#3b82f6,#1d4ed8);border:0;border-radius:6px;color:#fff;cursor:pointer;font-size:14px;font-weight:500;">\
-                            Run Now\
-                        </button>\
-                        <button id="fh-save" class="btn btn-green" style="padding:10px 24px;background:linear-gradient(180deg,#46ff33,#129c00);border:0;border-radius:6px;color:#fff;cursor:pointer;font-size:16px;font-weight:500;">\
-                            Save\
-                        </button>\
+                    <div style="display:flex;gap:12px;justify-content:space-between;margin-top:30px;">\
+                        <button id="fh-run-now" style="padding:10px 24px;background:linear-gradient(180deg,#3b82f6,#1d4ed8);border:0;border-radius:6px;color:#fff;cursor:pointer;font-size:14px;font-weight:500;">Run Now</button>\
+                        <button id="fh-save" style="padding:10px 24px;background:linear-gradient(180deg,#46ff33,#129c00);border:0;border-radius:6px;color:#fff;cursor:pointer;font-size:16px;font-weight:500;">Save</button>\
                     </div>\
                 </div>';
 
@@ -594,6 +614,9 @@
             document.getElementById('fh-save').addEventListener('click', function() {
                 settings.autoSendEnabled = document.getElementById('fh-auto-send').checked;
                 settings.systemNotifications = document.getElementById('fh-notifications').checked;
+                if (settings.systemNotifications) {
+                    requestNotificationPermission();
+                }
                 saveSettings();
                 log('Settings saved: autoSend=' + settings.autoSendEnabled + ', notifications=' + settings.systemNotifications);
                 showToast('CoOp settings saved', 'success');
@@ -617,12 +640,12 @@
             return;
         }
         uiInitialized = true;
-        addMenuItem('CoOp', openSettingsModal);
+        addMenuItem('Auto CO-OP', openSettingsModal);
         log('Menu item added');
     }
 
     function init() {
-        log('Initializing v4.2...');
+        log('Initializing v5.1...');
         loadSettings();
         initUI();
         updateCoopDisplay();

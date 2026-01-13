@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Vessel Shopping Cart
 // @description Add vessels to cart and bulk purchase them
-// @version     4.5
+// @version     4.10
 // @author      https://github.com/justonlyforyou/
 // @order       26
 // @match       https://shippingmanager.cc/*
@@ -619,10 +619,22 @@
         var existing = document.getElementById('rebel-mobile-row');
         if (existing) return existing;
 
-        // Create fixed row at top of screen
+        // Create fixed row at top of screen with two sections
         var row = document.createElement('div');
         row.id = 'rebel-mobile-row';
-        row.style.cssText = 'position:fixed !important;top:0 !important;left:0 !important;right:0 !important;display:flex !important;flex-wrap:nowrap !important;justify-content:center !important;align-items:center !important;gap:4px !important;background:#1a1a2e !important;padding:4px 6px !important;font-size:14px !important;z-index:9999 !important;';
+        row.style.cssText = 'position:fixed !important;top:0 !important;left:0 !important;right:0 !important;display:flex !important;flex-wrap:nowrap !important;justify-content:space-between !important;align-items:center !important;background:#1a1a2e !important;padding:4px 6px !important;font-size:14px !important;z-index:9999 !important;';
+
+        // Left section for general items
+        var leftSection = document.createElement('div');
+        leftSection.id = 'rebel-mobile-left';
+        leftSection.style.cssText = 'display:flex;align-items:center;gap:4px;';
+        row.appendChild(leftSection);
+
+        // Right section for cart + rebelship menu
+        var rightSection = document.createElement('div');
+        rightSection.id = 'rebel-mobile-right';
+        rightSection.style.cssText = 'display:flex;align-items:center;gap:4px;';
+        row.appendChild(rightSection);
 
         document.body.appendChild(row);
 
@@ -651,7 +663,7 @@
             showCartModal();
         });
 
-        // Mobile: insert into mobile row
+        // Mobile: insert into mobile row right section
         if (isMobile) {
             var row = getOrCreateMobileRow();
             if (!row) {
@@ -659,14 +671,24 @@
                 return;
             }
 
-            btn.style.cssText = 'display:flex;align-items:center;gap:2px;padding:2px 6px;background:#f59e0b;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;margin-right:3px;';
+            // Get or create right section
+            var rightSection = document.getElementById('rebel-mobile-right');
+            if (!rightSection) {
+                rightSection = document.createElement('div');
+                rightSection.id = 'rebel-mobile-right';
+                rightSection.style.cssText = 'display:flex;align-items:center;gap:4px;';
+                row.appendChild(rightSection);
+            }
 
-            // Position at far right, just before rebelship-menu
+            // Match RebelShip menu height (18px) for mobile
+            btn.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:2px;height:18px;padding:0 6px;background:#f59e0b;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:10px;';
+
+            // Insert cart at start of right section (before rebelship-menu)
             var rebelMenu = document.getElementById('rebelship-menu');
-            if (rebelMenu) {
-                row.insertBefore(btn, rebelMenu);
+            if (rebelMenu && rebelMenu.parentNode === rightSection) {
+                rightSection.insertBefore(btn, rebelMenu);
             } else {
-                row.appendChild(btn);
+                rightSection.insertBefore(btn, rightSection.firstChild);
             }
 
             console.log('[VesselCart] Cart button created (mobile)');
@@ -685,7 +707,8 @@
             rebelshipMenu = messagingIcon;
         }
 
-        btn.style.cssText = 'display:flex;align-items:center;gap:6px;padding:8px 12px;background:#f59e0b;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;margin-right:10px;box-shadow:0 2px 4px rgba(0,0,0,0.2);';
+        // Match RebelShip menu height (28px) for desktop
+        btn.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:4px;height:28px;padding:0 10px;background:#f59e0b;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;margin-right:4px !important;margin-left:4px !important;box-shadow:0 2px 4px rgba(0,0,0,0.2);';
 
         if (rebelshipMenu.parentNode) {
             rebelshipMenu.parentNode.insertBefore(btn, rebelshipMenu);

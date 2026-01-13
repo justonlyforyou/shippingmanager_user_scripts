@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Premium Feature Unlocker
 // @description Unlocks premium map themes, tanker ops, metropolis and extended zoom
-// @version     1.2
+// @version     1.3
 // @author      https://github.com/justonlyforyou/
 // @order       10
 // @match       https://shippingmanager.cc/*
@@ -31,11 +31,35 @@
     var currentObserver = null;
     var currentPremiumTheme = null;
 
-    function switchToPremiumTheme(themeName) {
+    // LocalStore helpers - game uses "localStore" key with preferredTile field
+    function getLocalStore() {
+        try {
+            return JSON.parse(localStorage.getItem('localStore')) || {};
+        } catch { return {}; }
+    }
+
+    function savePreferredTile(themeName) {
+        var store = getLocalStore();
+        store.preferredTile = themeName;
+        localStorage.setItem('localStore', JSON.stringify(store));
+        console.log('[Map Unlock] Saved preferredTile:', themeName);
+    }
+
+    function getSavedTheme() {
+        var store = getLocalStore();
+        return store.preferredTile;
+    }
+
+    function switchToPremiumTheme(themeName, skipSave) {
         var theme = PREMIUM_THEMES[themeName];
         if (!theme) return;
 
         currentPremiumTheme = themeName;
+
+        // Save to localStorage (unless restoring from saved)
+        if (!skipSave) {
+            savePreferredTile(themeName);
+        }
 
         if (currentObserver) {
             currentObserver.disconnect();
@@ -248,12 +272,47 @@
         console.log('[Map Unlock] Layer control fixed with premium options');
     }
 
+    // Restore saved premium theme after page load
+    function restoreSavedTheme() {
+        var saved = getSavedTheme();
+        if (saved && PREMIUM_THEMES[saved]) {
+            var tilePane = document.querySelector('.leaflet-tile-pane');
+            if (!tilePane) return false;
+
+            console.log('[Map Unlock] Restoring saved theme:', saved);
+            switchToPremiumTheme(saved, true);
+
+            // Also check the correct radio in layer control
+            var baseDiv = document.querySelector('.leaflet-control-layers-base');
+            if (baseDiv) {
+                baseDiv.querySelectorAll('input[type=radio]').forEach(function(r) { r.checked = false; });
+                var labels = baseDiv.querySelectorAll('label.rebel-premium');
+                labels.forEach(function(label) {
+                    if (label.textContent.trim() === saved) {
+                        var radio = label.querySelector('input[type=radio]');
+                        if (radio) radio.checked = true;
+                    }
+                });
+            }
+            return true;
+        }
+        return false;
+    }
+
     setInterval(unlockFeatures, 2000);
     setInterval(unlockZoom, 2000);
     setTimeout(fixLayerControl, 2500);
     setInterval(fixLayerControl, 3000);
     setTimeout(unlockFeatures, 3000);
     setTimeout(unlockZoom, 3000);
+
+    // Try to restore saved theme after layer control is ready
+    var restoreTries = 0;
+    var restoreInterval = setInterval(function() {
+        if (restoreSavedTheme() || restoreTries++ > 20) {
+            clearInterval(restoreInterval);
+        }
+    }, 500);
 
     console.log('[Map Unlock] Script loaded');
 })();

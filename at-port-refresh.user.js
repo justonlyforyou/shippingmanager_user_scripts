@@ -1,6 +1,6 @@
 // ==UserScript==
-// @name        ShippingManager - At Port Refresh
-// @description Automatically refreshes the At Port vessel list every 30 seconds
+// @name        ShippingManager - Auto Port Refresh
+// @description Automatically refreshes the port (left side menu) every 30 seconds.
 // @version     1.2
 // @author      https://github.com/justonlyforyou/
 // @order       50

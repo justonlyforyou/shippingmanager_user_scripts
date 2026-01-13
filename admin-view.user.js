@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name        Shipping Manager - Admin View
-// @description Enable admin/moderator UI elements (client-side only)
+// @description Enable admin/moderator UI elements (client-side only - just for look and feel). HAS NO ADMIN FUNCTIONS IN BACKEND!
 // @version     8.5
 // @author      https://github.com/justonlyforyou/
 // @order       999

@@ -2,7 +2,7 @@
 // @name         Shipping Manager - Harbor Improvements
 // @namespace    https://rebelship.org/
 // @version      2.5
-// @description  Fixes harbor map UI issues like port popup button positioning
+// @description  Just a simple repositioning of the details button on harbor menu.
 // @author       https://github.com/justonlyforyou/
 // @order        26
 // @match        https://shippingmanager.cc/*

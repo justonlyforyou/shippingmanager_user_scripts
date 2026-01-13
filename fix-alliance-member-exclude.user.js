@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Shipping Manager - Fix Alliance Member Exclude
 // @namespace    https://shippingmanager.cc/
-// @version      1.3
-// @description  Fixes broken exclude buttons for CEO and adds missing ones for regular members
+// @version      1.4
+// @description  Fixes broken exclude buttons for CEO and adds missing ones for management members
 // @author       https://github.com/justonlyforyou/
 // @order        51
 // @match        https://shippingmanager.cc/*
@@ -64,6 +64,31 @@
         if (!myMember) return false;
         const kickRoles = ['ceo', 'interim_ceo', 'coo', 'management'];
         return kickRoles.includes(myMember.role);
+    }
+
+    function isManagementTabActive() {
+        const managementBtn = document.getElementById('allianceManagement-page-btn');
+        if (!managementBtn) return false;
+        return managementBtn.classList.contains('selected-page');
+    }
+
+    function removeAllExcludeButtons() {
+        // Remove our added member exclude buttons
+        const memberBtns = document.querySelectorAll('[data-smfix-member-exclude-btn]');
+        memberBtns.forEach(btn => btn.remove());
+
+        // Remove our CEO replacement button and unhide the original
+        const ceoBtnReplacement = document.getElementById('smfix-ceo-exclude-btn');
+        if (ceoBtnReplacement) {
+            ceoBtnReplacement.remove();
+        }
+
+        // Unhide original CEO buttons we hid
+        const hiddenCeoBtns = document.querySelectorAll('[data-smfix-ceo-fixed="true"]');
+        hiddenCeoBtns.forEach(btn => {
+            btn.style.display = '';
+            btn.dataset.smfixCeoFixed = '';
+        });
     }
 
     // ===========================================
@@ -284,11 +309,17 @@
     // ===========================================
 
     function runFixes() {
+        // Only show exclude buttons when on Management tab
+        if (!isManagementTabActive()) {
+            removeAllExcludeButtons();
+            return;
+        }
+
         fixCeoExcludeButton();
         addMemberExcludeButtons();
     }
 
     setInterval(runFixes, 500);
 
-    console.log('[Exclude Fix] v1.0 loaded - fixing CEO button + adding member buttons');
+    console.log('[Exclude Fix] v1.4 loaded - fixing CEO button + adding member buttons (Management tab only)');
 })();
