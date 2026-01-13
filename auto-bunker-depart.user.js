@@ -2,7 +2,7 @@
 // @name         ShippingManager - Auto Bunker-Refill & Depart
 // @namespace    http://tampermonkey.net/
 // @description  Auto-buy fuel/CO2 and auto-depart vessels - works in background mode via direct API
-// @version      11.1
+// @version      11.2
 // @author       https://github.com/justonlyforyou/
 // @order        20
 // @match        https://shippingmanager.cc/*
@@ -72,11 +72,13 @@
                 for (var key in DEFAULT_SETTINGS) {
                     result[key] = parsed[key] !== undefined ? parsed[key] : DEFAULT_SETTINGS[key];
                 }
+                console.log('[Auto-Buy] Loaded settings from localStorage:', JSON.stringify(result));
                 return result;
             }
         } catch (e) {
             console.error('[Auto-Buy] Failed to load settings:', e);
         }
+        console.log('[Auto-Buy] No settings in localStorage, using defaults');
         var defaults = {};
         for (var k in DEFAULT_SETTINGS) {
             defaults[k] = DEFAULT_SETTINGS[k];
@@ -631,6 +633,8 @@
 
         var fuelPrice = prices.fuelPrice;
         if (!fuelPrice) return false;
+
+        console.log('[Auto-Buy] Fuel Mode: ' + settings.fuelMode + ', Price: $' + fuelPrice + ', Basic Threshold: $' + settings.fuelPriceThreshold + ', Intel Max: $' + settings.fuelIntelligentMaxPrice);
 
         var fuelSpace = bunker.maxFuel - bunker.fuel;
         var availableCash = Math.max(0, bunker.cash - settings.fuelMinCash);
@@ -1476,25 +1480,27 @@
 
                 var newSettings = {
                     fuelMode: fuelMode,
-                    fuelPriceThreshold: parseInt(document.getElementById('ab-fuel-threshold').value) || DEFAULT_SETTINGS.fuelPriceThreshold,
-                    fuelMinCash: parseFormattedNumber(document.getElementById('ab-fuel-mincash').value) || DEFAULT_SETTINGS.fuelMinCash,
-                    fuelIntelligentMaxPrice: parseInt(document.getElementById('ab-fuel-intel-max').value) || DEFAULT_SETTINGS.fuelIntelligentMaxPrice,
+                    fuelPriceThreshold: parseInt(document.getElementById('ab-fuel-threshold').value, 10),
+                    fuelMinCash: parseFormattedNumber(document.getElementById('ab-fuel-mincash').value),
+                    fuelIntelligentMaxPrice: parseInt(document.getElementById('ab-fuel-intel-max').value, 10),
                     fuelIntelligentBelowEnabled: document.getElementById('ab-fuel-intel-below-enabled') && document.getElementById('ab-fuel-intel-below-enabled').checked,
-                    fuelIntelligentBelow: parseInt(document.getElementById('ab-fuel-intel-below').value) || DEFAULT_SETTINGS.fuelIntelligentBelow,
+                    fuelIntelligentBelow: parseInt(document.getElementById('ab-fuel-intel-below').value, 10),
                     fuelIntelligentShipsEnabled: document.getElementById('ab-fuel-intel-ships-enabled') && document.getElementById('ab-fuel-intel-ships-enabled').checked,
-                    fuelIntelligentShips: parseInt(document.getElementById('ab-fuel-intel-ships').value) || DEFAULT_SETTINGS.fuelIntelligentShips,
+                    fuelIntelligentShips: parseInt(document.getElementById('ab-fuel-intel-ships').value, 10),
                     co2Mode: co2Mode,
-                    co2PriceThreshold: parseInt(document.getElementById('ab-co2-threshold').value) || DEFAULT_SETTINGS.co2PriceThreshold,
-                    co2MinCash: parseFormattedNumber(document.getElementById('ab-co2-mincash').value) || DEFAULT_SETTINGS.co2MinCash,
-                    co2IntelligentMaxPrice: parseInt(document.getElementById('ab-co2-intel-max').value) || DEFAULT_SETTINGS.co2IntelligentMaxPrice,
+                    co2PriceThreshold: parseInt(document.getElementById('ab-co2-threshold').value, 10),
+                    co2MinCash: parseFormattedNumber(document.getElementById('ab-co2-mincash').value),
+                    co2IntelligentMaxPrice: parseInt(document.getElementById('ab-co2-intel-max').value, 10),
                     co2IntelligentBelowEnabled: document.getElementById('ab-co2-intel-below-enabled') && document.getElementById('ab-co2-intel-below-enabled').checked,
-                    co2IntelligentBelow: parseInt(document.getElementById('ab-co2-intel-below').value) || DEFAULT_SETTINGS.co2IntelligentBelow,
+                    co2IntelligentBelow: parseInt(document.getElementById('ab-co2-intel-below').value, 10),
                     co2IntelligentShipsEnabled: document.getElementById('ab-co2-intel-ships-enabled') && document.getElementById('ab-co2-intel-ships-enabled').checked,
-                    co2IntelligentShips: parseInt(document.getElementById('ab-co2-intel-ships').value) || DEFAULT_SETTINGS.co2IntelligentShips,
+                    co2IntelligentShips: parseInt(document.getElementById('ab-co2-intel-ships').value, 10),
                     avoidNegativeCO2: document.getElementById('ab-avoid-negative-co2') && document.getElementById('ab-avoid-negative-co2').checked,
                     autoDepartEnabled: document.getElementById('ab-auto-depart') && document.getElementById('ab-auto-depart').checked,
                     systemNotifications: document.getElementById('ab-system-notifications') && document.getElementById('ab-system-notifications').checked
                 };
+
+                console.log('[Auto-Buy] Saving settings:', JSON.stringify(newSettings));
 
                 saveSettings(newSettings);
 
