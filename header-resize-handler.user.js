@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Header Resize Handler
 // @description Reinitializes header elements when window is resized, reorganizes VIP Points and Cash display
-// @version     3.15
+// @version     3.17
 // @author      https://github.com/justonlyforyou/
 // @order       1
 // @match       https://shippingmanager.cc/*
@@ -70,8 +70,8 @@
         var originalPoints = document.querySelector('.contentBar.points');
         if (!originalPoints || document.getElementById('rebel-vip-display')) return false;
 
-        // Hide original
-        originalPoints.style.display = 'none';
+        // Check if parent exists before proceeding
+        if (!originalPoints.parentNode) return false;
 
         // Get the icon SVG from original
         var originalIcon = originalPoints.querySelector('svg');
@@ -96,8 +96,13 @@
         valueEl.textContent = '...';
         container.appendChild(valueEl);
 
-        // Insert after original
+        // Insert after original - only hide original AFTER successful insert
         originalPoints.parentNode.insertBefore(container, originalPoints.nextSibling);
+
+        // Only hide original if container was successfully added to DOM
+        if (document.getElementById('rebel-vip-display')) {
+            originalPoints.style.display = 'none';
+        }
 
         // Copy click handler
         container.addEventListener('click', function() {
@@ -116,8 +121,8 @@
         var stockInfo = document.querySelector('.stockInfo');
         if (!originalCash || !stockInfo || document.getElementById('rebel-cash-display')) return false;
 
-        // Hide original
-        originalCash.style.display = 'none';
+        // Check if parent exists before proceeding
+        if (!stockInfo.parentNode) return false;
 
         // Get the icon SVG from original
         var originalIcon = originalCash.querySelector('svg');
@@ -142,8 +147,13 @@
         valueEl.textContent = '...';
         container.appendChild(valueEl);
 
-        // Insert after stockInfo
+        // Insert after stockInfo - only hide original AFTER successful insert
         stockInfo.parentNode.insertBefore(container, stockInfo.nextSibling);
+
+        // Only hide original if container was successfully added to DOM
+        if (document.getElementById('rebel-cash-display')) {
+            originalCash.style.display = 'none';
+        }
 
         // Copy click handler
         container.addEventListener('click', function() {
@@ -307,71 +317,8 @@
     // Listen for resize
     window.addEventListener('resize', debouncedResize);
 
-    // MutationObserver to detect when game re-renders header elements
-    var mutationTimeout = null;
-    function setupMutationObserver() {
-        var header = document.querySelector('.header');
-        if (!header) {
-            setTimeout(setupMutationObserver, 1000);
-            return;
-        }
-
-        var observer = new MutationObserver(function(mutations) {
-            // Check if our elements were removed or originals were re-shown
-            var needsReinit = false;
-
-            for (var i = 0; i < mutations.length; i++) {
-                var mutation = mutations[i];
-                // Check for removed nodes that are our custom elements
-                if (mutation.removedNodes.length > 0) {
-                    for (var j = 0; j < mutation.removedNodes.length; j++) {
-                        var node = mutation.removedNodes[j];
-                        if (node.id && HEADER_ELEMENT_IDS.indexOf(node.id) !== -1) {
-                            needsReinit = true;
-                            break;
-                        }
-                    }
-                }
-                // Check for added nodes that might be re-rendered originals
-                if (mutation.addedNodes.length > 0) {
-                    for (var k = 0; k < mutation.addedNodes.length; k++) {
-                        var addedNode = mutation.addedNodes[k];
-                        if (addedNode.classList && (
-                            addedNode.classList.contains('chartWrapper') ||
-                            addedNode.classList.contains('ledWrapper')
-                        )) {
-                            needsReinit = true;
-                            break;
-                        }
-                    }
-                }
-                if (needsReinit) break;
-            }
-
-            if (needsReinit) {
-                // Debounce reinit
-                if (mutationTimeout) clearTimeout(mutationTimeout);
-                mutationTimeout = setTimeout(function() {
-                    console.log('[HeaderResize] DOM change detected, reinitializing...');
-                    vipValueElement = null;
-                    cashValueElement = null;
-                    initCustomDisplays();
-                    window.dispatchEvent(new CustomEvent('rebelship-header-resize'));
-                }, 100);
-            }
-        });
-
-        observer.observe(header, {
-            childList: true,
-            subtree: true
-        });
-
-        console.log('[HeaderResize] MutationObserver active on .header');
-    }
-
     // Initialize on load
     init();
-    setupMutationObserver();
 
-    console.log('[HeaderResize] Initialized - watching for window resize, DOM changes, VIP/Cash display active');
+    console.log('[HeaderResize] Initialized - watching for window resize, VIP/Cash display active');
 })();
