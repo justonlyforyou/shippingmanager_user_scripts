@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name        Shipping Manager - Open Alliance Search
 // @description Search all open alliances 
-// @version     3.8
+// @version     3.10
 // @author      https://github.com/justonlyforyou/
-// @order       19
+// @order       10
 // @match       https://shippingmanager.cc/*
 // @run-at      document-end
 // @enabled     false
@@ -352,14 +352,18 @@
 
     // Get or create RebelShip menu (same position for mobile and desktop)
     function getOrCreateRebelShipMenu() {
+        // Check if dropdown already exists (it's in document.body now)
+        var existingDropdown = document.getElementById('rebelship-dropdown');
+        if (existingDropdown) return existingDropdown;
+
         var menu = document.getElementById('rebelship-menu');
-        if (menu) return menu.querySelector('.rebelship-dropdown');
+        if (menu && existingDropdown) return existingDropdown;
 
         if (window._rebelshipMenuCreating) return null;
         window._rebelshipMenuCreating = true;
 
-        menu = document.getElementById('rebelship-menu');
-        if (menu) { window._rebelshipMenuCreating = false; return menu.querySelector('.rebelship-dropdown'); }
+        existingDropdown = document.getElementById('rebelship-dropdown');
+        if (existingDropdown) { window._rebelshipMenuCreating = false; return existingDropdown; }
 
         var messagingIcon = document.querySelector('div.messaging.cursor-pointer');
         if (!messagingIcon) messagingIcon = document.querySelector('.messaging');
@@ -367,7 +371,7 @@
 
         var container = document.createElement('div');
         container.id = 'rebelship-menu';
-        container.style.cssText = 'position:relative;display:inline-block;vertical-align:middle;margin-right:4px !important;';
+        container.style.cssText = 'position:relative;display:inline-block;vertical-align:middle;margin-right:4px !important;z-index:999999;';
 
         var btn = document.createElement('button');
         btn.id = 'rebelship-menu-btn';
@@ -376,13 +380,14 @@
         btn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:28px;height:28px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:white;border:none;border-radius:6px;cursor:pointer;box-shadow:0 2px 4px rgba(0,0,0,0.2);';
 
         var dropdown = document.createElement('div');
+        dropdown.id = 'rebelship-dropdown';
         dropdown.className = 'rebelship-dropdown';
-        dropdown.style.cssText = 'display:none;position:absolute;top:100%;right:0;background:#1f2937;border:1px solid #374151;border-radius:4px;min-width:200px;z-index:99999;box-shadow:0 4px 12px rgba(0,0,0,0.3);margin-top:4px;';
+        dropdown.style.cssText = 'display:none;position:fixed;background:#1f2937;border:1px solid #374151;border-radius:4px;min-width:200px;z-index:999999;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
 
         container.appendChild(btn);
-        container.appendChild(dropdown);
-        btn.addEventListener('click', function(e) { e.stopPropagation(); dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block'; });
-        document.addEventListener('click', function(e) { if (!container.contains(e.target)) dropdown.style.display = 'none'; });
+        document.body.appendChild(dropdown);
+        btn.addEventListener('click', function(e) { e.stopPropagation(); if (dropdown.style.display === 'block') { dropdown.style.display = 'none'; } else { var rect = btn.getBoundingClientRect(); dropdown.style.top = (rect.bottom + 4) + 'px'; dropdown.style.right = (window.innerWidth - rect.right) + 'px'; dropdown.style.display = 'block'; } });
+        document.addEventListener('click', function(e) { if (!container.contains(e.target) && !dropdown.contains(e.target)) dropdown.style.display = 'none'; });
 
         if (messagingIcon.parentNode) messagingIcon.parentNode.insertBefore(container, messagingIcon);
 
@@ -391,10 +396,10 @@
     }
 
     // Add menu item
-    function addMenuItem(label, onClick) {
+    function addMenuItem(label, onClick, scriptOrder) {
         var dropdown = getOrCreateRebelShipMenu();
         if (!dropdown) {
-            setTimeout(function() { addMenuItem(label, onClick); }, 1000);
+            setTimeout(function() { addMenuItem(label, onClick, scriptOrder); }, 1000);
             return null;
         }
 
@@ -404,6 +409,7 @@
 
         var item = document.createElement('div');
         item.dataset.rebelshipItem = label;
+        item.dataset.order = scriptOrder;
         item.style.cssText = 'position:relative;';
 
         var itemBtn = document.createElement('div');
@@ -418,7 +424,22 @@
         }
 
         item.appendChild(itemBtn);
-        dropdown.appendChild(item);
+
+        // Insert in sorted order by scriptOrder
+        var items = dropdown.querySelectorAll('[data-rebelship-item]');
+        var insertBefore = null;
+        for (var i = 0; i < items.length; i++) {
+            var existingOrder = parseInt(items[i].dataset.order, 10);
+            if (scriptOrder < existingOrder) {
+                insertBefore = items[i];
+                break;
+            }
+        }
+        if (insertBefore) {
+            dropdown.insertBefore(item, insertBefore);
+        } else {
+            dropdown.appendChild(item);
+        }
 
         return item;
     }
@@ -940,11 +961,8 @@
                     fallbackDialog.style.display = 'none';
                 }
                 // Close rebel menu dropdown
-                var rebelMenu = document.getElementById('rebelship-menu');
-                if (rebelMenu) {
-                    var dropdown = rebelMenu.querySelector('.rebelship-dropdown');
-                    if (dropdown) dropdown.style.display = 'none';
-                }
+                var dropdown = document.getElementById('rebelship-dropdown');
+                if (dropdown) dropdown.style.display = 'none';
                 // Close game modal first, then open alliance after delay
                 var stores = getStores();
                 if (stores && stores.modalStore && stores.modalStore.closeAll) {
@@ -989,13 +1007,10 @@
 
         // Add menu item
         addMenuItem('Alliance Search', function() {
-            var rebelMenu = document.getElementById('rebelship-menu');
-            if (rebelMenu) {
-                var dropdown = rebelMenu.querySelector('.rebelship-dropdown');
-                if (dropdown) dropdown.style.display = 'none';
-            }
+            var dropdown = document.getElementById('rebelship-dropdown');
+            if (dropdown) dropdown.style.display = 'none';
             openAllianceSearchModal();
-        });
+        }, 10);
 
         // Start background download if needed
         startBackgroundDownload();

@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Shipping Manager - Fix Alliance Member Exclude
 // @namespace    https://shippingmanager.cc/
-// @version      1.4
+// @version      1.5
 // @description  Fixes broken exclude buttons for CEO and adds missing ones for management members
 // @author       https://github.com/justonlyforyou/
-// @order        51
+// @order        7
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-end

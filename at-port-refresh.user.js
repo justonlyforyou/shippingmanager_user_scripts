@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name        ShippingManager - Auto Port Refresh
 // @description Automatically refreshes the port (left side menu) every 30 seconds.
-// @version     1.2
+// @version     1.3
 // @author      https://github.com/justonlyforyou/
-// @order       50
+// @order       6
 // @match       https://shippingmanager.cc/*
 // @run-at      document-end
 // @enabled     false

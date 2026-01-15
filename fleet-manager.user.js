@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         ShippingManager - Mass-Moore/Resume
 // @namespace    http://tampermonkey.net/
-// @version      4.2
+// @version      4.3
 // @description  Mass Moor and Resume vessels with checkbox selection
 // @author       https://github.com/justonlyforyou/
-// @order        23
+// @order        4
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-end

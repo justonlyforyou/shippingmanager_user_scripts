@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Shipping Manager - Harbor Improvements
 // @namespace    https://rebelship.org/
-// @version      2.5
+// @version      2.6
 // @description  Just a simple repositioning of the details button on harbor menu.
 // @author       https://github.com/justonlyforyou/
-// @order        26
+// @order        14
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-end

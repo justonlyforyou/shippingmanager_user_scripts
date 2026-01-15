@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name        Shipping Manager - Alliance Chat Notification
 // @description Shows a red dot on Alliance button when there are unread messages
-// @version     2.6
+// @version     2.7
 // @author      https://github.com/justonlyforyou/
-// @order       18
+// @order       3
 // @match       https://shippingmanager.cc/*
 // @run-at      document-end
 // @enabled     false

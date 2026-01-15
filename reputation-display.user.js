@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name        Shipping Manager - Auto Reputation & Reputation Header Display
 // @description Shows reputation in header, auto-renews campaigns when expired
-// @version     5.12
+// @version     5.14
 // @author      joseywales - Pimped by https://github.com/justonlyforyou/
-// @order       20
+// @order       21
 // @match       https://shippingmanager.cc/*
 // @grant       none
 // @run-at      document-end
@@ -369,12 +369,9 @@
     var REBELSHIP_LOGO = '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><path d="M20 21c-1.39 0-2.78-.47-4-1.32-2.44 1.71-5.56 1.71-8 0C6.78 20.53 5.39 21 4 21H2v2h2c1.38 0 2.74-.35 4-.99 2.52 1.29 5.48 1.29 8 0 1.26.65 2.62.99 4 .99h2v-2h-2zM3.95 19H4c1.6 0 3.02-.88 4-2 .98 1.12 2.4 2 4 2s3.02-.88 4-2c.98 1.12 2.4 2 4 2h.05l1.89-6.68c.08-.26.06-.54-.06-.78s-.34-.42-.6-.5L20 10.62V6c0-1.1-.9-2-2-2h-3V1H9v3H6c-1.1 0-2 .9-2 2v4.62l-1.29.42c-.26.08-.48.26-.6.5s-.15.52-.06.78L3.95 19zM6 6h12v3.97L12 8 6 9.97V6z"/></svg>';
 
     function getOrCreateRebelShipMenu() {
-        // Check if menu already exists
-        var menu = document.getElementById('rebelship-menu');
-        if (menu) {
-            var dropdown = menu.querySelector('.rebelship-dropdown');
-            if (dropdown) return dropdown;
-        }
+        // Check if dropdown already exists (it's in document.body now)
+        var existingDropdown = document.getElementById('rebelship-dropdown');
+        if (existingDropdown) return existingDropdown;
 
         // Check if another script is creating the menu
         if (window._rebelshipMenuCreating) {
@@ -385,10 +382,10 @@
         window._rebelshipMenuCreating = true;
 
         // Double-check after setting lock
-        menu = document.getElementById('rebelship-menu');
-        if (menu) {
+        existingDropdown = document.getElementById('rebelship-dropdown');
+        if (existingDropdown) {
             window._rebelshipMenuCreating = false;
-            return menu.querySelector('.rebelship-dropdown');
+            return existingDropdown;
         }
 
         var messagingIcon = document.querySelector('div.messaging.cursor-pointer') || document.querySelector('.messaging');
@@ -399,31 +396,33 @@
 
         var container = document.createElement('div');
         container.id = 'rebelship-menu';
-        container.style.cssText = 'position:relative;display:inline-block;vertical-align:middle;margin-right:4px !important;';
+        container.style.cssText = 'position:relative;display:inline-block;vertical-align:middle;margin-right:4px !important;z-index:999999;';
         var btn = document.createElement('button');
         btn.id = 'rebelship-menu-btn';
         btn.innerHTML = REBELSHIP_LOGO;
         btn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:28px;height:28px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:white;border:none;border-radius:6px;cursor:pointer;box-shadow:0 2px 4px rgba(0,0,0,0.2);';
         btn.title = 'RebelShip Menu';
         var dropdown = document.createElement('div');
+        dropdown.id = 'rebelship-dropdown';
         dropdown.className = 'rebelship-dropdown';
-        dropdown.style.cssText = 'display:none;position:absolute;top:100%;right:0;background:#1f2937;border:1px solid #374151;border-radius:4px;min-width:200px;z-index:99999;box-shadow:0 4px 12px rgba(0,0,0,0.3);margin-top:4px;';
+        dropdown.style.cssText = 'display:none;position:fixed;background:#1f2937;border:1px solid #374151;border-radius:4px;min-width:200px;z-index:999999;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
         container.appendChild(btn);
-        container.appendChild(dropdown);
-        btn.addEventListener('click', function(e) { e.stopPropagation(); dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block'; });
-        document.addEventListener('click', function(e) { if (!container.contains(e.target)) dropdown.style.display = 'none'; });
+        document.body.appendChild(dropdown);
+        btn.addEventListener('click', function(e) { e.stopPropagation(); if (dropdown.style.display === 'block') { dropdown.style.display = 'none'; } else { var rect = btn.getBoundingClientRect(); dropdown.style.top = (rect.bottom + 4) + 'px'; dropdown.style.right = (window.innerWidth - rect.right) + 'px'; dropdown.style.display = 'block'; } });
+        document.addEventListener('click', function(e) { if (!container.contains(e.target) && !dropdown.contains(e.target)) dropdown.style.display = 'none'; });
         messagingIcon.parentNode.insertBefore(container, messagingIcon);
 
         window._rebelshipMenuCreating = false;
         return dropdown;
     }
 
-    function addMenuItem(label, onClick) {
+    function addMenuItem(label, onClick, scriptOrder) {
         var dropdown = getOrCreateRebelShipMenu();
-        if (!dropdown) { setTimeout(function() { addMenuItem(label, onClick); }, 1000); return null; }
+        if (!dropdown) { setTimeout(function() { addMenuItem(label, onClick, scriptOrder); }, 1000); return null; }
         if (dropdown.querySelector('[data-rebelship-item="' + label + '"]')) return dropdown.querySelector('[data-rebelship-item="' + label + '"]');
         var item = document.createElement('div');
         item.dataset.rebelshipItem = label;
+        item.dataset.order = scriptOrder;
         item.style.cssText = 'position:relative;';
         var itemBtn = document.createElement('div');
         itemBtn.style.cssText = 'padding:10px 12px;cursor:pointer;color:#fff;font-size:13px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #374151;';
@@ -432,7 +431,21 @@
         itemBtn.addEventListener('mouseleave', function() { itemBtn.style.background = 'transparent'; });
         if (onClick) itemBtn.addEventListener('click', onClick);
         item.appendChild(itemBtn);
-        dropdown.appendChild(item);
+        // Insert in sorted order by scriptOrder
+        var items = dropdown.querySelectorAll('[data-rebelship-item]');
+        var insertBefore = null;
+        for (var i = 0; i < items.length; i++) {
+            var existingOrder = parseInt(items[i].dataset.order, 10);
+            if (scriptOrder < existingOrder) {
+                insertBefore = items[i];
+                break;
+            }
+        }
+        if (insertBefore) {
+            dropdown.insertBefore(item, insertBefore);
+        } else {
+            dropdown.appendChild(item);
+        }
         return item;
     }
 
@@ -558,7 +571,7 @@
             return;
         }
         uiInitialized = true;
-        addMenuItem('Auto Reputation', openSettingsModal);
+        addMenuItem('Auto Reputation', openSettingsModal, 21);
         log('Menu item added');
     }
 

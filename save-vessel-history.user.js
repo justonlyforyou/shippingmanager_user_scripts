@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         ShippingManager - Save Vessel History
 // @namespace    http://tampermonkey.net/
-// @version      3.1
+// @version      3.2
 // @description  Detect vessel history API calls and offer CSV download
 // @author       https://github.com/justonlyforyou/
-// @order        25
+// @order        50
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-end

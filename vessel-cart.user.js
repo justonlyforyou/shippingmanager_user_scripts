@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name        Shipping Manager - Vessel Shopping Cart
 // @description Add vessels to cart and bulk purchase them
-// @version     4.14
+// @version     4.15
 // @author      https://github.com/justonlyforyou/
-// @order       26
+// @order       12
 // @match       https://shippingmanager.cc/*
 // @grant       none
 // @run-at      document-end
@@ -820,7 +820,7 @@
         document.body.appendChild(overlay);
 
         // Close dropdown
-        const dropdown = document.querySelector('.rebelship-dropdown');
+        const dropdown = document.getElementById('rebelship-dropdown');
         if (dropdown) dropdown.style.display = 'none';
 
         // Event handlers

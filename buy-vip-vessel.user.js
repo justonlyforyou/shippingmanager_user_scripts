@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name        Shipping Manager - VIP Vessel Shop
 // @description Quick access to purchase all VIP vessels as much as you have points for ;)
-// @version     2.5
+// @version     2.7
 // @author      https://github.com/justonlyforyou/
-// @order       27
+// @order       16
 // @match       https://shippingmanager.cc/*
 // @run-at      document-end
 // @enabled     false
@@ -52,19 +52,16 @@
 
     // Get or create RebelShip menu
     function getOrCreateRebelShipMenu() {
-        var menu = document.getElementById('rebelship-menu');
-        if (menu) {
-            return menu.querySelector('.rebelship-dropdown');
-        }
+        // Check if dropdown already exists (it's in document.body now)
+        var existingDropdown = document.getElementById('rebelship-dropdown');
+        if (existingDropdown) return existingDropdown;
 
         if (window._rebelshipMenuCreating) return null;
         window._rebelshipMenuCreating = true;
 
-        menu = document.getElementById('rebelship-menu');
-        if (menu) {
-            window._rebelshipMenuCreating = false;
-            return menu.querySelector('.rebelship-dropdown');
-        }
+        // Double-check after lock
+        existingDropdown = document.getElementById('rebelship-dropdown');
+        if (existingDropdown) { window._rebelshipMenuCreating = false; return existingDropdown; }
 
         var messagingIcon = document.querySelector('div.messaging.cursor-pointer');
         if (!messagingIcon) messagingIcon = document.querySelector('.messaging');
@@ -75,7 +72,7 @@
 
         var container = document.createElement('div');
         container.id = 'rebelship-menu';
-        container.style.cssText = 'position:relative;display:inline-block;vertical-align:middle;margin-right:4px !important;';
+        container.style.cssText = 'position:relative;display:inline-block;vertical-align:middle;margin-right:4px !important;z-index:999999;';
 
         var btn = document.createElement('button');
         btn.id = 'rebelship-menu-btn';
@@ -84,19 +81,27 @@
         btn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:28px;height:28px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:white;border:none;border-radius:6px;cursor:pointer;box-shadow:0 2px 4px rgba(0,0,0,0.2);';
 
         var dropdown = document.createElement('div');
+        dropdown.id = 'rebelship-dropdown';
         dropdown.className = 'rebelship-dropdown';
-        dropdown.style.cssText = 'display:none;position:absolute;top:100%;right:0;background:#1f2937;border:1px solid #374151;border-radius:4px;min-width:200px;z-index:99999;box-shadow:0 4px 12px rgba(0,0,0,0.3);margin-top:4px;';
+        dropdown.style.cssText = 'display:none;position:fixed;background:#1f2937;border:1px solid #374151;border-radius:4px;min-width:200px;z-index:999999;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
 
         container.appendChild(btn);
-        container.appendChild(dropdown);
+        document.body.appendChild(dropdown);
 
         btn.addEventListener('click', function(e) {
             e.stopPropagation();
-            dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
+            if (dropdown.style.display === 'block') {
+                dropdown.style.display = 'none';
+            } else {
+                var rect = btn.getBoundingClientRect();
+                dropdown.style.top = (rect.bottom + 4) + 'px';
+                dropdown.style.right = (window.innerWidth - rect.right) + 'px';
+                dropdown.style.display = 'block';
+            }
         });
 
         document.addEventListener('click', function(e) {
-            if (!container.contains(e.target)) {
+            if (!container.contains(e.target) && !dropdown.contains(e.target)) {
                 dropdown.style.display = 'none';
             }
         });
@@ -110,10 +115,10 @@
     }
 
     // Add menu item to RebelShip menu
-    function addMenuItem(label, hasSubmenu, onClick) {
+    function addMenuItem(label, hasSubmenu, onClick, scriptOrder) {
         const dropdown = getOrCreateRebelShipMenu();
         if (!dropdown) {
-            setTimeout(() => addMenuItem(label, hasSubmenu, onClick), 1000);
+            setTimeout(() => addMenuItem(label, hasSubmenu, onClick, scriptOrder), 1000);
             return null;
         }
 
@@ -124,6 +129,7 @@
 
         const item = document.createElement('div');
         item.dataset.rebelshipItem = label;
+        item.dataset.order = scriptOrder;
         item.style.cssText = 'position:relative;';
 
         const itemBtn = document.createElement('div');
@@ -138,14 +144,29 @@
         }
 
         item.appendChild(itemBtn);
-        dropdown.appendChild(item);
+
+        // Insert in sorted order by scriptOrder
+        const items = dropdown.querySelectorAll('[data-rebelship-item]');
+        let insertBefore = null;
+        for (let i = 0; i < items.length; i++) {
+            const existingOrder = parseInt(items[i].dataset.order, 10);
+            if (scriptOrder < existingOrder) {
+                insertBefore = items[i];
+                break;
+            }
+        }
+        if (insertBefore) {
+            dropdown.insertBefore(item, insertBefore);
+        } else {
+            dropdown.appendChild(item);
+        }
 
         return item;
     }
 
     // Create VIP Vessel submenu
     function createVIPVesselMenu() {
-        const menuItem = addMenuItem('Buy VIP Vessel', true);
+        const menuItem = addMenuItem('Buy VIP Vessel', true, null, 16);
         if (!menuItem) return;
 
         // Check if submenu already exists
@@ -163,7 +184,7 @@
             vesselItem.addEventListener('mouseenter', () => vesselItem.style.background = '#374151');
             vesselItem.addEventListener('mouseleave', () => vesselItem.style.background = 'transparent');
             vesselItem.addEventListener('click', () => {
-                document.getElementById('rebelship-menu').querySelector('.rebelship-dropdown').style.display = 'none';
+                var dropdown = document.getElementById('rebelship-dropdown'); if (dropdown) dropdown.style.display = 'none';
                 openVesselInGameModal(vessel.id);
             });
             submenu.appendChild(vesselItem);
