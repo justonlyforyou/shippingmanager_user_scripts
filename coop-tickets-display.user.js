@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Auto Co-Op & Co-Op Header Display
 // @description Shows open Co-Op tickets, auto-sends COOP vessels to alliance members
-// @version     5.11
+// @version     5.12
 // @author      https://github.com/justonlyforyou/
 // @order       20
 // @match       https://shippingmanager.cc/*
@@ -660,6 +660,14 @@
         if (!settings.autoSendEnabled) return { skipped: true, reason: 'disabled' };
         return await runAutoCoop();
     };
+
+    // Listen for header resize event to reinitialize display
+    window.addEventListener('rebelship-header-resize', function() {
+        log('Header resize detected, reinitializing display...');
+        coopElement = null;
+        coopValueElement = null;
+        setTimeout(updateCoopDisplay, 100);
+    });
 
     // Wait for page ready
     if (document.readyState === 'loading') {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Bunker Price Display
 // @namespace    http://tampermonkey.net/
-// @version      3.14
+// @version      3.15
 // @description  Shows current fuel and CO2 bunker prices with fill levels
 // @author       https://github.com/justonlyforyou/
 // @order        22
@@ -275,6 +275,13 @@
         }, delay);
     }
 
+    function resetElements() {
+        fuelPriceElement = null;
+        co2PriceElement = null;
+        fuelFillElement = null;
+        co2FillElement = null;
+    }
+
     function init() {
         if (insertPriceDisplays()) {
             updatePrices();
@@ -286,6 +293,17 @@
             setTimeout(init, 1000);
         }
     }
+
+    // Listen for header resize event to reinitialize
+    window.addEventListener('rebelship-header-resize', function() {
+        console.log('[BunkerPrice] Header resize detected, reinitializing...');
+        resetElements();
+        setTimeout(function() {
+            if (insertPriceDisplays()) {
+                updatePrices();
+            }
+        }, 100);
+    });
 
     init();
 })();

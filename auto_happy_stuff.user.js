@@ -2,7 +2,7 @@
 // @name         ShippingManager - Auto Happy Staff
 // @namespace    http://tampermonkey.net/
 // @description  Automatically manages staff salaries to maintain crew and management morale at target levels
-// @version      1.11
+// @version      1.14
 // @author       https://github.com/justonlyforyou/
 // @order        25
 // @match        https://shippingmanager.cc/*
@@ -11,6 +11,7 @@
 // @enabled      false
 // @background-job-required true
 // ==/UserScript==
+/* globals GM_info */
 
 (function() {
     'use strict';
@@ -41,7 +42,7 @@
     var managementSmileyElement = null;
     var displayRetries = 0;
 
-    console.log('[Auto Happy Staff] v1.0 loaded');
+    console.log('[Auto Happy Staff] v' + GM_info.script.version + ' loaded');
 
     // ============================================
     // HEADER SMILEY DISPLAY
@@ -150,7 +151,7 @@
         var mgmtContainer = document.createElement('div');
         mgmtContainer.style.cssText = 'display:flex;flex-direction:column;align-items:center;line-height:1;';
         var mgmtLabel = document.createElement('span');
-        mgmtLabel.style.cssText = 'font-size:8px;color:#9ca3af;margin-bottom:3px;';
+        mgmtLabel.style.cssText = 'color:#9ca3af;margin-bottom:3px;';
         mgmtLabel.textContent = 'Mgmt';
         managementSmileyElement = document.createElement('div');
         managementSmileyElement.id = 'mgmt-smiley';
@@ -162,7 +163,7 @@
         var crewContainer = document.createElement('div');
         crewContainer.style.cssText = 'display:flex;flex-direction:column;align-items:center;line-height:1;';
         var crewLabel = document.createElement('span');
-        crewLabel.style.cssText = 'font-size:8px;color:#9ca3af;margin-bottom:3px;';
+        crewLabel.style.cssText = 'color:#9ca3af;margin-bottom:3px;';
         crewLabel.textContent = 'Crew';
         crewSmileyElement = document.createElement('div');
         crewSmileyElement.id = 'crew-smiley';
@@ -875,6 +876,16 @@
         await checkAndAdjustMorale();
         return { success: true };
     };
+
+    // Listen for header resize event to reinitialize display
+    window.addEventListener('rebelship-header-resize', function() {
+        console.log('[Auto Happy Staff] Header resize detected, reinitializing display...');
+        moraleDisplayElement = null;
+        setTimeout(function() {
+            createMoraleDisplay();
+            updateMoraleDisplay();
+        }, 100);
+    });
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', function() {

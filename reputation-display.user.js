@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Auto Reputation & Reputation Header Display
 // @description Shows reputation in header, auto-renews campaigns when expired
-// @version     5.8
+// @version     5.9
 // @author      joseywales - Pimped by https://github.com/justonlyforyou/
 // @order       20
 // @match       https://shippingmanager.cc/*
@@ -552,6 +552,14 @@
             setInterval(updateReputation, 2 * 60 * 1000);
         }, 1000);
     }
+
+    // Listen for header resize event to reinitialize display
+    window.addEventListener('rebelship-header-resize', function() {
+        log('Header resize detected, reinitializing display...');
+        reputationElement = null;
+        reputationValueElement = null;
+        setTimeout(updateReputation, 100);
+    });
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', function() { setTimeout(init, 2000); });

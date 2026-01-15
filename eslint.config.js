@@ -30,7 +30,9 @@ module.exports = [
         navigator: 'readonly',
         Blob: 'readonly',
         URL: 'readonly',
-        MutationObserver: 'readonly'
+        MutationObserver: 'readonly',
+        location: 'readonly',
+        confirm: 'readonly'
       }
     },
     rules: {
