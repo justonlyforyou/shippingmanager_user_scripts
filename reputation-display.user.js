@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Auto Reputation & Reputation Header Display
 // @description Shows reputation in header, auto-renews campaigns when expired
-// @version     5.5
+// @version     5.8
 // @author      joseywales - Pimped by https://github.com/justonlyforyou/
 // @order       20
 // @match       https://shippingmanager.cc/*
@@ -15,9 +15,10 @@
 
     var SCRIPT_NAME = 'Auto Reputation';
     var STORAGE_KEY = 'rebelship_reputation_settings';
-    var isMobile = window.innerWidth < 1024;
     var reputationElement = null;
+    var reputationValueElement = null;
     var isProcessing = false;
+    var displayRetries = 0;
 
     // ========== SETTINGS ==========
     var settings = {
@@ -284,19 +285,6 @@
         return '#ef4444';
     }
 
-    function getOrCreateMobileRow() {
-        var existing = document.getElementById('rebel-mobile-row');
-        if (existing) return existing;
-
-        var row = document.createElement('div');
-        row.id = 'rebel-mobile-row';
-        row.style.cssText = 'position:fixed !important;top:0 !important;left:0 !important;right:0 !important;display:flex !important;flex-wrap:nowrap !important;justify-content:space-between !important;align-items:center !important;gap:4px !important;background:#1a1a2e !important;padding:4px 6px !important;font-size:14px !important;z-index:9999 !important;';
-        var leftSection = document.createElement('div'); leftSection.id = 'rebel-mobile-left'; leftSection.style.cssText = 'display:flex;align-items:center;gap:4px;'; row.appendChild(leftSection); var rightSection = document.createElement('div'); rightSection.id = 'rebel-mobile-right'; rightSection.style.cssText = 'display:flex;align-items:center;gap:4px;'; row.appendChild(rightSection); document.body.appendChild(row);
-        var appContainer = document.querySelector('#app') || document.body.firstElementChild;
-        if (appContainer) appContainer.style.marginTop = '2px';
-        return row;
-    }
-
     function openFinanceMarketing() {
         var stockInfo = document.querySelector('.stockInfo');
         if (stockInfo) {
@@ -310,48 +298,70 @@
         }
     }
 
+    /**
+     * Create 2-line reputation display (like coop-tickets-display):
+     * Line 1: "Rep."
+     * Line 2: XX% (colored by reputation level)
+     * Position: After coop-tickets-display if present, otherwise after CO2/bunker container
+     */
     function createReputationDisplay() {
         if (reputationElement) return reputationElement;
 
-        if (isMobile) {
-            var row = getOrCreateMobileRow();
-            if (!row) return null;
-            reputationElement = document.createElement('div');
-            reputationElement.id = 'reputation-display';
-            reputationElement.style.cssText = 'display:flex !important;align-items:center !important;padding:0 !important;font-size:13px !important;font-weight:bold !important;cursor:pointer !important;color:#fbbf24 !important;';
-            reputationElement.textContent = 'Rep: ...';
-            reputationElement.addEventListener('click', openFinanceMarketing);
-            var leftSection = document.getElementById('rebel-mobile-left');
-            if (leftSection) leftSection.appendChild(reputationElement);
-            else row.appendChild(reputationElement);
-            return reputationElement;
+        // Check if coop display exists (insert after it), otherwise insert after CO2 container
+        var coopDisplay = document.getElementById('coop-tickets-display');
+        var insertAfter = coopDisplay;
+
+        if (!insertAfter) {
+            // Find CO2 container (bunker) - same selector as coop script
+            insertAfter = document.querySelector('.content.led.cursor-pointer');
         }
 
-        var companyContent = document.querySelector('.companyContent');
-        if (!companyContent) return null;
-        reputationElement = document.createElement('span');
+        if (!insertAfter || !insertAfter.parentNode) {
+            log('Could not find insertion point, retrying...');
+            return null;
+        }
+
+        // Create container - same style as coop
+        reputationElement = document.createElement('div');
         reputationElement.id = 'reputation-display';
-        reputationElement.style.cssText = 'margin-left:4px !important;font-size:13px !important;cursor:pointer;color:#fbbf24;text-decoration:underline;';
-        reputationElement.textContent = 'Rep: ...';
+        reputationElement.style.cssText = 'display:flex;flex-direction:column;align-items:center;line-height:1.2;cursor:pointer;margin-left:8px;';
         reputationElement.addEventListener('click', openFinanceMarketing);
 
-        var stockInfo = companyContent.querySelector('.stockInfo');
-        if (stockInfo && stockInfo.parentNode) {
-            stockInfo.parentNode.insertBefore(reputationElement, stockInfo.nextSibling);
-        } else {
-            companyContent.appendChild(reputationElement);
-        }
+        // Line 1: Label
+        var label = document.createElement('span');
+        label.style.cssText = 'display:block;color:#9ca3af;';
+        label.textContent = 'Rep.';
+        reputationElement.appendChild(label);
+
+        // Line 2: Value (percentage)
+        reputationValueElement = document.createElement('span');
+        reputationValueElement.id = 'reputation-value';
+        reputationValueElement.style.cssText = 'display:block;font-weight:bold;font-size:13px;';
+        reputationValueElement.textContent = '...%';
+        reputationElement.appendChild(reputationValueElement);
+
+        // Insert after target element
+        insertAfter.parentNode.insertBefore(reputationElement, insertAfter.nextSibling);
+        log('Reputation display created');
+
         return reputationElement;
     }
 
     function updateReputationDisplay(rep) {
-        var el = document.getElementById('reputation-display');
-        if (!el) {
-            el = createReputationDisplay();
+        if (!reputationElement) {
+            createReputationDisplay();
         }
-        if (el) {
-            el.textContent = isMobile ? 'Rep: ' + rep + '%' : 'Rep: ' + rep + '%';
-            el.style.color = getReputationColor(rep);
+        if (!reputationElement) {
+            // Retry a few times if element not created yet
+            displayRetries++;
+            if (displayRetries < 10) {
+                setTimeout(function() { updateReputationDisplay(rep); }, 2000);
+            }
+            return;
+        }
+        if (reputationValueElement) {
+            reputationValueElement.textContent = rep + '%';
+            reputationValueElement.style.color = getReputationColor(rep);
         }
     }
 
@@ -360,37 +370,17 @@
 
     function getOrCreateRebelShipMenu() {
         var menu = document.getElementById('rebelship-menu');
+        var dropdown;
         if (menu) {
-            var dropdown = menu.querySelector('.rebelship-dropdown');
+            dropdown = menu.querySelector('.rebelship-dropdown');
             if (dropdown) return dropdown;
-        }
-        if (isMobile) {
-            var row = getOrCreateMobileRow();
-            if (!row) return null;
-            var container = document.createElement('div');
-            container.id = 'rebelship-menu';
-            container.style.cssText = 'position:relative;display:inline-block;;';
-            var btn = document.createElement('button');
-            btn.id = 'rebelship-menu-btn';
-            btn.innerHTML = REBELSHIP_LOGO;
-            btn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:18px;height:18px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:white;border:none;border-radius:6px;cursor:pointer;';
-            btn.title = 'RebelShip Menu';
-            dropdown = document.createElement('div');
-            dropdown.className = 'rebelship-dropdown';
-            dropdown.style.cssText = 'display:none;position:absolute;top:100%;right:0;background:#1f2937;border:1px solid #374151;border-radius:4px;min-width:200px;z-index:99999;box-shadow:0 4px 12px rgba(0,0,0,0.3);margin-top:4px;';
-            container.appendChild(btn);
-            container.appendChild(dropdown);
-            btn.addEventListener('click', function(e) { e.stopPropagation(); dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block'; });
-            document.addEventListener('click', function(e) { if (!container.contains(e.target)) dropdown.style.display = 'none'; });
-            var rightSection = document.getElementById('rebel-mobile-right'); if (rightSection) { rightSection.appendChild(container); } else { row.appendChild(container); }
-            return dropdown;
         }
         var messagingIcon = document.querySelector('div.messaging.cursor-pointer') || document.querySelector('.messaging');
         if (!messagingIcon) return null;
-        container = document.createElement('div');
+        var container = document.createElement('div');
         container.id = 'rebelship-menu';
-        container.style.cssText = 'position:relative;display:inline-block;vertical-align:middle;margin-right:4px !important;margin-left:auto;';
-        btn = document.createElement('button');
+        container.style.cssText = 'position:relative;display:inline-block;vertical-align:middle;margin-right:4px !important;';
+        var btn = document.createElement('button');
         btn.id = 'rebelship-menu-btn';
         btn.innerHTML = REBELSHIP_LOGO;
         btn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:28px;height:28px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:white;border:none;border-radius:6px;cursor:pointer;box-shadow:0 2px 4px rgba(0,0,0,0.2);';
@@ -560,7 +550,7 @@
             updateReputation();
             // Check every 2 minutes
             setInterval(updateReputation, 2 * 60 * 1000);
-        }, isMobile ? 3000 : 1000);
+        }, 1000);
     }
 
     if (document.readyState === 'loading') {

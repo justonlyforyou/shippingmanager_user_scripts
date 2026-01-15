@@ -2,7 +2,7 @@
 // @name         ShippingManager - Auto Happy Staff
 // @namespace    http://tampermonkey.net/
 // @description  Automatically manages staff salaries to maintain crew and management morale at target levels
-// @version     1.7
+// @version      1.11
 // @author       https://github.com/justonlyforyou/
 // @order        25
 // @match        https://shippingmanager.cc/*
@@ -23,16 +23,207 @@
     var DEFAULT_SETTINGS = {
         enabled: false,
         targetMorale: 100,
-        systemNotifications: false
+        systemNotifications: false,
+        // Smiley thresholds (percentage)
+        happyThreshold: 75,
+        neutralThreshold: 50,
+        sadThreshold: 35,
+        badThreshold: 25
     };
 
     // Staff type classifications
     var CREW_TYPES = ['captain', 'first_officer', 'boatswain', 'technical_officer'];
     var MANAGEMENT_TYPES = ['cfo', 'coo', 'cmo', 'cto'];
 
-    var isMobile = window.innerWidth < 1024;
+    // Header display elements
+    var moraleDisplayElement = null;
+    var crewSmileyElement = null;
+    var managementSmileyElement = null;
+    var displayRetries = 0;
 
     console.log('[Auto Happy Staff] v1.0 loaded');
+
+    // ============================================
+    // HEADER SMILEY DISPLAY
+    // ============================================
+
+    // Captain hat SVG (for management) - lighter blue for visibility
+    var CAPTAIN_HAT_SVG = '<svg viewBox="0 0 24 12" width="18" height="9" style="position:absolute;top:-6px;left:50%;transform:translateX(-50%);"><path d="M4 10 L12 2 L20 10 L18 10 L12 5 L6 10 Z" fill="#4a7ab5"/><path d="M3 10 L21 10 L21 12 L3 12 Z" fill="#4a7ab5"/><circle cx="12" cy="7" r="2" fill="#ffd700"/></svg>';
+
+    // Sailor hat SVG (for crew) - classic white sailor cap with blue band
+    var SAILOR_HAT_SVG = '<svg viewBox="0 0 20 10" width="16" height="8" style="position:absolute;top:-5px;left:50%;transform:translateX(-50%);"><path d="M4 9 L4 6 Q10 3 16 6 L16 9 Z" fill="#ffffff" stroke="#1e3a5f" stroke-width="0.5"/><path d="M4 7 L16 7 L16 8 L4 8 Z" fill="#1e3a5f"/><ellipse cx="10" cy="9" rx="7" ry="1.5" fill="#ffffff" stroke="#1e3a5f" stroke-width="0.5"/></svg>';
+
+    /**
+     * Generate a smiley face based on morale percentage with configurable thresholds
+     * @param {number} percentage - Morale percentage (0-100)
+     * @param {string} hatType - 'captain' or 'sailor'
+     * @param {Object} thresholds - Custom thresholds from settings
+     * @returns {string} HTML string for smiley with hat
+     */
+    function generateHeaderSmiley(percentage, hatType, thresholds) {
+        var t = thresholds;
+        var faceColor = '';
+        var glowColor = '';
+
+        // Determine face color based on thresholds
+        if (percentage >= t.happyThreshold) {
+            faceColor = '#fbbf24'; // Gold/yellow - happy
+            glowColor = 'rgba(251,191,36,0.6)';
+        } else if (percentage >= t.neutralThreshold) {
+            faceColor = '#e5e7eb'; // Light gray - neutral
+            glowColor = '';
+        } else if (percentage >= t.sadThreshold) {
+            faceColor = '#9ca3af'; // Gray - sad
+            glowColor = '';
+        } else if (percentage >= t.badThreshold) {
+            faceColor = '#f87171'; // Light red - bad
+            glowColor = '';
+        } else {
+            faceColor = '#ef4444'; // Red - critical
+            glowColor = 'rgba(239,68,68,0.6)';
+        }
+
+        // Calculate mouth curve - stronger expression based on percentage
+        var mouthPath = '';
+        if (percentage >= 70) {
+            // Big smile - happy
+            var smileCurve = 3 + Math.round((percentage - 70) / 30 * 3); // 3-6px curve down
+            mouthPath = 'M5 11 Q9 ' + (11 + smileCurve) + ' 13 11';
+        } else if (percentage >= 50) {
+            // Slight smile
+            var slightSmile = Math.round((percentage - 50) / 20 * 3); // 0-3px curve
+            mouthPath = 'M6 12 Q9 ' + (12 + slightSmile) + ' 12 12';
+        } else if (percentage >= 35) {
+            // Neutral to slight frown
+            var slightFrown = Math.round((50 - percentage) / 15 * 2); // 0-2px curve up
+            mouthPath = 'M6 12 Q9 ' + (12 - slightFrown) + ' 12 12';
+        } else if (percentage >= 20) {
+            // Sad frown
+            var sadCurve = 2 + Math.round((35 - percentage) / 15 * 3); // 2-5px curve up
+            mouthPath = 'M5 13 Q9 ' + (13 - sadCurve) + ' 13 13';
+        } else {
+            // Very sad / angry - strong frown
+            mouthPath = 'M5 14 Q9 8 13 14';
+        }
+
+        var hatSvg = hatType === 'captain' ? CAPTAIN_HAT_SVG : SAILOR_HAT_SVG;
+        var boxShadow = glowColor ? 'box-shadow:0 0 6px ' + glowColor + ';' : '';
+
+        return '<div style="position:relative;display:inline-block;width:18px;height:18px;">' +
+            hatSvg +
+            '<svg viewBox="0 0 18 18" width="18" height="18">' +
+            '<circle cx="9" cy="9" r="8" fill="' + faceColor + '" style="' + boxShadow + '"/>' +
+            '<circle cx="6" cy="7" r="1.5" fill="#1f2937"/>' +
+            '<circle cx="12" cy="7" r="1.5" fill="#1f2937"/>' +
+            '<path d="' + mouthPath + '" stroke="#1f2937" stroke-width="1.5" fill="none" stroke-linecap="round"/>' +
+            '</svg></div>';
+    }
+
+    /**
+     * Create the morale display in the header
+     */
+    function createMoraleDisplay() {
+        if (moraleDisplayElement) return moraleDisplayElement;
+
+        // Find insertion point - after coop or reputation display, or after CO2 container
+        var coopDisplay = document.getElementById('coop-tickets-display');
+        var repDisplay = document.getElementById('reputation-display');
+        var insertAfter = repDisplay || coopDisplay;
+
+        if (!insertAfter) {
+            // Fall back to CO2 container
+            insertAfter = document.querySelector('.content.led.cursor-pointer');
+        }
+
+        if (!insertAfter || !insertAfter.parentNode) {
+            return null;
+        }
+
+        // Create container
+        moraleDisplayElement = document.createElement('div');
+        moraleDisplayElement.id = 'morale-smiley-display';
+        moraleDisplayElement.style.cssText = 'display:flex;align-items:center;gap:6px;margin-left:8px;cursor:pointer;';
+        moraleDisplayElement.title = 'Staff Morale - Click to open settings';
+        moraleDisplayElement.addEventListener('click', openSettingsModal);
+
+        // Management smiley container (with captain hat)
+        var mgmtContainer = document.createElement('div');
+        mgmtContainer.style.cssText = 'display:flex;flex-direction:column;align-items:center;line-height:1;';
+        var mgmtLabel = document.createElement('span');
+        mgmtLabel.style.cssText = 'font-size:8px;color:#9ca3af;margin-bottom:3px;';
+        mgmtLabel.textContent = 'Mgmt';
+        managementSmileyElement = document.createElement('div');
+        managementSmileyElement.id = 'mgmt-smiley';
+        managementSmileyElement.innerHTML = generateHeaderSmiley(100, 'captain', loadSettings());
+        mgmtContainer.appendChild(mgmtLabel);
+        mgmtContainer.appendChild(managementSmileyElement);
+
+        // Crew smiley container (with sailor hat)
+        var crewContainer = document.createElement('div');
+        crewContainer.style.cssText = 'display:flex;flex-direction:column;align-items:center;line-height:1;';
+        var crewLabel = document.createElement('span');
+        crewLabel.style.cssText = 'font-size:8px;color:#9ca3af;margin-bottom:3px;';
+        crewLabel.textContent = 'Crew';
+        crewSmileyElement = document.createElement('div');
+        crewSmileyElement.id = 'crew-smiley';
+        crewSmileyElement.innerHTML = generateHeaderSmiley(100, 'sailor', loadSettings());
+        crewContainer.appendChild(crewLabel);
+        crewContainer.appendChild(crewSmileyElement);
+
+        moraleDisplayElement.appendChild(mgmtContainer);
+        moraleDisplayElement.appendChild(crewContainer);
+
+        // Insert after target element
+        insertAfter.parentNode.insertBefore(moraleDisplayElement, insertAfter.nextSibling);
+        console.log('[Auto Happy Staff] Morale display created in header');
+
+        return moraleDisplayElement;
+    }
+
+    /**
+     * Update the header smiley display with current morale values
+     */
+    async function updateMoraleDisplay() {
+        var staffData = await fetchStaffData();
+        if (!staffData || !staffData.info) {
+            return;
+        }
+
+        var crewMorale = staffData.info.crew ? Math.round(parseFloat(staffData.info.crew.percentage)) : 0;
+        var managementMorale = staffData.info.management ? Math.round(parseFloat(staffData.info.management.percentage)) : 0;
+        var settings = loadSettings();
+
+        if (!moraleDisplayElement) {
+            createMoraleDisplay();
+        }
+
+        if (!moraleDisplayElement) {
+            displayRetries++;
+            if (displayRetries < 10) {
+                setTimeout(updateMoraleDisplay, 2000);
+            }
+            return;
+        }
+
+        var thresholds = {
+            happyThreshold: settings.happyThreshold,
+            neutralThreshold: settings.neutralThreshold,
+            sadThreshold: settings.sadThreshold,
+            badThreshold: settings.badThreshold
+        };
+
+        if (managementSmileyElement) {
+            managementSmileyElement.innerHTML = generateHeaderSmiley(managementMorale, 'captain', thresholds);
+            managementSmileyElement.title = 'Management: ' + managementMorale + '%';
+        }
+
+        if (crewSmileyElement) {
+            crewSmileyElement.innerHTML = generateHeaderSmiley(crewMorale, 'sailor', thresholds);
+            crewSmileyElement.title = 'Crew: ' + crewMorale + '%';
+        }
+
+        console.log('[Auto Happy Staff] Display updated - Crew: ' + crewMorale + '%, Management: ' + managementMorale + '%');
+    }
 
     // ============================================
     // SETTINGS STORAGE
@@ -137,10 +328,10 @@
         if (typeof window.RebelShipNotify !== 'undefined' && window.RebelShipNotify.notify) {
             try {
                 window.RebelShipNotify.notify(SCRIPT_NAME + ': ' + message);
-                console.log('[Auto Happy Staff] Android notification sent');
+                console.log('[Auto Happy Staff] System notification sent');
                 return;
             } catch (e) {
-                console.log('[Auto Happy Staff] Android notification failed: ' + e.message);
+                console.log('[Auto Happy Staff] System notification failed: ' + e.message);
             }
         }
 
@@ -294,21 +485,49 @@
                 return;
             }
 
-            // Raise salaries for staff with low morale
+            // Raise salaries for staff with low morale - keep raising until target is reached
+            var MAX_RAISES_PER_STAFF = 50; // Safety limit to prevent infinite loops
+
             for (var i = 0; i < staffToAdjust.length; i++) {
                 var staff = staffToAdjust[i];
-                console.log('[Auto Happy Staff] Raising salary for ' + staff.type + ' (current morale: ' + Math.round(staff.morale) + '%)');
+                var currentMorale = Math.round(staff.morale);
+                var raiseCount = 0;
 
-                var result = await raiseSalary(staff.type);
-                if (result && result.data && result.data.staff) {
-                    var newSalary = result.data.staff.salary;
-                    var newMorale = result.data.staff.morale;
-                    console.log('[Auto Happy Staff] ' + staff.type + ' salary raised to $' + newSalary + ' (morale: ' + newMorale + '%)');
-                    raisedCount++;
+                console.log('[Auto Happy Staff] Starting raises for ' + staff.type + ' (current morale: ' + currentMorale + '%, target: ' + effectiveTarget + '%)');
+
+                // Keep raising until morale reaches target or max raises hit
+                while (currentMorale < effectiveTarget && raiseCount < MAX_RAISES_PER_STAFF) {
+                    var result = await raiseSalary(staff.type);
+
+                    if (result && result.data && result.data.staff) {
+                        var newMorale = Math.round(result.data.staff.morale);
+                        var newSalary = result.data.staff.salary;
+                        raiseCount++;
+                        raisedCount++;
+
+                        console.log('[Auto Happy Staff] ' + staff.type + ' raise #' + raiseCount + ': $' + newSalary + ' (morale: ' + currentMorale + '% -> ' + newMorale + '%)');
+
+                        // Check if morale actually increased
+                        if (newMorale <= currentMorale) {
+                            console.log('[Auto Happy Staff] ' + staff.type + ' morale not increasing, stopping raises');
+                            break;
+                        }
+
+                        currentMorale = newMorale;
+                    } else {
+                        console.log('[Auto Happy Staff] ' + staff.type + ' raise failed, stopping');
+                        break;
+                    }
+
+                    // Delay between API calls to not hammer the server
+                    await new Promise(function(resolve) { setTimeout(resolve, 500); });
                 }
 
-                // Small delay between API calls
-                await new Promise(function(resolve) { setTimeout(resolve, 300); });
+                if (currentMorale >= effectiveTarget) {
+                    console.log('[Auto Happy Staff] ' + staff.type + ' reached target morale: ' + currentMorale + '%');
+                } else {
+                    console.log('[Auto Happy Staff] ' + staff.type + ' stopped at morale: ' + currentMorale + '% (raises: ' + raiseCount + ')');
+                }
             }
 
             // Fetch updated data to get new morale levels
@@ -316,11 +535,17 @@
             if (updatedData && updatedData.info) {
                 var newCrew = Math.round(parseFloat(updatedData.info.crew ? updatedData.info.crew.percentage : 0));
                 var newManagement = Math.round(parseFloat(updatedData.info.management ? updatedData.info.management.percentage : 0));
+
                 if (raisedCount > 0) {
-                    notify('Raised ' + raisedCount + ' salaries. Crew: ' + newCrew + '%, Management: ' + newManagement + '%', 'success');
+                    var summary = 'Salaries adjusted. Crew: ' + newCrew + '%, Mgmt: ' + newManagement + '%';
+                    notify(summary, 'success');
+                    console.log('[Auto Happy Staff] ' + summary);
                 } else if (manual) {
-                    notify('Crew: ' + newCrew + '%, Management: ' + newManagement + '%', 'success');
+                    notify('Crew: ' + newCrew + '%, Mgmt: ' + newManagement + '%', 'success');
                 }
+
+                // Update header smileys with new morale values
+                updateMoraleDisplay();
             }
 
         } catch (err) {
@@ -359,102 +584,50 @@
     // ============================================
     var REBELSHIP_LOGO = '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><path d="M20 21c-1.39 0-2.78-.47-4-1.32-2.44 1.71-5.56 1.71-8 0C6.78 20.53 5.39 21 4 21H2v2h2c1.38 0 2.74-.35 4-.99 2.52 1.29 5.48 1.29 8 0 1.26.65 2.62.99 4 .99h2v-2h-2zM3.95 19H4c1.6 0 3.02-.88 4-2 .98 1.12 2.4 2 4 2s3.02-.88 4-2c.98 1.12 2.4 2 4 2h.05l1.89-6.68c.08-.26.06-.54-.06-.78s-.34-.42-.6-.5L20 10.62V6c0-1.1-.9-2-2-2h-3V1H9v3H6c-1.1 0-2 .9-2 2v4.62l-1.29.42c-.26.08-.48.26-.6.5s-.15.52-.06.78L3.95 19zM6 6h12v3.97L12 8 6 9.97V6z"/></svg>';
 
-    function getOrCreateMobileRow() {
-        var existing = document.getElementById('rebel-mobile-row');
-        if (existing) return existing;
-
-        var row = document.createElement('div');
-        row.id = 'rebel-mobile-row';
-        row.style.cssText = 'position:fixed !important;top:0 !important;left:0 !important;right:0 !important;display:flex !important;flex-wrap:nowrap !important;justify-content:space-between !important;align-items:center !important;gap:4px !important;background:#1a1a2e !important;padding:4px 6px !important;font-size:14px !important;z-index:9999 !important;';
-        var leftSection = document.createElement('div'); leftSection.id = 'rebel-mobile-left'; leftSection.style.cssText = 'display:flex;align-items:center;gap:4px;'; row.appendChild(leftSection); var rightSection = document.createElement('div'); rightSection.id = 'rebel-mobile-right'; rightSection.style.cssText = 'display:flex;align-items:center;gap:4px;'; row.appendChild(rightSection); document.body.appendChild(row);
-
-        var appContainer = document.querySelector('#app') || document.body.firstElementChild;
-        if (appContainer) {
-            appContainer.style.marginTop = '2px';
-        }
-
-        return row;
-    }
-
     function getOrCreateRebelShipMenu() {
         var menu = document.getElementById('rebelship-menu');
         if (menu) {
             return menu.querySelector('.rebelship-dropdown');
         }
 
-        if (isMobile) {
-            var row = getOrCreateMobileRow();
-            if (!row) return null;
-
-            var container = document.createElement('div');
-            container.id = 'rebelship-menu';
-            container.style.cssText = 'position:relative;display:inline-block;;';
-
-            var btn = document.createElement('button');
-            btn.id = 'rebelship-menu-btn';
-            btn.innerHTML = REBELSHIP_LOGO;
-            btn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:18px;height:18px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:white;border:none;border-radius:6px;cursor:pointer;';
-            btn.title = 'RebelShip Menu';
-
-            var dropdown = document.createElement('div');
-            dropdown.className = 'rebelship-dropdown';
-            dropdown.style.cssText = 'display:none;position:absolute;top:100%;right:0;background:#1f2937;border:1px solid #374151;border-radius:4px;min-width:200px;z-index:99999;box-shadow:0 4px 12px rgba(0,0,0,0.3);margin-top:4px;';
-
-            container.appendChild(btn);
-            container.appendChild(dropdown);
-
-            btn.addEventListener('click', function(e) {
-                e.stopPropagation();
-                dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
-            });
-
-            document.addEventListener('click', function(e) {
-                if (!container.contains(e.target)) {
-                    dropdown.style.display = 'none';
-                }
-            });
-
-            var rightSection = document.getElementById('rebel-mobile-right'); if (rightSection) { rightSection.appendChild(container); } else { row.appendChild(container); }
-            return dropdown;
-        }
-
         var messagingIcon = document.querySelector('div.messaging.cursor-pointer');
         if (!messagingIcon) messagingIcon = document.querySelector('.messaging');
         if (!messagingIcon) return null;
 
-        var desktopContainer = document.createElement('div');
-        desktopContainer.id = 'rebelship-menu';
-        desktopContainer.style.cssText = 'position:relative;display:inline-block;vertical-align:middle;margin-right:4px !important;margin-left:auto;';
+        var container = document.createElement('div');
+        container.id = 'rebelship-menu';
+        container.style.cssText = 'position:relative;display:inline-block;vertical-align:middle;margin-right:4px !important;';
 
-        var desktopBtn = document.createElement('button');
-        desktopBtn.id = 'rebelship-menu-btn';
-        desktopBtn.innerHTML = REBELSHIP_LOGO;
-        desktopBtn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:28px;height:28px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:white;border:none;border-radius:6px;cursor:pointer;box-shadow:0 2px 4px rgba(0,0,0,0.2);';
-        desktopBtn.title = 'RebelShip Menu';
+        var btn = document.createElement('button');
+        btn.id = 'rebelship-menu-btn';
+        btn.innerHTML = REBELSHIP_LOGO;
+        btn.title = 'RebelShip Menu';
 
-        var desktopDropdown = document.createElement('div');
-        desktopDropdown.className = 'rebelship-dropdown';
-        desktopDropdown.style.cssText = 'display:none;position:absolute;top:100%;right:0;background:#1f2937;border:1px solid #374151;border-radius:4px;min-width:200px;z-index:99999;box-shadow:0 4px 12px rgba(0,0,0,0.3);margin-top:4px;';
+        btn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:28px;height:28px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:white;border:none;border-radius:6px;cursor:pointer;box-shadow:0 2px 4px rgba(0,0,0,0.2);';
 
-        desktopContainer.appendChild(desktopBtn);
-        desktopContainer.appendChild(desktopDropdown);
+        var dropdown = document.createElement('div');
+        dropdown.className = 'rebelship-dropdown';
+        dropdown.style.cssText = 'display:none;position:absolute;top:100%;right:0;background:#1f2937;border:1px solid #374151;border-radius:4px;min-width:200px;z-index:99999;box-shadow:0 4px 12px rgba(0,0,0,0.3);margin-top:4px;';
 
-        desktopBtn.addEventListener('click', function(e) {
+        container.appendChild(btn);
+        container.appendChild(dropdown);
+
+        btn.addEventListener('click', function(e) {
             e.stopPropagation();
-            desktopDropdown.style.display = desktopDropdown.style.display === 'block' ? 'none' : 'block';
+            dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
         });
 
         document.addEventListener('click', function(e) {
-            if (!desktopContainer.contains(e.target)) {
-                desktopDropdown.style.display = 'none';
+            if (!container.contains(e.target)) {
+                dropdown.style.display = 'none';
             }
         });
 
         if (messagingIcon.parentNode) {
-            messagingIcon.parentNode.insertBefore(desktopContainer, messagingIcon);
+            messagingIcon.parentNode.insertBefore(container, messagingIcon);
         }
 
-        return desktopDropdown;
+        return dropdown;
     }
 
     function addMenuItem(label, onClick) {
@@ -515,7 +688,7 @@
             if (!centralContainer) return;
 
             centralContainer.innerHTML = '\
-                <div style="padding:20px;max-width:400px;margin:0 auto;font-family:Lato,sans-serif;color:#01125d;">\
+                <div style="padding:20px;max-width:450px;margin:0 auto;font-family:Lato,sans-serif;color:#01125d;">\
                     <div style="margin-bottom:20px;">\
                         <label style="display:flex;align-items:center;cursor:pointer;font-weight:700;font-size:16px;">\
                             <input type="checkbox" id="ah-enabled" ' + (currentSettings.enabled ? 'checked' : '') + '\
@@ -539,7 +712,7 @@
                             Minimum happiness level to maintain for crew and management\
                         </div>\
                     </div>\
-                    <div style="margin-bottom:24px;">\
+                    <div style="margin-bottom:20px;">\
                         <label style="display:flex;align-items:center;cursor:pointer;font-weight:700;font-size:14px;">\
                             <input type="checkbox" id="ah-notifications" ' + (currentSettings.systemNotifications ? 'checked' : '') + '\
                                    style="width:18px;height:18px;margin-right:10px;accent-color:#0db8f4;cursor:pointer;">\
@@ -547,6 +720,46 @@
                         </label>\
                         <div style="font-size:12px;color:#626b90;margin-top:6px;margin-left:28px;">\
                             Send push notifications when salaries are raised\
+                        </div>\
+                    </div>\
+                    <div style="margin-bottom:20px;padding:15px;background:#f0f4f8;border-radius:8px;">\
+                        <label style="display:block;font-weight:700;font-size:14px;margin-bottom:12px;text-align:center;">Smiley Thresholds (Header Display)</label>\
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">\
+                            <div style="text-align:center;">\
+                                <label style="font-size:12px;color:#626b90;">Happy (yellow)</label>\
+                                <div style="display:flex;align-items:center;justify-content:center;gap:4px;">\
+                                    <input type="number" id="ah-happy-threshold" value="' + currentSettings.happyThreshold + '" min="0" max="100"\
+                                           style="width:60px;padding:6px;border:1px solid #ccc;border-radius:4px;font-size:13px;text-align:center;">\
+                                    <span style="font-size:12px;">%+</span>\
+                                </div>\
+                            </div>\
+                            <div style="text-align:center;">\
+                                <label style="font-size:12px;color:#626b90;">Neutral (gray)</label>\
+                                <div style="display:flex;align-items:center;justify-content:center;gap:4px;">\
+                                    <input type="number" id="ah-neutral-threshold" value="' + currentSettings.neutralThreshold + '" min="0" max="100"\
+                                           style="width:60px;padding:6px;border:1px solid #ccc;border-radius:4px;font-size:13px;text-align:center;">\
+                                    <span style="font-size:12px;">%+</span>\
+                                </div>\
+                            </div>\
+                            <div style="text-align:center;">\
+                                <label style="font-size:12px;color:#626b90;">Sad (dark gray)</label>\
+                                <div style="display:flex;align-items:center;justify-content:center;gap:4px;">\
+                                    <input type="number" id="ah-sad-threshold" value="' + currentSettings.sadThreshold + '" min="0" max="100"\
+                                           style="width:60px;padding:6px;border:1px solid #ccc;border-radius:4px;font-size:13px;text-align:center;">\
+                                    <span style="font-size:12px;">%+</span>\
+                                </div>\
+                            </div>\
+                            <div style="text-align:center;">\
+                                <label style="font-size:12px;color:#626b90;">Bad (red)</label>\
+                                <div style="display:flex;align-items:center;justify-content:center;gap:4px;">\
+                                    <input type="number" id="ah-bad-threshold" value="' + currentSettings.badThreshold + '" min="0" max="100"\
+                                           style="width:60px;padding:6px;border:1px solid #ccc;border-radius:4px;font-size:13px;text-align:center;">\
+                                    <span style="font-size:12px;">%+</span>\
+                                </div>\
+                            </div>\
+                        </div>\
+                        <div style="font-size:11px;color:#626b90;margin-top:8px;text-align:center;">\
+                            Below Bad threshold = Critical (glowing red)\
                         </div>\
                     </div>\
                     <div style="display:flex;gap:12px;justify-content:space-between;margin-top:30px;">\
@@ -567,7 +780,11 @@
                 var newSettings = {
                     enabled: document.getElementById('ah-enabled').checked,
                     targetMorale: parseInt(document.getElementById('ah-target-morale').value, 10) || 100,
-                    systemNotifications: document.getElementById('ah-notifications').checked
+                    systemNotifications: document.getElementById('ah-notifications').checked,
+                    happyThreshold: parseInt(document.getElementById('ah-happy-threshold').value, 10) || 75,
+                    neutralThreshold: parseInt(document.getElementById('ah-neutral-threshold').value, 10) || 50,
+                    sadThreshold: parseInt(document.getElementById('ah-sad-threshold').value, 10) || 35,
+                    badThreshold: parseInt(document.getElementById('ah-bad-threshold').value, 10) || 25
                 };
 
                 if (newSettings.systemNotifications) {
@@ -581,6 +798,9 @@
                 } else {
                     stopMonitoring();
                 }
+
+                // Update display immediately with new thresholds
+                updateMoraleDisplay();
 
                 notify('Settings saved', 'success');
                 modalStore.closeAll();
@@ -631,6 +851,14 @@
 
         requestNotificationPermission();
         initUI();
+
+        // Initialize morale display in header (always active)
+        setTimeout(function() {
+            createMoraleDisplay();
+            updateMoraleDisplay();
+            // Update display every 15 minutes
+            setInterval(updateMoraleDisplay, CHECK_INTERVAL);
+        }, 3000);
 
         var settings = loadSettings();
         if (settings.enabled) {

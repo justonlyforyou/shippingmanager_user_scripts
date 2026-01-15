@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Vessel Shopping Cart
 // @description Add vessels to cart and bulk purchase them
-// @version     4.10
+// @version     4.13
 // @author      https://github.com/justonlyforyou/
 // @order       26
 // @match       https://shippingmanager.cc/*
@@ -15,8 +15,6 @@
 
 (function() {
     'use strict';
-
-    const isMobile = window.innerWidth < 1024;
 
     // Inject interceptor script into page context (has access to Vue internals)
     const interceptorScript = document.createElement('script');
@@ -614,40 +612,7 @@
         setTimeout(() => notif.remove(), 2000);
     }
 
-    // Get or create shared mobile row (fixed at top)
-    function getOrCreateMobileRow() {
-        var existing = document.getElementById('rebel-mobile-row');
-        if (existing) return existing;
-
-        // Create fixed row at top of screen with two sections
-        var row = document.createElement('div');
-        row.id = 'rebel-mobile-row';
-        row.style.cssText = 'position:fixed !important;top:0 !important;left:0 !important;right:0 !important;display:flex !important;flex-wrap:nowrap !important;justify-content:space-between !important;align-items:center !important;background:#1a1a2e !important;padding:4px 6px !important;font-size:14px !important;z-index:9999 !important;';
-
-        // Left section for general items
-        var leftSection = document.createElement('div');
-        leftSection.id = 'rebel-mobile-left';
-        leftSection.style.cssText = 'display:flex;align-items:center;gap:4px;';
-        row.appendChild(leftSection);
-
-        // Right section for cart + rebelship menu
-        var rightSection = document.createElement('div');
-        rightSection.id = 'rebel-mobile-right';
-        rightSection.style.cssText = 'display:flex;align-items:center;gap:4px;';
-        row.appendChild(rightSection);
-
-        document.body.appendChild(row);
-
-        // Add margin to push page content down
-        var appContainer = document.querySelector('#app') || document.body.firstElementChild;
-        if (appContainer) {
-            appContainer.style.marginTop = '2px';
-        }
-
-        return row;
-    }
-
-    // Create standalone cart button
+    // Create standalone cart button (same position on mobile and desktop)
     function createCartButton() {
         if (document.getElementById('rebelship-cart-btn')) return;
 
@@ -663,39 +628,7 @@
             showCartModal();
         });
 
-        // Mobile: insert into mobile row right section
-        if (isMobile) {
-            var row = getOrCreateMobileRow();
-            if (!row) {
-                setTimeout(createCartButton, 1000);
-                return;
-            }
-
-            // Get or create right section
-            var rightSection = document.getElementById('rebel-mobile-right');
-            if (!rightSection) {
-                rightSection = document.createElement('div');
-                rightSection.id = 'rebel-mobile-right';
-                rightSection.style.cssText = 'display:flex;align-items:center;gap:4px;';
-                row.appendChild(rightSection);
-            }
-
-            // Match RebelShip menu height (18px) for mobile
-            btn.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:2px;height:18px;padding:0 6px;background:#f59e0b;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:10px;';
-
-            // Insert cart at start of right section (before rebelship-menu)
-            var rebelMenu = document.getElementById('rebelship-menu');
-            if (rebelMenu && rebelMenu.parentNode === rightSection) {
-                rightSection.insertBefore(btn, rebelMenu);
-            } else {
-                rightSection.insertBefore(btn, rightSection.firstChild);
-            }
-
-            console.log('[VesselCart] Cart button created (mobile)');
-            return;
-        }
-
-        // Desktop: insert before RebelShip menu or messaging icon
+        // Insert before RebelShip menu or messaging icon (same position for mobile and desktop)
         let rebelshipMenu = document.getElementById('rebelship-menu');
         if (!rebelshipMenu) {
             let messagingIcon = document.querySelector('div.messaging.cursor-pointer');
@@ -707,14 +640,13 @@
             rebelshipMenu = messagingIcon;
         }
 
-        // Match RebelShip menu height (28px) for desktop
         btn.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:4px;height:28px;padding:0 10px;background:#f59e0b;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;margin-right:4px !important;margin-left:4px !important;box-shadow:0 2px 4px rgba(0,0,0,0.2);';
 
         if (rebelshipMenu.parentNode) {
             rebelshipMenu.parentNode.insertBefore(btn, rebelshipMenu);
         }
 
-        console.log('[VesselCart] Cart button created (desktop)');
+        console.log('[VesselCart] Cart button created');
     }
 
     // Update cart badge
@@ -1140,8 +1072,7 @@
     }
 
     function formatNumber(num) {
-        // eslint-disable-next-line security/detect-unsafe-regex
-        return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        return num.toLocaleString('en-US');
     }
 
     // Initialize

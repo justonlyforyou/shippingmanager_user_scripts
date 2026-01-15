@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Open Alliance Search
 // @description Search all open alliances 
-// @version     3.5
+// @version     3.8
 // @author      https://github.com/justonlyforyou/
 // @order       19
 // @match       https://shippingmanager.cc/*
@@ -16,7 +16,6 @@
     var STORAGE_KEY = 'rebelship_alliances';
     var STORAGE_META_KEY = 'rebelship_alliances_meta';
     var STORAGE_PROGRESS_KEY = 'rebelship_alliances_progress';
-    var isMobile = window.innerWidth < 1024;
     var isDownloading = false;
     var isIndexReady = false;
     var PAGE_SIZE = 10;
@@ -351,84 +350,30 @@
         return filtered;
     }
 
-    // Get or create mobile row
-    function getOrCreateMobileRow() {
-        var existing = document.getElementById('rebel-mobile-row');
-        if (existing) return existing;
-
-        var row = document.createElement('div');
-        row.id = 'rebel-mobile-row';
-        row.style.cssText = 'position:fixed !important;top:0 !important;left:0 !important;right:0 !important;display:flex !important;flex-wrap:nowrap !important;justify-content:space-between !important;align-items:center !important;gap:4px !important;background:#1a1a2e !important;padding:4px 6px !important;font-size:14px !important;z-index:9999 !important;';
-
-        var leftSection = document.createElement('div'); leftSection.id = 'rebel-mobile-left'; leftSection.style.cssText = 'display:flex;align-items:center;gap:4px;'; row.appendChild(leftSection); var rightSection = document.createElement('div'); rightSection.id = 'rebel-mobile-right'; rightSection.style.cssText = 'display:flex;align-items:center;gap:4px;'; row.appendChild(rightSection); document.body.appendChild(row);
-
-        var appContainer = document.querySelector('#app') || document.body.firstElementChild;
-        if (appContainer) {
-            appContainer.style.marginTop = '2px';
-        }
-
-        return row;
-    }
-
-    // Get or create RebelShip menu
+    // Get or create RebelShip menu (same position for mobile and desktop)
     function getOrCreateRebelShipMenu() {
         var menu = document.getElementById('rebelship-menu');
         if (menu) {
             return menu.querySelector('.rebelship-dropdown');
         }
 
-        if (isMobile) {
-            var row = getOrCreateMobileRow();
-            if (!row) return null;
-
-            var container = document.createElement('div');
-            container.id = 'rebelship-menu';
-            container.style.cssText = 'position:relative;display:inline-block;;';
-
-            var btn = document.createElement('button');
-            btn.id = 'rebelship-menu-btn';
-            btn.innerHTML = REBELSHIP_LOGO;
-            btn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:18px;height:18px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:white;border:none;border-radius:6px;cursor:pointer;';
-            btn.title = 'RebelShip Menu';
-
-            var dropdown = document.createElement('div');
-            dropdown.className = 'rebelship-dropdown';
-            dropdown.style.cssText = 'display:none;position:absolute;top:100%;right:0;background:#1f2937;border:1px solid #374151;border-radius:4px;min-width:200px;z-index:99999;box-shadow:0 4px 12px rgba(0,0,0,0.3);margin-top:4px;';
-
-            container.appendChild(btn);
-            container.appendChild(dropdown);
-
-            btn.addEventListener('click', function(e) {
-                e.stopPropagation();
-                dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
-            });
-
-            document.addEventListener('click', function(e) {
-                if (!container.contains(e.target)) {
-                    dropdown.style.display = 'none';
-                }
-            });
-
-            var rightSection = document.getElementById('rebel-mobile-right'); if (rightSection) { rightSection.appendChild(container); } else { row.appendChild(container); }
-            return dropdown;
-        }
-
-        // Desktop
+        // Insert before messaging icon (same position for mobile and desktop)
         var messagingIcon = document.querySelector('div.messaging.cursor-pointer');
         if (!messagingIcon) messagingIcon = document.querySelector('.messaging');
         if (!messagingIcon) return null;
 
-        container = document.createElement('div');
+        var container = document.createElement('div');
         container.id = 'rebelship-menu';
-        container.style.cssText = 'position:relative;display:inline-block;vertical-align:middle;margin-right:4px !important;margin-left:auto;';
+        container.style.cssText = 'position:relative;display:inline-block;vertical-align:middle;margin-right:4px !important;';
 
-        btn = document.createElement('button');
+        var btn = document.createElement('button');
         btn.id = 'rebelship-menu-btn';
         btn.innerHTML = REBELSHIP_LOGO;
-        btn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:28px;height:28px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:white;border:none;border-radius:6px;cursor:pointer;box-shadow:0 2px 4px rgba(0,0,0,0.2);';
         btn.title = 'RebelShip Menu';
 
-        dropdown = document.createElement('div');
+        btn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:28px;height:28px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:white;border:none;border-radius:6px;cursor:pointer;box-shadow:0 2px 4px rgba(0,0,0,0.2);';
+
+        var dropdown = document.createElement('div');
         dropdown.className = 'rebelship-dropdown';
         dropdown.style.cssText = 'display:none;position:absolute;top:100%;right:0;background:#1f2937;border:1px solid #374151;border-radius:4px;min-width:200px;z-index:99999;box-shadow:0 4px 12px rgba(0,0,0,0.3);margin-top:4px;';
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Auto Co-Op & Co-Op Header Display
 // @description Shows open Co-Op tickets, auto-sends COOP vessels to alliance members
-// @version     5.6
+// @version     5.11
 // @author      https://github.com/justonlyforyou/
 // @order       20
 // @match       https://shippingmanager.cc/*
@@ -16,8 +16,8 @@
 
     var SCRIPT_NAME = 'CoOp';
     var STORAGE_KEY = 'rebelship_coop_settings';
-    var isMobile = window.innerWidth < 1024;
     var coopElement = null;
+    var coopValueElement = null;
     var isProcessing = false;
 
     // Settings
@@ -136,7 +136,6 @@
 
             if (available === 0) {
                 log('No COOP tickets available');
-                showToast('CoOp: No tickets available (0/' + coopCache.cap + ')', 'warning');
                 return result;
             }
 
@@ -185,7 +184,6 @@
 
             if (eligibleMembers.length === 0) {
                 log('No eligible members found');
-                showToast('CoOp: No eligible members', 'warning');
                 return result;
             }
 
@@ -239,8 +237,6 @@
                 showToast('CoOp: Sent ' + result.totalSent + ' vessels to ' + result.results.filter(function(r) { return r.departed > 0; }).length + ' members', 'success');
             } else if (result.totalRequested > 0) {
                 showToast('CoOp: All sends failed', 'error');
-            } else {
-                showToast('CoOp: Nothing to send', 'warning');
             }
 
             return result;
@@ -355,21 +351,6 @@
     }
 
     // ========== UI: DISPLAY ==========
-    function getCoopColor(openTickets) {
-        return openTickets === 0 ? '#4ade80' : '#ef4444';
-    }
-
-    function getOrCreateMobileRow() {
-        var existing = document.getElementById('rebel-mobile-row');
-        if (existing) return existing;
-        var row = document.createElement('div');
-        row.id = 'rebel-mobile-row';
-        row.style.cssText = 'position:fixed !important;top:0 !important;left:0 !important;right:0 !important;display:flex !important;flex-wrap:nowrap !important;justify-content:space-between !important;align-items:center !important;gap:4px !important;background:#1a1a2e !important;padding:4px 6px !important;font-size:14px !important;z-index:9999 !important;';
-        var leftSection = document.createElement('div'); leftSection.id = 'rebel-mobile-left'; leftSection.style.cssText = 'display:flex;align-items:center;gap:4px;'; row.appendChild(leftSection); var rightSection = document.createElement('div'); rightSection.id = 'rebel-mobile-right'; rightSection.style.cssText = 'display:flex;align-items:center;gap:4px;'; row.appendChild(rightSection); document.body.appendChild(row);
-        var appContainer = document.querySelector('#app') || document.body.firstElementChild;
-        if (appContainer) appContainer.style.marginTop = '2px';
-        return row;
-    }
 
     // Click Co-op tab (index 1): Overview, Co-op, Chat, Settings
     function clickCoopTab() {
@@ -434,56 +415,78 @@
         }
     }
 
+    /**
+     * Create 2-line coop display (like bunker):
+     * Line 1: "CO-OP"
+     * Line 2: available/max (red if available > 0)
+     * Works with game's original CO2 display OR our bunker-price-display
+     */
     function createCoopDisplay() {
         if (coopElement) return coopElement;
-        if (isMobile) {
-            var row = getOrCreateMobileRow();
-            if (!row) return null;
-            coopElement = document.createElement('div');
-            coopElement.id = 'coop-tickets-display';
-            coopElement.style.cssText = 'display:flex !important;align-items:center !important;padding:0 !important;font-size:13px !important;font-weight:bold !important;cursor:pointer !important;color:#4ade80 !important;';
-            coopElement.textContent = 'CO-OP: ...';
-            coopElement.addEventListener('click', openAllianceCoopTab);
-            var leftSection = document.getElementById('rebel-mobile-left');
-            if (leftSection) leftSection.appendChild(coopElement);
-            else row.appendChild(coopElement);
-            return coopElement;
+
+        // Find CO2 container - this is always present whether bunker script runs or not
+        var co2Container = document.querySelector('.content.led.cursor-pointer');
+        if (!co2Container || !co2Container.parentNode) {
+            log('CO2 container not found, retrying...');
+            return null;
         }
-        var companyContent = document.querySelector('.companyContent');
-        if (!companyContent) return null;
-        coopElement = document.createElement('span');
+
+        // Create container
+        coopElement = document.createElement('div');
         coopElement.id = 'coop-tickets-display';
-        coopElement.style.cssText = 'margin-left:4px !important;font-size:13px !important;cursor:pointer;color:#4ade80;text-decoration:underline;';
-        coopElement.textContent = 'CO-OP: ...';
+        coopElement.style.cssText = 'display:flex;flex-direction:column;align-items:center;line-height:1.2;cursor:pointer;margin-left:8px;';
         coopElement.addEventListener('click', openAllianceCoopTab);
-        var repDisplay = document.getElementById('reputation-display');
-        if (repDisplay && repDisplay.parentNode) {
-            repDisplay.parentNode.insertBefore(coopElement, repDisplay.nextSibling);
-        } else {
-            var stockInfo = companyContent.querySelector('.stockInfo');
-            if (stockInfo && stockInfo.parentNode) stockInfo.parentNode.insertBefore(coopElement, stockInfo.nextSibling);
-            else companyContent.appendChild(coopElement);
-        }
+
+        // Line 1: Label
+        var label = document.createElement('span');
+        label.style.cssText = 'display:block;color:#9ca3af;';
+        label.textContent = 'CO-OP';
+        coopElement.appendChild(label);
+
+        // Line 2: Value (available/max)
+        coopValueElement = document.createElement('span');
+        coopValueElement.id = 'coop-tickets-value';
+        coopValueElement.style.cssText = 'display:block;font-weight:bold;font-size:13px;';
+        coopValueElement.textContent = '.../...';
+        coopElement.appendChild(coopValueElement);
+
+        // Insert after CO2 container (works with game or bunker-price-display)
+        co2Container.parentNode.insertBefore(coopElement, co2Container.nextSibling);
+        log('COOP display created');
+
         return coopElement;
     }
+
+    var coopDisplayRetries = 0;
 
     async function updateCoopDisplay() {
         await refreshCoopCache();
         var available = coopCache.available;
         var cap = coopCache.cap;
+
         // Hide if no coop data (not in alliance)
         if (cap === 0) {
-            var existing = document.getElementById('coop-tickets-display');
-            if (existing) existing.style.display = 'none';
+            if (coopElement) coopElement.style.display = 'none';
             return;
         }
+
         updateAllianceTabDot(available > 0);
-        var el = document.getElementById('coop-tickets-display');
-        if (!el) el = createCoopDisplay();
-        if (el) {
-            el.style.display = '';
-            el.textContent = 'CO-OP: ' + available + '/' + cap;
-            el.style.color = getCoopColor(available);
+
+        if (!coopElement) createCoopDisplay();
+        if (!coopElement) {
+            // Retry a few times if element not created yet
+            coopDisplayRetries++;
+            if (coopDisplayRetries < 10) {
+                setTimeout(updateCoopDisplay, 2000);
+            }
+            return;
+        }
+
+        coopElement.style.display = '';
+        if (coopValueElement) {
+            coopValueElement.textContent = available + '/' + cap;
+            // Red if available > 0 (tickets waiting), green if 0
+            coopValueElement.style.color = available > 0 ? '#ef4444' : '#4ade80';
         }
     }
 
@@ -496,33 +499,12 @@
             var dropdown = menu.querySelector('.rebelship-dropdown');
             if (dropdown) return dropdown;
         }
-        if (isMobile) {
-            var row = getOrCreateMobileRow();
-            if (!row) return null;
-            var container = document.createElement('div');
-            container.id = 'rebelship-menu';
-            container.style.cssText = 'position:relative;display:inline-block;;';
-            var btn = document.createElement('button');
-            btn.id = 'rebelship-menu-btn';
-            btn.innerHTML = REBELSHIP_LOGO;
-            btn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:18px;height:18px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:white;border:none;border-radius:6px;cursor:pointer;';
-            btn.title = 'RebelShip Menu';
-            dropdown = document.createElement('div');
-            dropdown.className = 'rebelship-dropdown';
-            dropdown.style.cssText = 'display:none;position:absolute;top:100%;right:0;background:#1f2937;border:1px solid #374151;border-radius:4px;min-width:200px;z-index:99999;box-shadow:0 4px 12px rgba(0,0,0,0.3);margin-top:4px;';
-            container.appendChild(btn);
-            container.appendChild(dropdown);
-            btn.addEventListener('click', function(e) { e.stopPropagation(); dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block'; });
-            document.addEventListener('click', function(e) { if (!container.contains(e.target)) dropdown.style.display = 'none'; });
-            var rightSection = document.getElementById('rebel-mobile-right'); if (rightSection) { rightSection.appendChild(container); } else { row.appendChild(container); }
-            return dropdown;
-        }
         var messagingIcon = document.querySelector('div.messaging.cursor-pointer') || document.querySelector('.messaging');
         if (!messagingIcon) return null;
-        container = document.createElement('div');
+        var container = document.createElement('div');
         container.id = 'rebelship-menu';
-        container.style.cssText = 'position:relative;display:inline-block;vertical-align:middle;margin-right:4px !important;margin-left:auto;';
-        btn = document.createElement('button');
+        container.style.cssText = 'position:relative;display:inline-block;vertical-align:middle;margin-right:4px !important;';
+        var btn = document.createElement('button');
         btn.id = 'rebelship-menu-btn';
         btn.innerHTML = REBELSHIP_LOGO;
         btn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:28px;height:28px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:white;border:none;border-radius:6px;cursor:pointer;box-shadow:0 2px 4px rgba(0,0,0,0.2);';
@@ -625,6 +607,16 @@
         }, 150);
     }
 
+    // ========== SCHEDULER ==========
+    // Run every 15 minutes (compatible with Android background service)
+    var RUN_INTERVAL = 15 * 60 * 1000;
+
+    function scheduledRun() {
+        if (!settings.autoSendEnabled) return;
+        log('Scheduled run triggered');
+        runAutoCoop(false);
+    }
+
     // ========== INITIALIZATION ==========
     var uiInitialized = false;
     var uiRetryCount = 0;
@@ -645,11 +637,21 @@
     }
 
     function init() {
-        log('Initializing v5.1...');
+        log('Initializing v5.8...');
         loadSettings();
         initUI();
         updateCoopDisplay();
-        setInterval(updateCoopDisplay, 5000);
+
+        // Update display every 15 minutes (Android background job compatible)
+        setInterval(updateCoopDisplay, RUN_INTERVAL);
+
+        // Run auto-send every 15 minutes
+        setInterval(scheduledRun, RUN_INTERVAL);
+
+        // Initial run after 30 seconds
+        setTimeout(scheduledRun, 30000);
+
+        log('Scheduler active - display + auto-send every 15 minutes');
     }
 
     // Expose for Android BackgroundScriptService
@@ -663,6 +665,6 @@
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', function() { setTimeout(init, 2000); });
     } else {
-        setTimeout(init, isMobile ? 3500 : 1000);
+        setTimeout(init, 1000);
     }
 })();

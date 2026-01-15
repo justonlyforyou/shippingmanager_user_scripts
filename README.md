@@ -1,395 +1,667 @@
-# Shipping Manager User Scripts
+# Shipping Manager User Scripts - User Manual
 
-A collection of user scripts for [Shipping Manager](https://shippingmanager.cc/) that fix game bugs the developers won't address and add quality-of-life features.
+A collection of user scripts for [Shipping Manager](https://shippingmanager.cc/) that fix game bugs and add quality-of-life features.
+
+---
+
+## Table of Contents
+
+1. [Installation](#installation)
+2. [Scripts Overview](#scripts-overview)
+3. [Detailed Documentation](#detailed-documentation)
+   - [Depart Manager](#departmanageruserjs---depart-manager)
+   - [Yard Foreman (Auto Repair)](#yard-foremanuserjs---auto-repair)
+   - [Auto Happy Staff](#auto_happy_stuffuserjs---auto-happy-staff)
+   - [Co-Op Tickets Display](#coop-tickets-displayuserjs---auto-co-op)
+   - [Reputation Display](#reputation-displayuserjs---auto-reputation)
+   - [Fleet Manager](#fleet-manageruserjs---mass-moorresume)
+   - [Vessel Shopping Cart](#vessel-cartuserjs---vessel-shopping-cart)
+   - [Bunker Price Display](#bunker-price-displayuserjs---bunker-prices)
+   - [Forecast Calendar](#forecast-calendaruserjs---forecast-calendar)
+   - [Distance Filter](#enable-distance-filteruserjs---distance-filter)
+   - [Map Unlock](#map-unlockuserjs---premium-features)
+   - [Fast Delivery](#fast-deliveryuserjs---fast-delivery)
+   - [Depart All Loop](#depart-all-loopuserjs---depart-all-loop)
+   - [Alliance Chat Notification](#alliance-chat-notificationuserjs---chat-notification)
+   - [Alliance Search](#alliance-searchuserjs---alliance-search)
+   - [Export Scripts](#export-scripts)
+   - [Bug Fix Scripts](#bug-fix-scripts)
+   - [Admin View](#admin-viewuserjs---admin-view)
+4. [Technical Details](#technical-details)
+5. [Background Execution (Android)](#background-execution-android)
+
+---
 
 ## Installation
 
 ### Recommended: RebelShip Browser
 
-The easiest way to use these scripts is with **RebelShip Browser**, which has all scripts pre-installed:
+The easiest way is using **RebelShip Browser** with pre-installed scripts:
 
 - **Desktop**: [RebelShip Browser](https://github.com/justonlyforyou/RebelShipBrowser)
 - **Mobile**: [RebelShip Browser Mobile](https://github.com/AstroNik/RebelShipBrowser_Mobile)
 
-Why this browsers recommendation? They are build with special requirements for the scripts in fornt of you. Especially when it comes to background tasks some of the scripts use.
-All scripts below are shipped with both Browser incl. easy script updates.
+These browsers are optimized for the scripts, especially for background tasks.
 
 ### Manual Installation (Browser Extensions)
 
-> **Note**: Chrome no longer supports userscript managers due to Manifest V3 restrictions. Use Firefox or a Chromium-based browser that still supports Manifest V2 or the Rebelship browsers from above!
+> **Note**: Chrome no longer supports userscript managers (Manifest V3). Use Firefox or a Chromium browser with Manifest V2 support.
 
 1. Install a userscript manager extension:
    - [Tampermonkey](https://www.tampermonkey.net/) (Firefox, Edge, Safari)
    - [Violentmonkey](https://violentmonkey.github.io/) (Firefox, Edge)
    - [Greasemonkey](https://www.greasespot.net/) (Firefox)
 
-2. Click on any `.user.js` file in this repository and click "Raw" to install
+2. Click on a `.user.js` file and then "Raw" to install
 
 ---
 
 ## Scripts Overview
 
-### Core Features
-
-| Script | Description |
-|--------|-------------|
-| **map-unlock.user.js** | Unlocks premium map themes, tanker ops, metropolis and extended zoom |
-| **yard-foreman.user.js** | Auto-repair vessels when wear reaches configurable threshold |
-| **drydock_master.user.js** | Auto-drydock + route settings persistence + drydock bug prevention |
-
-### Fleet Management
-
-| Script | Description |
-|--------|-------------|
-| **fleet-manager.user.js** | Mass Moor and Resume vessels with checkbox selection |
-| **vessel-cart.user.js** | Shopping cart for vessels - bookmark, compare, bulk purchase |
-| **buy-vip-vessel.user.js** | Purchase VIP vessels directly |
-| **at-port-refresh.user.js** | Auto-refresh At Port vessel list every 30 seconds |
-
-### Automation
-
-| Script | Description |
-|--------|-------------|
-| **auto-bunker-depart.user.js** | Auto-buy fuel/CO2 and auto-depart vessels |
-| **depart-all-loop.user.js** | Continuously clicks Depart All until all vessels departed |
-| **fast-delivery.user.js** | Fast delivery for built vessels via drydock exploit |
-
-### UI Enhancements
-
-| Script | Description |
-|--------|-------------|
-| **bunker-price-display.user.js** | Shows current fuel and CO2 bunker prices with fill levels |
-| **reputation-display.user.js** | Displays your current reputation score in the header |
-| **coop-tickets-display.user.js** | Shows open Co-Op tickets, red dot on alliance tab |
-| **forecast-calendar.user.js** | Visual calendar with cargo demand forecasts |
-| **auto-expand-advanced.user.js** | Auto-expands "Advanced" menus + price % difference |
-| **enable-distance-filter.user.js** | Filter destination ports by distance ranges |
-
-### Alliance Features
-
-| Script | Description |
-|--------|-------------|
-| **alliance-chat-notification.user.js** | Red dot on Alliance button for unread messages |
-| **alliance-search.user.js** | Search all alliances by name |
-
-### Data Export
-
-| Script | Description |
-|--------|-------------|
-| **export-vessels-csv.user.js** | Export fleet data to CSV |
-| **export-messages.user.js** | Export chat messages as CSV or JSON |
-| **save-vessel-history.user.js** | Tracks vessel purchase/sale history |
-
-### Bug Fixes
-
-| Script | Description |
-|--------|-------------|
-| **fix-alliance-member-exclude.user.js** | Fixes broken exclude buttons for CEO |
-| **fix-alliance-edit-buttons.user.js** | Adds missing edit buttons for interim_ceo |
-
-### Developer Tools
-
-| Script | Description |
-|--------|-------------|
-| **admin-view.user.js** | Displays admin/moderator UI elements (client-side only - do not grant admin or moderator rights) |
+| Script | Version | Description |
+|--------|---------|-------------|
+| departmanager.user.js | 2.46 | Unified: Auto-Bunker, Auto-Depart, Smuggler's Eye, Drydock Protection, Route Settings |
+| yard-foreman.user.js | 2.10 | Auto-repair at wear threshold |
+| auto_happy_stuff.user.js | 1.9 | Auto salary adjustment for crew/management morale |
+| coop-tickets-display.user.js | 5.10 | Co-Op display in header, Auto-COOP sending |
+| reputation-display.user.js | 5.7 | Reputation in header, auto campaign renewal |
+| fleet-manager.user.js | 4.2 | Mass Moor/Resume with checkboxes |
+| vessel-cart.user.js | 4.13 | Shopping cart for vessel purchase/build |
+| bunker-price-display.user.js | 3.13 | Fuel/CO2 prices and fill level in header |
+| forecast-calendar.user.js | 3.10 | Page-flip calendar with price forecasts |
+| enable-distance-filter.user.js | 8.1 | Filter ports by distance |
+| map-unlock.user.js | 1.3 | Premium Map Themes, Tanker Ops, Metropolis, Zoom |
+| fast-delivery.user.js | 1.6 | Fast vessel delivery via drydock bug |
+| depart-all-loop.user.js | 2.4 | Clicks Depart All until all departed |
+| alliance-chat-notification.user.js | 2.6 | Red dot for unread alliance messages |
+| alliance-search.user.js | 3.7 | Search all open alliances |
+| demand-summary.user.js | 4.11 | Port demand with capacity overview |
+| harbor-improvements.user.js | 2.5 | Details button repositioning in harbor menu |
+| at-port-refresh.user.js | 1.2 | Auto-refresh At Port list every 30 sec |
+| buy-vip-vessel.user.js | 2.4 | Buy VIP vessels |
+| export-vessels-csv.user.js | 1.9 | Export fleet as CSV |
+| export-messages.user.js | 1.9 | Export messages as CSV/JSON |
+| save-vessel-history.user.js | 3.1 | Save vessel history as CSV |
+| fix-alliance-member-exclude.user.js | 1.4 | Fix exclude buttons for CEO |
+| fix-alliance-edit-buttons.user.js | 1.3 | Add edit buttons for Interim CEO |
+| admin-view.user.js | 8.5 | Shows Admin UI (visual only, no permissions) |
 
 ---
 
-## Detailed Script Documentation
+## Detailed Documentation
 
-### drydock_master.user.js - Auto Drydock & Route Settings Manager
+---
 
-**Version:** 2.1 | **Order:** 29 | **Background Job:** Yes
+### departmanager.user.js - Depart Manager
 
-This is a comprehensive drydock management script that combines three critical features:
+**Version:** 2.46 | **Background Job:** Yes
 
-#### 1. Drydock Bug Prevention
+The main automation script combining several older scripts, providing comprehensive departure and route management.
 
-When you send a vessel to drydock in Shipping Manager, **all route settings are lost** (speed, guards, cargo prices). This is a known game bug that has never been fixed. The Drydock Master script solves this by:
+#### Accessing Settings
 
-1. **Intercepting drydock requests** via fetch API hook
-2. **Saving all route settings** (speed, guards, prices) to localStorage before drydock starts
-3. **Tracking vessel status** through the drydock lifecycle:
-   - `pre_drydock` - Settings saved, vessel heading to drydock
-   - `past_drydock` - Drydock complete, waiting to restore
-4. **Automatically restoring settings** when the vessel returns to port
+Click the **ship icon** (RebelShip Menu) in the header, then select **"Depart Manager"**.
 
-The script also detects "bug-use" mode (fast delivery exploit) and handles it separately.
+#### Features and Settings
 
-#### 2. Route Settings Tab
+##### 1. Auto Bunker Refill (Fuel & CO2)
 
-Adds a **Settings** button to the Routes modal that allows editing route settings for **ALL vessels**, not just those in port:
+Automatically purchases Fuel and CO2 based on price thresholds. Fuel and CO2 have separate independent settings.
 
-- **In-Port Vessels**: Changes apply immediately via API
-- **Enroute Vessels**: Changes are saved as "pending" and applied automatically at next departure
+**Modes Explained:**
 
-The Route Settings tab shows:
-- Status indicator (P=Port, E=Enroute, A=Anchored, MP=Moored at Port, ME=Moored on Arrival)
-- Route origin and destination
-- Vessel name
-- Speed, cargo prices (Dry/Ref for cargo, Fuel/Crude for tankers), guards
-- Hijacking risk percentage
-- Pending values (shown in purple) that will apply at next departure
+| Mode | Behavior |
+|------|----------|
+| **Off** | No automatic purchasing |
+| **Basic** | Fills bunker to 100% when price <= Basic Threshold |
+| **Intelligent** | Extends Basic with additional logic for higher prices |
 
-#### 3. Auto-Drydock
-
-Automatically sends vessels to drydock when their "hours until check" drops below a configurable threshold. Uses the game's bulk drydock API which automatically routes vessels to the nearest port with a drydock.
-
-- **Hours Threshold**: 25, 50, 75, 100, or 150 hours
-- **Maintenance Type**: Major (100% antifouling) or Minor (60% antifouling)
-- **Drydock Speed**: Minimum, Medium, or Maximum
-- **Minimum Cash Reserve**: Won't drydock if cash would drop below this amount
-
-#### How It Works Internally
+**How Modes Work Together:**
 
 ```
-User triggers drydock -> Script intercepts via fetch hook
-                      -> Saves route settings to localStorage
-                      -> Allows drydock request to proceed
-
-Vessel returns to port -> Script detects via vessel data response
-                       -> Reads saved settings from localStorage
-                       -> Calls update-route-data API to restore
-                       -> Deletes saved settings
+Price <= Basic Threshold?
+    YES -> Fill bunker to 100% (applies to both Basic AND Intelligent)
+    NO -> Is Intelligent enabled?
+        NO -> Don't buy anything
+        YES -> Price <= Intelligent Max Price?
+            NO -> Don't buy anything
+            YES -> Additional conditions met? (Bunker below X, Ships at port)
+                NO -> Don't buy anything
+                YES -> Buy only shortfall (what's needed for departures)
 ```
+
+**Basic Mode Settings:**
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| Basic Threshold | Price at which bunker gets filled to 100% | Fuel: $500, CO2: $10 |
+| Min Cash | Minimum cash to always keep | $1,000,000 |
+
+**Intelligent Mode Settings** (in addition to Basic):
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| Intelligent Max Price | Maximum price for shortfall purchases | Fuel: $600, CO2: $12 |
+| Only if bunker below X tons | Only buy when bunker is below this value | Disabled |
+| Only if X ships at port | Only buy when at least X ships are at port | Disabled |
+
+**Example Fuel:**
+- Basic Threshold: $500
+- Intelligent Max Price: $600
+- Current Price: $550
+
+Result: Basic doesn't fill (550 > 500). Intelligent buys only the shortfall for pending departures (550 <= 600).
+
+**Depart-Loop Behavior:**
+
+The script works in a loop: Buy -> Depart -> Buy -> Depart...
+
+1. **Before each departure:** If bunker insufficient for the vessel:
+   - Basic/Intelligent: Buys shortfall if price is within allowed range
+2. **After all departures (Final Fill):**
+   - If price <= Basic Threshold: Fills bunker to 100%
+   - If price > Basic Threshold: No automatic refill
+
+**Avoid Negative CO2** (Intelligent Mode only):
+
+| Setting | Description |
+|---------|-------------|
+| Avoid Negative CO2 | Maintains 100t CO2 buffer after departures |
+
+When enabled and CO2 falls below 100t after departures:
+- If price <= Intelligent Max Price: Refills to 100t (not 100%!)
+- Important for Vessel Utilization as negative CO2 affects the Green Marketing Campaign bonus
+
+##### 2. Auto-Depart
+
+Automatically departs vessels when conditions are met.
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| Auto-Depart | Enables automatic departures | Off |
+
+**Which Vessels Are Considered:**
+- Status = "port" (at port)
+- Not moored (is_parked = false)
+- Has an assigned route (route_destination exists)
+
+**Departure Order:**
+
+Vessels are sorted by fuel requirement (highest first). This ensures large vessels depart first while there's still enough fuel.
+
+**Process Per Vessel:**
+
+```
+1. Calculate required Fuel and CO2 for the route
+2. Check: Is there enough Fuel in bunker?
+   NO -> Attempt to buy Fuel:
+         - If Fuel Mode != off AND price within allowed range:
+           Buy shortfall + 100t buffer
+         - Check again: Enough Fuel?
+           NO -> Vessel is skipped (message in log)
+           YES -> Continue to step 3
+   YES -> Continue to step 3
+3. Check: Is there enough CO2 in bunker?
+   NO -> Attempt to buy CO2 (same logic as Fuel)
+4. Depart vessel
+5. 300ms pause before next vessel
+```
+
+**What Happens With Insufficient Bunker:**
+
+| Situation | Behavior |
+|-----------|----------|
+| Fuel Mode = off | Vessel is skipped if bunker insufficient |
+| Fuel Mode = basic, Price > Threshold | Vessel is skipped |
+| Fuel Mode = basic, Price <= Threshold | Buys shortfall, then departs |
+| Fuel Mode = intelligent, Price > Intel Max | Vessel is skipped |
+| Fuel Mode = intelligent, Price <= Intel Max | Buys shortfall, then departs |
+
+**After All Departures:**
+
+1. **Avoid Negative CO2** (if enabled): Refills CO2 to 100t buffer
+2. **Final Fill** (if price <= Basic Threshold): Fills bunker to 100%
+
+**Manual vs Automatic Mode:**
+
+- **Manual** (button click): Shows error messages and skipped vessels as notifications
+- **Automatic** (background): Only logs to console, no disruptive popups
+
+##### 3. Smuggler's Eye
+
+Automatic price optimization system.
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| Smuggler's Eye enabled | Enables the feature | Off |
+| Instant 4% Markup | Sets prices to 4% above auto-price when creating routes | On |
+| Gradual Increase | Slowly increases prices to target | On |
+| Step Size | Increase per step | 1% |
+| Interval | Time between increases | 25 hours |
+| Target Percent | Maximum price target | 8% |
+| Max Guards on Pirate Routes | Sets guards to 10 on routes with hijacking risk > 0% | On |
+
+**How It Works:**
+- For enroute vessels: Changes are saved as "pending" and applied at next departure
+- For port vessels: Changes are applied immediately via API
+
+##### 4. Drydock Bug Prevention
+
+Fixes the game bug where route settings (speed, guards, cargo prices) are lost when a vessel is sent to drydock.
+
+**How It Works:**
+1. Intercepts drydock requests via Fetch API
+2. Saves all route settings before drydock starts
+3. Tracks vessel status through drydock lifecycle
+4. Automatically restores settings when vessel returns to port
+
+##### 5. Route Settings Tab
+
+Adds a **Settings** tab to the Routes modal allowing editing for **ALL vessels** (including enroute).
+
+**Columns in Settings Tab:**
+| Column | Meaning |
+|--------|---------|
+| Status | P=Port, E=Enroute, A=Anchored, MP=Moored Port, ME=Moored Enroute |
+| Route | Origin and destination |
+| Vessel | Vessel name |
+| Speed | Speed (editable) |
+| Prices | Cargo prices (editable) |
+| Guards | Number of guards (editable) |
+| Risk | Hijacking risk in % |
+| Pending | Pending values (shown in purple) |
+
+##### 6. UI Features
+
+- **Auto-Expand Advanced**: Automatically expands "Advanced" sections in route modals
+- **Price Difference Badges**: Shows % difference from auto-price next to cargo prices
+  - Green = above auto-price
+  - Red = below auto-price
+
+##### 7. System Notifications
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| System Notifications | Push notifications for actions | Off |
 
 ---
 
 ### yard-foreman.user.js - Auto Repair
 
-**Version:** 2.6 | **Order:** 15 | **Background Job:** Yes
+**Version:** 2.10 | **Background Job:** Yes
 
-Automatically repairs vessels when their wear percentage exceeds a configurable threshold.
+Automatically repairs vessels when their wear reaches a threshold.
 
-#### Features
+#### Accessing Settings
 
-- **Wear Threshold**: Configurable 1-99% (repairs when wear >= threshold)
-- **Minimum Cash Balance**: Keeps at least this amount after repairs
-- **System Notifications**: Optional push notifications when repairs are executed
-- **Bulk Repair**: Repairs all qualifying vessels in a single batch
+RebelShip Menu > **"Auto Repair"**
+
+#### Settings
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| Enabled | Enables auto-repair | Off |
+| Wear Threshold | Repair when wear >= X% (1-99) | 50% |
+| Min Cash After Repair | Keep at least this amount | 0 |
+| System Notifications | Push notifications | Off |
 
 #### How It Works
 
-Every 15 minutes, the script:
-1. Fetches all vessels via `/api/vessel/get-all-user-vessels`
-2. Filters vessels with wear >= threshold (excludes vessels in maintenance or sailing)
-3. Gets repair cost via `/api/maintenance/get`
-4. Checks if user has enough cash (after maintaining minimum balance)
-5. Executes bulk repair via `/api/maintenance/do-wear-maintenance-bulk`
-
-#### Settings Access
-
-Click the ship icon (RebelShip Menu) in the header, then select "Auto Repair".
+Every 15 minutes:
+1. Fetches all vessels via API
+2. Filters vessels with wear >= threshold (excludes vessels in maintenance/sailing)
+3. Gets repair costs
+4. Checks if enough cash is available (after Min Cash deduction)
+5. Executes bulk repair
 
 ---
 
-### auto-bunker-depart.user.js - Auto Bunker & Depart
+### auto_happy_stuff.user.js - Auto Happy Staff
 
-**Version:** 10.6 | **Order:** 20 | **Background Job:** Yes
+**Version:** 1.9 | **Background Job:** Yes
 
-Comprehensive automation for fuel/CO2 purchasing and vessel departures.
+Automatically adjusts salaries to keep crew and management morale at target levels.
 
-#### Fuel & CO2 Modes
+#### Accessing Settings
 
-**Basic Mode** (fill bunker when price is good):
-- When price <= threshold, fills bunker completely
-- Respects minimum cash reserve
+RebelShip Menu > **"Auto Happy Staff"**
 
-**Intelligent Mode** (buy only what you need):
-- Only buys if price <= max price AND optional conditions are met
-- Optional conditions:
-  - "Only if bunker below X tons"
-  - "Only if X ships are at port"
-- Calculates exact fuel/CO2 needed for departing vessels (shortfall)
-- Only buys the shortfall amount, not full bunker
+#### Settings
 
-#### Auto-Depart
+| Setting | Description | Default |
+|---------|-------------|---------|
+| Enabled | Enables auto-adjustment | Off |
+| Target Crew Morale | Target morale for crew | Configurable |
+| Target Management Morale | Target morale for management | Configurable |
+| System Notifications | Push notifications | Off |
 
-When enabled, automatically departs all vessels that are:
-- At port (not moored)
-- Have an assigned route
-- Have sufficient fuel in bunker
+#### Affected Positions
 
-The script uses a "Buy First, Then Depart" loop:
-1. Buy fuel if conditions met
-2. Buy CO2 if conditions met
-3. Check if enough fuel for departures
-4. Depart all ready vessels
-5. Repeat until no more vessels can depart
+**Crew:** Captain, First Officer, Boatswain, Technical Officer
+**Management:** CFO, COO, CMO, CTO
 
-#### Avoid Negative CO2
+---
 
-When enabled, automatically refills CO2 if bunker goes negative after departures. This is important for vessel utilization: negative CO2 balance affects the Green Marketing Campaign bonus, which reduces cargo capacity utilization on your vessels.
+### coop-tickets-display.user.js - Auto Co-Op
 
-#### Fuel Consumption Formula
+**Version:** 5.10 | **Background Job:** Yes
 
-Uses the exact game formula:
-```
-fuel_kg = capacity * distance * sqrt(actualSpeed) * fuel_factor / 40
-```
+Shows Co-Op tickets in header and automatically sends COOP vessels to alliance members.
+
+#### Header Display
+
+Next to other header elements, a 2-line display appears:
+- Line 1: "CO-OP"
+- Line 2: available/maximum
+
+Click opens the Alliance Co-Op tab.
+
+#### Accessing Settings
+
+Click on the Co-Op display in the header.
+
+#### Settings
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| Auto-Send Enabled | Automatically sends COOP vessels | Off |
+| System Notifications | Push notifications | Off |
+
+#### Auto-COOP Logic
+
+Sends COOP vessels to members who:
+- Have at least one vessel
+- Have low fuel (< 10t)
+- Allow COOP in their settings
+
+---
+
+### reputation-display.user.js - Auto Reputation
+
+**Version:** 5.7
+
+Shows reputation in header and automatically renews expired marketing campaigns.
+
+#### Header Display
+
+Shows the current reputation value in the game header.
+
+#### Accessing Settings
+
+Click on the reputation display in the header.
+
+#### Settings
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| Auto Renewal Enabled | Renews expired campaigns | Off |
+| Min Cash | Minimum cash to keep | 0 |
+| System Notifications | Push notifications | Off |
 
 ---
 
 ### fleet-manager.user.js - Mass Moor/Resume
 
-**Version:** 4.2 | **Order:** 23
+**Version:** 4.2
 
-Adds checkbox selection to vessel lists for bulk mooring and resuming.
+Adds checkboxes to vessel lists for mass mooring and resuming.
 
-#### Features
+#### Where to Find
 
-- **Checkbox Selection**: Checkboxes appear next to vessels in At Port, At Sea, and Anchored tabs
-- **All/None Buttons**: Quickly select or deselect all vessels
-- **Moor Button**: Parks all selected vessels (stops automatic operations)
-- **Resume Button**: Resumes all selected moored vessels
+Checkboxes appear in vessel lists:
+- At Port Tab
+- At Sea Tab
+- Anchored Tab
 
-#### Tab-Specific Behavior
+#### Controls
 
-- **At Port**: Shows checkboxes for all vessels, Moor button parks them
-- **At Sea**: Shows checkboxes for enroute vessels, Moor button sets them to park on arrival
-- **Anchored**: Only shows checkboxes for moored vessels (is_parked=true), Resume button unparks them
+| Element | Function |
+|---------|----------|
+| Checkbox | Select individual vessel |
+| All Button | Select all vessels |
+| None Button | Deselect all |
+| Moor Button | Moor all selected vessels |
+| Resume Button | Resume all selected moored vessels |
 
 ---
 
 ### vessel-cart.user.js - Vessel Shopping Cart
 
-**Version:** 4.6 | **Order:** 26
+**Version:** 4.13
 
-Shopping cart functionality for vessel purchases and builds.
+Shopping cart functionality for vessel purchase and building.
 
-#### Features
+#### Where to Find
 
+- **Cart Button**: In header next to RebelShip Menu (shows item count)
 - **Add to Cart Button**: Appears next to Order button in vessel/build modals
-- **Cart Badge**: Shows item count in header
-- **Build Support**: Saves complete build configuration (engine, capacity, propeller, etc.)
-- **Per-Ship Customization**: For builds, configure name and shipyard for each vessel individually
-- **Quantity Adjustment**: +/- buttons to adjust quantities
-- **Bulk Checkout**: Purchases/builds all items sequentially
 
-#### How It Works
+#### Functions
 
-1. **Intercepts vessel data** via XHR/fetch hooks to cache available vessels
-2. **Reads build config** from Vue components when on build page
-3. **Stores cart in localStorage** under `rebelship_vessel_cart`
-4. **Checkout** processes items with 1.5s delay between operations
-
-#### Cart Item Types
-
-- **Purchase**: Buying an existing vessel (has vessel ID)
-- **Build**: Building a new vessel (has buildConfig with all specifications)
+| Function | Description |
+|----------|-------------|
+| Add to Cart | Adds vessel/configuration to cart |
+| Cart Badge | Shows total item count in header |
+| Build Support | Saves complete build configuration (engine, capacity, propeller, etc.) |
+| Per-Ship Customization | Configure name and shipyard for each vessel individually |
+| +/- Buttons | Adjust quantities |
+| Bulk Checkout | Purchases/builds all items sequentially |
 
 ---
 
-### fast-delivery.user.js - Fast Delivery (Bug-Using)
+### bunker-price-display.user.js - Bunker Prices
 
-**Version:** 1.6 | **Order:** 24
+**Version:** 3.13
 
-Exploits a game bug to reduce vessel delivery time from days to 60 minutes.
+Shows current fuel and CO2 prices with fill levels in header.
 
-#### How It Works
+#### Header Display
 
-When you build a vessel, it has a delivery time of several days. However, if you immediately send the pending vessel to drydock (minor maintenance), the delivery time is replaced by the drydock duration (60 minutes at minimum speed).
+Replaces standard bunker display with 3-line format:
 
-#### Usage
+**Fuel Block:**
+- Line 1: "Fuel"
+- Line 2: Fill level in %
+- Line 3: Current price
 
-1. Build vessels normally
-2. Go to "Pending" tab
-3. Checkboxes appear for built vessels (not purchased/donated)
-4. Select vessels and click "Fast Delivery"
-5. Confirm the drydock cost
-6. Vessels will arrive in 60 minutes instead of days
+**CO2 Block:**
+- Line 1: "CO2"
+- Line 2: Fill level in %
+- Line 3: Current price
 
-#### Cost
+#### Color Coding
 
-Minor drydock maintenance cost applies (usually much less than the time savings is worth).
+**Fuel Prices:**
+| Price | Color |
+|-------|-------|
+| > 750 | Red |
+| 650-750 | Orange |
+| 500-650 | Blue |
+| < 500 | Green |
+
+**CO2 Prices:**
+| Price | Color |
+|-------|-------|
+| >= 20 | Red |
+| 15-20 | Orange |
+| 10-15 | Blue |
+| < 10 | Green |
+
+**Fill Level:**
+- <= 30%: Red
+- > 30%: Green
 
 ---
 
 ### forecast-calendar.user.js - Forecast Calendar
 
-**Version:** 3.6 | **Order:** 100
+**Version:** 3.10
 
-Visual page-flip calendar showing cargo demand forecasts.
+Visual page-flip calendar with cargo demand forecasts.
+
+#### Access
+
+RebelShip Menu > **"Forecast Calendar"**
 
 #### Features
 
-- **Page-Flip Animation**: Uses embedded PageFlip library for realistic book-like navigation
-- **24-Hour Forecast**: Shows fuel and CO2 prices for each 30-minute interval
-- **Color Coding**:
-  - **Fuel**: Green (<500), Blue (500-649), Orange (650-749), Red (750+)
-  - **CO2**: Green (<10), Blue (10-14), Orange (15-19), Red (20+)
-- **Current Hour Highlight**: Green highlight on current time slot
-- **Timezone Conversion**: Converts CEST forecast data to your local timezone
+| Feature | Description |
+|---------|-------------|
+| Page-Flip Animation | Realistic book navigation |
+| 24-Hour Forecast | Shows Fuel/CO2 prices for each 30-min interval |
+| Color Coding | Green/Blue/Orange/Red based on price quality |
+| Current Hour Highlight | Green highlight on current time slot |
+| Timezone Conversion | Converts CEST forecast data to local timezone |
 
-#### Data Source
-
-Fetches forecast data from `https://shippingmanager-forecast.pages.dev/data/forecast.json`
+#### Color Coding (same as Bunker Price Display)
 
 ---
 
-### bunker-price-display.user.js
+### enable-distance-filter.user.js - Distance Filter
 
-Displays current fuel and CO2 prices in the game header, color-coded by price quality. Also shows bunker fill levels.
+**Version:** 8.1
+
+Filters destination ports by distance when creating new routes.
+
+#### Where to Find
+
+In the **Create Route Popup** a dropdown for distance filtering appears.
+
+#### Available Ranges
+
+| Filter | Distance |
+|--------|----------|
+| All | All ports |
+| < 1000 nm | Under 1000 nautical miles |
+| 1k-3k nm | 1000-3000 nautical miles |
+| 3k-6k nm | 3000-6000 nautical miles |
+| 6k-10k nm | 6000-10000 nautical miles |
+| > 10k nm | Over 10000 nautical miles |
 
 ---
 
-### alliance-chat-notification.user.js
+### map-unlock.user.js - Premium Features
 
-Monitors for new alliance chat messages and shows a red notification dot on the Alliance button when unread messages exist.
+**Version:** 1.3
+
+Unlocks premium features for all players.
+
+#### Unlocked Features
+
+- Premium Map Themes
+- Tanker Operations
+- Metropolis Mode
+- Extended Zoom
 
 ---
 
-### depart-all-loop.user.js
+### fast-delivery.user.js - Fast Delivery
 
-Continuously clicks the "Depart All" button until all vessels have departed. Useful when you have many vessels and the single click doesn't depart all of them.
+**Version:** 1.6
+
+Uses a game bug to reduce vessel delivery time from days to 60 minutes.
+
+#### How It Works
+
+When a vessel is built, it has a delivery time of several days. If the pending vessel is immediately sent to drydock (Minor Maintenance), the delivery time is replaced by drydock duration (60 min at minimum speed).
+
+#### Usage
+
+The script automatically adds a "Fast Delivery" button to pending vessels.
 
 ---
 
-## Script Header Format
+### depart-all-loop.user.js - Depart All Loop
 
-All scripts must include a UserScript metadata block at the top of the file.
+**Version:** 2.4
 
-### Required Header Structure
+Repeatedly clicks the "Depart All" button until all vessels have departed.
 
-```javascript
-// ==UserScript==
-// @name         Script Name Here
-// @description  Brief description of what the script does
-// @version      1.0
-// @author       https://github.com/justonlyforyou/
-// @order        20
-// @match        https://shippingmanager.cc/*
-// @grant        none
-// @run-at       document-end
-// @enabled      false
-// ==/UserScript==
-```
+#### Usage
 
-### Supported Directives
+Adds a "Loop Depart" button next to the normal "Depart All".
 
-| Directive | Required | Description |
-|-----------|----------|-------------|
-| `@name` | Yes | Display name of the script |
-| `@description` | Yes | Short description (shown in script manager) |
-| `@version` | Yes | Semantic version (e.g., `1.0`, `2.3.1`) |
-| `@author` | Yes | Author name or GitHub URL |
-| `@order` | Yes | Load order (1-999). Lower numbers load first |
-| `@match` | Yes | URL pattern where script runs |
-| `@namespace` | No | Optional namespace URL |
-| `@grant` | No | Permissions needed. Use `none` for standard scripts |
-| `@run-at` | No | When to inject: `document-start`, `document-end` (default), `document-idle` |
-| `@enabled` | No | Default state: `true` or `false`. Scripts default to disabled |
-| `@background-job-required` | No | Set to `true` if script needs background execution (Android) |
+---
 
-### Order Guidelines
+### alliance-chat-notification.user.js - Chat Notification
 
-| Range | Category | Examples |
-|-------|----------|----------|
-| 10-19 | Core/Early | map-unlock (10), yard-foreman (15) |
-| 20-29 | Automation/Display | auto-bunker-depart (20), bunker-price-display (22), fleet-manager (23), fast-delivery (24), drydock_master (29) |
-| 30-39 | Route Tools | enable-distance-filter (30) |
-| 50-59 | Bug Fixes | fix-alliance-member-exclude (51), fix-alliance-edit-buttons (53) |
-| 100+ | Special/Optional | forecast-calendar (100) |
+**Version:** 2.6
+
+Shows a red dot on the Alliance button when there are unread messages.
+
+#### Display
+
+A small red dot appears on the Alliance button in the game header.
+
+---
+
+### alliance-search.user.js - Alliance Search
+
+**Version:** 3.7
+
+Allows searching through all open alliances.
+
+#### Access
+
+RebelShip Menu > **"Alliance Search"**
+
+#### Features
+
+- Search all open alliances by name
+- Shows alliance details
+- Results are cached for faster searches
+
+---
+
+### Export Scripts
+
+#### export-vessels-csv.user.js - Fleet Export
+
+**Version:** 1.9
+
+Exports all vessels with details as CSV.
+
+**Access:** RebelShip Menu > **"Export Vessels"**
+
+#### export-messages.user.js - Messages Export
+
+**Version:** 1.9
+
+Exports all messenger conversations as CSV or JSON.
+
+**Access:** RebelShip Menu > **"Export Messages"**
+
+#### save-vessel-history.user.js - Vessel History
+
+**Version:** 3.1
+
+Detects vessel history API calls and offers CSV download.
+
+---
+
+### Bug Fix Scripts
+
+#### fix-alliance-member-exclude.user.js
+
+**Version:** 1.4
+
+Fixes broken exclude buttons for CEO and adds missing ones for management members.
+
+#### fix-alliance-edit-buttons.user.js
+
+**Version:** 1.3
+
+Adds missing edit buttons for alliance name/description for interim_ceo.
+
+---
+
+### admin-view.user.js - Admin View
+
+**Version:** 8.5
+
+Shows Admin/Moderator UI elements.
+
+**IMPORTANT:** This is VISUAL ONLY! The script does NOT grant any admin permissions or functions. It only shows what the admin interface looks like.
 
 ---
 
@@ -397,7 +669,7 @@ All scripts must include a UserScript metadata block at the top of the file.
 
 ### Pinia Store Access
 
-Most scripts access game state through Vue's Pinia stores:
+Scripts access game state via Vue's Pinia stores:
 
 ```javascript
 function getPinia() {
@@ -418,28 +690,26 @@ function getStore(name) {
 
 ### Fetch Interceptor Pattern
 
-Scripts that need to intercept API calls use this pattern:
+Scripts that intercept API calls:
 
 ```javascript
 const originalFetch = window.fetch;
 
 window.fetch = async function() {
     const url = arguments[0];
-    const options = arguments[1];
 
     // Pre-request hook
     if (url.includes('/some/endpoint')) {
-        // Do something before request
+        // Before request
     }
 
-    // Execute original fetch
     const response = await originalFetch.apply(this, arguments);
 
     // Post-response hook
     if (url.includes('/some/endpoint')) {
         const clone = response.clone();
         const data = await clone.json();
-        // Process response data
+        // Process response
     }
 
     return response;
@@ -448,40 +718,34 @@ window.fetch = async function() {
 
 ### RebelShip Menu System
 
-Scripts share a common menu system for settings access:
-
-```javascript
-function getOrCreateRebelShipMenu() {
-    let menu = document.getElementById('rebelship-menu');
-    if (menu) return menu.querySelector('.rebelship-dropdown');
-    // Create new menu...
-}
-
-function addMenuItem(label, onClick) {
-    const dropdown = getOrCreateRebelShipMenu();
-    // Add menu item...
-}
-```
+Scripts share a common menu system. The menu appears before the messaging icon in the header.
 
 ---
 
-## Features
+## Background Execution (Android)
 
-- **Cross-Platform**: All scripts work on both desktop and mobile browsers
-- **Mobile Detection**: Scripts automatically adapt their UI for mobile screens (width < 800px)
-- **Shared Mobile Row**: Mobile scripts share a common header row for compact display
-- **Non-Intrusive**: Scripts integrate seamlessly with the game's existing UI
-- **Background Mode**: Select scripts (yard-foreman, auto-bunker-depart, drydock_master) support background execution on Android
+The following scripts support background execution on Android via RebelShip Browser Mobile:
+
+| Script | Background Function |
+|--------|---------------------|
+| departmanager.user.js | Auto-Bunker purchase, Auto-Depart, Smuggler's Eye |
+| yard-foreman.user.js | Auto-Repair |
+| auto_happy_stuff.user.js | Auto salary adjustment |
+| coop-tickets-display.user.js | Auto-COOP sending |
+
+These scripts have `@background-job-required true` in their header and sync their settings with the Android app via `RebelShipBridge`.
+
+---
 
 ## Compatibility
 
 - Tested with Shipping Manager as of January 2026
-- Works with Tampermonkey, Violentmonkey, and Greasemonkey on supported browsers
+- Works with Tampermonkey, Violentmonkey and Greasemonkey
 - Mobile support via GeckoView-based browsers
 
 ## Disclaimer
 
-These scripts interact with the Shipping Manager game interface. Use at your own risk. The authors are not responsible for any issues that may arise from using these scripts.
+These scripts interact with the Shipping Manager game interface. Use at your own risk.
 
 ## License
 

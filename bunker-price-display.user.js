@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Bunker Price Display
 // @namespace    http://tampermonkey.net/
-// @version     3.10
+// @version      3.14
 // @description  Shows current fuel and CO2 bunker prices with fill levels
 // @author       https://github.com/justonlyforyou/
 // @order        22
@@ -15,7 +15,6 @@
     'use strict';
 
     const API_URL = "https://shippingmanager.cc/api/bunker/get-prices";
-    const isMobile = window.innerWidth < 1024;
 
     let fuelPriceElement = null;
     let co2PriceElement = null;
@@ -92,156 +91,64 @@
         };
     }
 
-    function insertDesktop() {
-        var chartElement = document.querySelector('.content.chart.cursor-pointer');
-        if (chartElement && !fuelPriceElement) {
-            // Fill percentage LEFT of icon
-            fuelFillElement = document.createElement('span');
-            fuelFillElement.id = 'bunker-fuel-fill';
-            fuelFillElement.style.cssText = 'margin-right:-5px !important;font-weight:bold !important;font-size:13px !important;';
-            fuelFillElement.textContent = '...';
-            chartElement.parentNode.insertBefore(fuelFillElement, chartElement);
+    /**
+     * Create 3-line bunker display:
+     * Line 1: "Fuel" or "CO2"
+     * Line 2: Fill level %
+     * Line 3: Price
+     */
+    function createBunkerBlock(container, type) {
+        // Hide original content
+        var wrapper = container.querySelector('.chartWrapper') || container.querySelector('.ledWrapper');
+        if (wrapper) wrapper.style.display = 'none';
 
-            // Price RIGHT of icon
-            fuelPriceElement = document.createElement('span');
-            fuelPriceElement.id = 'bunker-fuel-price';
-            fuelPriceElement.style.cssText = 'margin-left:-5px !important;font-weight:bold !important;font-size:13px !important;';
-            fuelPriceElement.textContent = '...';
-            chartElement.parentNode.insertBefore(fuelPriceElement, chartElement.nextSibling);
-        }
+        // Create 3-line block
+        var block = document.createElement('div');
+        block.id = 'bunker-' + type + '-block';
+        block.style.cssText = 'display:flex;flex-direction:column;align-items:center;line-height:1.2;';
 
-        var ledElement = document.querySelector('.content.led.cursor-pointer');
-        if (ledElement && !co2PriceElement) {
-            // Fill percentage LEFT of icon
-            co2FillElement = document.createElement('span');
-            co2FillElement.id = 'bunker-co2-fill';
-            co2FillElement.style.cssText = 'margin-right:-5px !important;font-weight:bold !important;font-size:13px !important;';
-            co2FillElement.textContent = '...';
-            ledElement.parentNode.insertBefore(co2FillElement, ledElement);
+        // Line 1: Label
+        var label = document.createElement('span');
+        label.style.cssText = 'color:#9ca3af;';
+        label.textContent = type === 'fuel' ? 'Fuel' : 'CO2';
+        block.appendChild(label);
 
-            // Price RIGHT of icon
-            co2PriceElement = document.createElement('span');
-            co2PriceElement.id = 'bunker-co2-price';
-            co2PriceElement.style.cssText = 'margin-left:-5px !important;font-weight:bold !important;font-size:13px !important;';
-            co2PriceElement.textContent = '...';
-            ledElement.parentNode.insertBefore(co2PriceElement, ledElement.nextSibling);
-        }
+        // Line 2: Fill %
+        var fill = document.createElement('span');
+        fill.id = 'bunker-' + type + '-fill';
+        fill.style.cssText = 'font-weight:bold;font-size:13px;';
+        fill.textContent = '...%';
+        block.appendChild(fill);
 
-        return fuelPriceElement && co2PriceElement;
-    }
+        // Line 3: Price
+        var price = document.createElement('span');
+        price.id = 'bunker-' + type + '-price';
+        price.style.cssText = 'font-size:11px;';
+        price.textContent = '';
+        block.appendChild(price);
 
-    // Get or create shared mobile row (fixed at top)
-    function getOrCreateMobileRow() {
-        var existing = document.getElementById('rebel-mobile-row');
-        if (existing) return existing;
+        container.appendChild(block);
 
-        var row = document.createElement('div');
-        row.id = 'rebel-mobile-row';
-        row.style.cssText = 'position:fixed !important;top:0 !important;left:0 !important;right:0 !important;display:flex !important;flex-wrap:nowrap !important;justify-content:space-between !important;align-items:center !important;gap:4px !important;background:#1a1a2e !important;padding:4px 6px !important;font-size:14px !important;z-index:9999 !important;';
-
-        var leftSection = document.createElement('div'); leftSection.id = 'rebel-mobile-left'; leftSection.style.cssText = 'display:flex;align-items:center;gap:4px;'; row.appendChild(leftSection); var rightSection = document.createElement('div'); rightSection.id = 'rebel-mobile-right'; rightSection.style.cssText = 'display:flex;align-items:center;gap:4px;'; row.appendChild(rightSection); document.body.appendChild(row);
-
-        var appContainer = document.querySelector('#app') || document.body.firstElementChild;
-        if (appContainer) {
-            appContainer.style.marginTop = '2px';
-        }
-
-        return row;
-    }
-
-    function insertMobile() {
-        var row = getOrCreateMobileRow();
-        if (!row) return false;
-
-        if (document.getElementById('bunker-fuel-mobile')) {
-            fuelPriceElement = document.getElementById('bunker-fuel-mobile');
-            co2PriceElement = document.getElementById('bunker-co2-mobile');
-            return true;
-        }
-
-        // Mobile: Only prices in top bar (no fill % here)
-        // Fuel: Label | Price
-        var fuelBox = document.createElement('div');
-        fuelBox.style.cssText = 'display:flex !important;align-items:center !important;gap:5px !important;font-size:13px !important;';
-        var fuelLabel = document.createElement('span');
-        fuelLabel.style.cssText = 'color:#aaa !important;';
-        fuelLabel.textContent = 'Fuel:';
-        fuelBox.appendChild(fuelLabel);
-        fuelPriceElement = document.createElement('span');
-        fuelPriceElement.id = 'bunker-fuel-mobile';
-        fuelPriceElement.style.cssText = 'font-weight:bold !important;';
-        fuelPriceElement.textContent = '...';
-        fuelBox.appendChild(fuelPriceElement);
-
-        // CO2: Label | Price
-        var co2Box = document.createElement('div');
-        co2Box.style.cssText = 'display:flex !important;align-items:center !important;gap:5px !important;font-size:13px !important;';
-        var co2Label = document.createElement('span');
-        co2Label.style.cssText = 'color:#aaa !important;';
-        co2Label.textContent = 'CO2:';
-        co2Box.appendChild(co2Label);
-        co2PriceElement = document.createElement('span');
-        co2PriceElement.id = 'bunker-co2-mobile';
-        co2PriceElement.style.cssText = 'font-weight:bold !important;';
-        co2PriceElement.textContent = '...';
-        co2Box.appendChild(co2PriceElement);
-
-        row.insertBefore(co2Box, row.firstChild);
-        row.insertBefore(fuelBox, row.firstChild);
-
-        // Mobile: Overlay % text on bunker circles
-        insertMobileBunkerOverlays();
-
-        return true;
-    }
-
-    // Mobile: Replace bunker circles with percentage text
-    function insertMobileBunkerOverlays() {
-        if (!isMobile) return; // Only on mobile
-
-        // Structure:
-        // <div class="content chart cursor-pointer"> <- has click handler
-        //   <div class="chartWrapper">
-        //     <div class="chart"><svg>...</svg></div>
-        //   </div>
-        // </div>
-
-        var fuelContainer = document.querySelector('.content.chart.cursor-pointer');
-        var co2Container = document.querySelector('.content.led.cursor-pointer');
-
-        if (fuelContainer && !document.getElementById('bunker-fuel-overlay')) {
-            // Hide the chartWrapper inside
-            var chartWrapper = fuelContainer.querySelector('.chartWrapper');
-            if (chartWrapper) chartWrapper.style.cssText = 'display:none !important;';
-
-            // Create percentage text (click already works on parent)
-            fuelFillElement = document.createElement('span');
-            fuelFillElement.id = 'bunker-fuel-overlay';
-            fuelFillElement.style.cssText = 'font-weight:bold !important;font-size:13px !important;color:#4ade80 !important;';
-            fuelFillElement.textContent = '...%';
-            fuelContainer.appendChild(fuelFillElement);
-        }
-
-        if (co2Container && !document.getElementById('bunker-co2-overlay')) {
-            // Hide the ledWrapper inside
-            var ledWrapper = co2Container.querySelector('.ledWrapper');
-            if (ledWrapper) ledWrapper.style.cssText = 'display:none !important;';
-
-            // Create percentage text (click already works on parent)
-            co2FillElement = document.createElement('span');
-            co2FillElement.id = 'bunker-co2-overlay';
-            co2FillElement.style.cssText = 'font-weight:bold !important;font-size:13px !important;color:#4ade80 !important;';
-            co2FillElement.textContent = '...%';
-            co2Container.appendChild(co2FillElement);
-        }
+        return { fill: fill, price: price };
     }
 
     function insertPriceDisplays() {
-        if (isMobile) {
-            return insertMobile();
-        } else {
-            return insertDesktop();
+        var chartElement = document.querySelector('.content.chart.cursor-pointer');
+        var ledElement = document.querySelector('.content.led.cursor-pointer');
+
+        if (chartElement && !fuelFillElement) {
+            var fuelBlock = createBunkerBlock(chartElement, 'fuel');
+            fuelFillElement = fuelBlock.fill;
+            fuelPriceElement = fuelBlock.price;
         }
+
+        if (ledElement && !co2FillElement) {
+            var co2Block = createBunkerBlock(ledElement, 'co2');
+            co2FillElement = co2Block.fill;
+            co2PriceElement = co2Block.price;
+        }
+
+        return fuelFillElement && co2FillElement;
     }
 
     async function updatePrices() {
@@ -269,7 +176,7 @@
                 co2Price = findCurrentPrice(prices).co2_price;
             }
 
-            if (!fuelPriceElement || !co2PriceElement) {
+            if (!fuelFillElement || !co2FillElement) {
                 if (!insertPriceDisplays()) return;
             }
 
@@ -278,55 +185,103 @@
                 fuelPriceElement.textContent = '$' + fuelPrice + '/t';
                 fuelPriceElement.style.color = getFuelColor(fuelPrice);
             }
-
             if (co2PriceElement && co2Price !== undefined) {
                 co2PriceElement.textContent = '$' + co2Price + '/t';
                 co2PriceElement.style.color = getCO2Color(co2Price);
             }
 
-            // Update fill levels from Pinia
-            var fillLevels = getBunkerFillLevels();
-            if (fillLevels) {
-                // Desktop: update fill elements
-                if (fuelFillElement) {
-                    fuelFillElement.textContent = fillLevels.fuelPercent + '%';
-                    fuelFillElement.style.color = getFuelFillColor(fillLevels.fuelPercent);
-                }
-                if (co2FillElement) {
-                    co2FillElement.textContent = fillLevels.co2Percent + '%';
-                    co2FillElement.style.color = getCO2FillColor(fillLevels.co2Percent);
-                }
-
-                // Mobile: update overlay elements (try to find them if not set)
-                if (isMobile) {
-                    var fuelOverlay = document.getElementById('bunker-fuel-overlay');
-                    var co2Overlay = document.getElementById('bunker-co2-overlay');
-
-                    if (!fuelOverlay || !co2Overlay) {
-                        insertMobileBunkerOverlays();
-                        fuelOverlay = document.getElementById('bunker-fuel-overlay');
-                        co2Overlay = document.getElementById('bunker-co2-overlay');
-                    }
-
-                    if (fuelOverlay) {
-                        fuelOverlay.textContent = fillLevels.fuelPercent + '%';
-                        fuelOverlay.style.color = getFuelFillColor(fillLevels.fuelPercent);
-                    }
-                    if (co2Overlay) {
-                        co2Overlay.textContent = fillLevels.co2Percent + '%';
-                        co2Overlay.style.color = getCO2FillColor(fillLevels.co2Percent);
-                    }
-                }
-            }
+            // Update fill levels
+            updateFillLevels();
         } catch (err) {
             console.error("[BunkerPrice] Error:", err);
         }
     }
 
+    // Subscribe to Pinia store changes - updates immediately like the game does
+    function subscribeToStore() {
+        var userStore = getUserStore();
+        if (!userStore) {
+            setTimeout(subscribeToStore, 1000);
+            return;
+        }
+
+        // Subscribe to user store mutations
+        userStore.$subscribe(function() {
+            updateFillLevels();
+        });
+
+        console.log('[BunkerPrice] Subscribed to user store changes');
+    }
+
+    // Update fill levels (both desktop and mobile use same elements now)
+    function updateFillLevels() {
+        var fillLevels = getBunkerFillLevels();
+        if (!fillLevels) return;
+
+        if (fuelFillElement) {
+            fuelFillElement.textContent = fillLevels.fuelPercent + '%';
+            fuelFillElement.style.color = getFuelFillColor(fillLevels.fuelPercent);
+        }
+        if (co2FillElement) {
+            co2FillElement.textContent = fillLevels.co2Percent + '%';
+            co2FillElement.style.color = getCO2FillColor(fillLevels.co2Percent);
+        }
+    }
+
+    /**
+     * Calculate ms until next price update time (:00:45 or :30:45)
+     * Prices change at :00 and :30, we fetch 45 seconds after
+     */
+    function getMsUntilNextPriceUpdate() {
+        var now = new Date();
+        var minutes = now.getMinutes();
+        var seconds = now.getSeconds();
+        var ms = now.getMilliseconds();
+
+        var targetMinute, targetSecond = 45;
+
+        if (minutes < 30) {
+            // Next update at :30:45
+            targetMinute = 30;
+        } else {
+            // Next update at :00:45 (next hour)
+            targetMinute = 60; // Will wrap to 0
+        }
+
+        var currentTotalSeconds = minutes * 60 + seconds;
+        var targetTotalSeconds = targetMinute * 60 + targetSecond;
+
+        var diffSeconds = targetTotalSeconds - currentTotalSeconds;
+        if (diffSeconds <= 0) {
+            // Already past target, go to next slot
+            diffSeconds += 30 * 60; // Add 30 minutes
+        }
+
+        return diffSeconds * 1000 - ms;
+    }
+
+    /**
+     * Schedule next price update at :00:45 or :30:45
+     * Android background job compatible - uses setTimeout
+     */
+    function schedulePriceUpdate() {
+        var delay = getMsUntilNextPriceUpdate();
+        var nextUpdate = new Date(Date.now() + delay);
+        console.log('[BunkerPrice] Next update at ' + nextUpdate.toLocaleTimeString() + ' (in ' + Math.round(delay / 1000) + 's)');
+
+        setTimeout(function() {
+            updatePrices();
+            schedulePriceUpdate(); // Schedule next
+        }, delay);
+    }
+
     function init() {
         if (insertPriceDisplays()) {
             updatePrices();
-            setInterval(updatePrices, 30000);
+            // Schedule updates at :00:45 and :30:45 (Android compatible)
+            schedulePriceUpdate();
+            // Subscribe to store for instant fill level updates
+            subscribeToStore();
         } else {
             setTimeout(init, 1000);
         }

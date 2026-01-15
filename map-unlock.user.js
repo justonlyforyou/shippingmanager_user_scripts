@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Premium Feature Unlocker
 // @description Unlocks premium map themes, tanker ops, metropolis and extended zoom
-// @version     1.3
+// @version     1.6
 // @author      https://github.com/justonlyforyou/
 // @order       10
 // @match       https://shippingmanager.cc/*
@@ -16,7 +16,6 @@
     if (window._rebelShipUnlockActive) return;
     window._rebelShipUnlockActive = true;
 
-    // eslint-disable-next-line no-secrets/no-secrets
     var TOKEN = 'sk.eyJ1Ijoic2hqb3J0aCIsImEiOiJjbGV0cHdodGwxaWZnM3NydnlvNHc4cG02In0.D5n6nIFb0JqhGA9lM_jRkw';
 
     var PREMIUM_THEMES = {
@@ -209,20 +208,49 @@
         } catch {}
     }
 
+    // Sync radio buttons with current theme state
+    function syncRadioState(baseDiv) {
+        var activeTheme = currentPremiumTheme;
+
+        // If we have a premium theme active, uncheck standard radios and check the right premium one
+        if (activeTheme && PREMIUM_THEMES[activeTheme]) {
+            baseDiv.querySelectorAll('label:not(.rebel-premium) input[type=radio]').forEach(function(r) {
+                r.checked = false;
+            });
+            baseDiv.querySelectorAll('label.rebel-premium').forEach(function(label) {
+                var radio = label.querySelector('input[type=radio]');
+                if (radio) {
+                    radio.checked = (label.textContent.trim() === activeTheme);
+                }
+            });
+        } else {
+            // No premium theme active, uncheck all premium radios
+            baseDiv.querySelectorAll('input[name=leaflet-base-layers_rebel]').forEach(function(r) {
+                r.checked = false;
+            });
+        }
+    }
+
     // Fix layer control - keep standard options, add premium options
     function fixLayerControl() {
         var baseDiv = document.querySelector('.leaflet-control-layers-base');
         if (!baseDiv) return;
-        if (baseDiv.dataset.fixed) return;
-        baseDiv.dataset.fixed = 'true';
 
-        // Remove locked labels and premium notices (they don't work anyway)
+        // Always remove locked labels (game may regenerate them)
         baseDiv.querySelectorAll('label.locked').forEach(function(l) { l.remove(); });
         baseDiv.querySelectorAll('.premium-span').forEach(function(s) { s.remove(); });
         baseDiv.querySelectorAll('.custom-separator').forEach(function(s) { s.remove(); });
 
+        // Always sync radio state with current theme
+        if (baseDiv.dataset.fixed) {
+            syncRadioState(baseDiv);
+            return;
+        }
+        baseDiv.dataset.fixed = 'true';
+
         // Add premium section header
         var premHeader = document.createElement('div');
+        premHeader.className = 'rebel-premium-header';
         premHeader.style.cssText = 'color:#4ade80;font-size:11px;padding:4px 0;margin-top:8px;border-top:1px solid #444;';
         premHeader.textContent = 'Premium (unlocked)';
         baseDiv.appendChild(premHeader);
@@ -239,18 +267,30 @@
             radio.className = 'leaflet-control-layers-selector';
             radio.name = 'leaflet-base-layers_rebel';
             radio.style.marginRight = '4px';
+            radio.dataset.theme = name;
+
             span.appendChild(radio);
             span.appendChild(document.createTextNode(' ' + name));
             label.appendChild(span);
 
-            label.onclick = function(e) {
-                e.preventDefault();
-                e.stopPropagation();
-                // Uncheck all radios in the control
-                baseDiv.querySelectorAll('input[type=radio]').forEach(function(r) { r.checked = false; });
-                radio.checked = true;
-                switchToPremiumTheme(name);
-            };
+            // Use change event for proper radio behavior
+            radio.addEventListener('change', function() {
+                if (radio.checked) {
+                    // Uncheck standard radios
+                    baseDiv.querySelectorAll('label:not(.rebel-premium) input[type=radio]').forEach(function(r) {
+                        r.checked = false;
+                    });
+                    switchToPremiumTheme(name);
+                }
+            });
+
+            // Click on label should check the radio
+            label.addEventListener('click', function(e) {
+                if (e.target !== radio) {
+                    radio.checked = true;
+                    radio.dispatchEvent(new Event('change'));
+                }
+            });
 
             baseDiv.appendChild(label);
         });
@@ -264,10 +304,15 @@
             label.addEventListener('click', function() {
                 // Uncheck premium radios
                 baseDiv.querySelectorAll('input[name=leaflet-base-layers_rebel]').forEach(function(r) { r.checked = false; });
+                // Clear current premium theme
+                currentPremiumTheme = null;
                 // Reset to standard tiles
                 stopPremiumTheme();
             });
         });
+
+        // Sync state after adding elements
+        syncRadioState(baseDiv);
 
         console.log('[Map Unlock] Layer control fixed with premium options');
     }
