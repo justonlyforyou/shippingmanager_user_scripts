@@ -2,7 +2,7 @@
 // @name         ShippingManager - Auto Happy Staff
 // @namespace    http://tampermonkey.net/
 // @description  Automatically manages staff salaries to maintain crew and management morale at target levels
-// @version      1.16
+// @version      1.17
 // @author       https://github.com/justonlyforyou/
 // @order        25
 // @match        https://shippingmanager.cc/*
@@ -11,7 +11,6 @@
 // @enabled      false
 // @background-job-required true
 // ==/UserScript==
-/* globals GM_info */
 
 (function() {
     'use strict';
@@ -42,7 +41,7 @@
     var managementSmileyElement = null;
     var displayRetries = 0;
 
-    console.log('[Auto Happy Staff] v' + GM_info.script.version + ' loaded');
+    console.log('[Auto Happy Staff] v1.17 loaded');
 
     // ============================================
     // HEADER SMILEY DISPLAY
