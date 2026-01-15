@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Header Resize Handler
 // @description Reinitializes header elements when window is resized, reorganizes VIP Points and Cash display
-// @version     3.18
+// @version     3.19
 // @author      https://github.com/justonlyforyou/
 // @order       1
 // @match       https://shippingmanager.cc/*
@@ -32,6 +32,7 @@
         'morale-smiley-display',
         'rebel-vip-display',
         'rebel-cash-display',
+        'rebel-cash-toprow',
         'rebel-cash-wrapper'
     ];
 
@@ -141,7 +142,7 @@
 
         // Mobile: display below with line break, Desktop: inline
         if (isMobileView()) {
-            container.style.cssText = 'display:flex;align-items:center;gap:6px;padding:4px 8px;width:100%;margin-top:4px;';
+            container.style.cssText = 'display:flex;align-items:center;gap:6px;padding:4px 8px;width:100%;margin-top:1px;';
         } else {
             container.style.cssText = 'display:flex;align-items:center;gap:6px;padding:4px 8px;';
         }
@@ -165,13 +166,29 @@
             wrapper.id = 'rebel-cash-wrapper';
             wrapper.style.cssText = 'display:flex;flex-direction:column;align-items:flex-start;';
 
+            // Create row for VIP + stockInfo
+            var topRow = document.createElement('div');
+            topRow.id = 'rebel-cash-toprow';
+            topRow.style.cssText = 'display:flex;align-items:center;';
+
             // Insert wrapper before stockInfo
             stockInfo.parentNode.insertBefore(wrapper, stockInfo);
 
-            // Move stockInfo into wrapper
-            wrapper.appendChild(stockInfo);
+            // Move VIP display into top row (if exists)
+            var vipDisplay = document.getElementById('rebel-vip-display');
+            if (vipDisplay) {
+                // On mobile, make VIP horizontal instead of vertical
+                vipDisplay.style.cssText = 'display:flex;align-items:center;gap:4px;padding:2px 6px;';
+                topRow.appendChild(vipDisplay);
+            }
 
-            // Add cash display below stockInfo
+            // Move stockInfo into top row
+            topRow.appendChild(stockInfo);
+
+            // Add top row to wrapper
+            wrapper.appendChild(topRow);
+
+            // Add cash display below
             wrapper.appendChild(container);
         } else {
             // Desktop: Insert after stockInfo
@@ -254,10 +271,12 @@
     }
 
     function removeHeaderElements() {
-        // First: unwrap stockInfo from mobile wrapper if exists
+        // First: unwrap stockInfo from mobile wrapper/topRow if exists
         var cashWrapper = document.getElementById('rebel-cash-wrapper');
         if (cashWrapper) {
-            var stockInfo = cashWrapper.querySelector('.stockInfo');
+            // stockInfo might be in topRow or directly in wrapper
+            var topRow = document.getElementById('rebel-cash-toprow');
+            var stockInfo = topRow ? topRow.querySelector('.stockInfo') : cashWrapper.querySelector('.stockInfo');
             if (stockInfo && cashWrapper.parentNode) {
                 cashWrapper.parentNode.insertBefore(stockInfo, cashWrapper);
             }
