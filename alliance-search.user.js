@@ -353,14 +353,17 @@
     // Get or create RebelShip menu (same position for mobile and desktop)
     function getOrCreateRebelShipMenu() {
         var menu = document.getElementById('rebelship-menu');
-        if (menu) {
-            return menu.querySelector('.rebelship-dropdown');
-        }
+        if (menu) return menu.querySelector('.rebelship-dropdown');
 
-        // Insert before messaging icon (same position for mobile and desktop)
+        if (window._rebelshipMenuCreating) return null;
+        window._rebelshipMenuCreating = true;
+
+        menu = document.getElementById('rebelship-menu');
+        if (menu) { window._rebelshipMenuCreating = false; return menu.querySelector('.rebelship-dropdown'); }
+
         var messagingIcon = document.querySelector('div.messaging.cursor-pointer');
         if (!messagingIcon) messagingIcon = document.querySelector('.messaging');
-        if (!messagingIcon) return null;
+        if (!messagingIcon) { window._rebelshipMenuCreating = false; return null; }
 
         var container = document.createElement('div');
         container.id = 'rebelship-menu';
@@ -370,7 +373,6 @@
         btn.id = 'rebelship-menu-btn';
         btn.innerHTML = REBELSHIP_LOGO;
         btn.title = 'RebelShip Menu';
-
         btn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:28px;height:28px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:white;border:none;border-radius:6px;cursor:pointer;box-shadow:0 2px 4px rgba(0,0,0,0.2);';
 
         var dropdown = document.createElement('div');
@@ -379,22 +381,12 @@
 
         container.appendChild(btn);
         container.appendChild(dropdown);
+        btn.addEventListener('click', function(e) { e.stopPropagation(); dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block'; });
+        document.addEventListener('click', function(e) { if (!container.contains(e.target)) dropdown.style.display = 'none'; });
 
-        btn.addEventListener('click', function(e) {
-            e.stopPropagation();
-            dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
-        });
+        if (messagingIcon.parentNode) messagingIcon.parentNode.insertBefore(container, messagingIcon);
 
-        document.addEventListener('click', function(e) {
-            if (!container.contains(e.target)) {
-                dropdown.style.display = 'none';
-            }
-        });
-
-        if (messagingIcon.parentNode) {
-            messagingIcon.parentNode.insertBefore(container, messagingIcon);
-        }
-
+        window._rebelshipMenuCreating = false;
         return dropdown;
     }
 

@@ -19,14 +19,22 @@
 
     // Get or create RebelShip menu
     function getOrCreateRebelShipMenu() {
-        var menu = document.getElementById('rebelship-menu');
-        if (menu) {
-            return menu.querySelector('.rebelship-dropdown');
+        // Check if menu already exists
+        var existingMenu = document.getElementById('rebelship-menu');
+        if (existingMenu) {
+            var existingDropdown = existingMenu.querySelector('.rebelship-dropdown');
+            if (existingDropdown) return existingDropdown;
         }
+        // Check if another script is creating the menu
+        if (window._rebelshipMenuCreating) return null;
+        window._rebelshipMenuCreating = true;
+        // Double-check after lock
+        existingMenu = document.getElementById('rebelship-menu');
+        if (existingMenu) { window._rebelshipMenuCreating = false; return existingMenu.querySelector('.rebelship-dropdown'); }
 
         var messagingIcon = document.querySelector('div.messaging.cursor-pointer');
         if (!messagingIcon) messagingIcon = document.querySelector('.messaging');
-        if (!messagingIcon) return null;
+        if (!messagingIcon) { window._rebelshipMenuCreating = false; return null; }
 
         var container = document.createElement('div');
         container.id = 'rebelship-menu';
@@ -61,6 +69,7 @@
             messagingIcon.parentNode.insertBefore(container, messagingIcon);
         }
 
+        window._rebelshipMenuCreating = false;
         return dropdown;
     }
 

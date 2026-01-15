@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Header Resize Handler
 // @description Reinitializes header elements when window is resized, reorganizes VIP Points and Cash display
-// @version     3.17
+// @version     3.18
 // @author      https://github.com/justonlyforyou/
 // @order       1
 // @match       https://shippingmanager.cc/*
@@ -31,7 +31,8 @@
         'rebelship-menu',
         'morale-smiley-display',
         'rebel-vip-display',
-        'rebel-cash-display'
+        'rebel-cash-display',
+        'rebel-cash-wrapper'
     ];
 
     // Classes of userscript elements to remove
@@ -115,6 +116,11 @@
         return true;
     }
 
+    // Check if mobile view
+    function isMobileView() {
+        return window.innerWidth < 768;
+    }
+
     // Create Cash display and move it next to company name/stock info
     function createCashDisplay() {
         var originalCash = document.querySelector('.contentBar.cash');
@@ -132,7 +138,13 @@
         var container = document.createElement('div');
         container.id = 'rebel-cash-display';
         container.className = 'contentBar cash cursor-pointer';
-        container.style.cssText = 'display:flex;align-items:center;gap:6px;padding:4px 8px;';
+
+        // Mobile: display below with line break, Desktop: inline
+        if (isMobileView()) {
+            container.style.cssText = 'display:flex;align-items:center;gap:6px;padding:4px 8px;width:100%;margin-top:4px;';
+        } else {
+            container.style.cssText = 'display:flex;align-items:center;gap:6px;padding:4px 8px;';
+        }
 
         // Icon
         var iconWrapper = document.createElement('div');
@@ -147,8 +159,24 @@
         valueEl.textContent = '...';
         container.appendChild(valueEl);
 
-        // Insert after stockInfo - only hide original AFTER successful insert
-        stockInfo.parentNode.insertBefore(container, stockInfo.nextSibling);
+        // Mobile: wrap stockInfo and cash in a flex container for proper line break
+        if (isMobileView()) {
+            var wrapper = document.createElement('div');
+            wrapper.id = 'rebel-cash-wrapper';
+            wrapper.style.cssText = 'display:flex;flex-direction:column;align-items:flex-start;';
+
+            // Insert wrapper before stockInfo
+            stockInfo.parentNode.insertBefore(wrapper, stockInfo);
+
+            // Move stockInfo into wrapper
+            wrapper.appendChild(stockInfo);
+
+            // Add cash display below stockInfo
+            wrapper.appendChild(container);
+        } else {
+            // Desktop: Insert after stockInfo
+            stockInfo.parentNode.insertBefore(container, stockInfo.nextSibling);
+        }
 
         // Only hide original if container was successfully added to DOM
         if (document.getElementById('rebel-cash-display')) {
@@ -162,7 +190,7 @@
 
         cashValueElement = valueEl;
 
-        console.log('[HeaderResize] Cash display created');
+        console.log('[HeaderResize] Cash display created (mobile: ' + isMobileView() + ')');
         return true;
     }
 
@@ -226,6 +254,15 @@
     }
 
     function removeHeaderElements() {
+        // First: unwrap stockInfo from mobile wrapper if exists
+        var cashWrapper = document.getElementById('rebel-cash-wrapper');
+        if (cashWrapper) {
+            var stockInfo = cashWrapper.querySelector('.stockInfo');
+            if (stockInfo && cashWrapper.parentNode) {
+                cashWrapper.parentNode.insertBefore(stockInfo, cashWrapper);
+            }
+        }
+
         // Remove by ID
         HEADER_ELEMENT_IDS.forEach(function(id) {
             var el = document.getElementById(id);
