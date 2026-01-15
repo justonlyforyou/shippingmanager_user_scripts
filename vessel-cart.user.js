@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Vessel Shopping Cart
 // @description Add vessels to cart and bulk purchase them
-// @version     4.13
+// @version     4.14
 // @author      https://github.com/justonlyforyou/
 // @order       26
 // @match       https://shippingmanager.cc/*
@@ -640,7 +640,7 @@
             rebelshipMenu = messagingIcon;
         }
 
-        btn.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:4px;height:28px;padding:0 10px;background:#f59e0b;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;margin-right:4px !important;margin-left:4px !important;box-shadow:0 2px 4px rgba(0,0,0,0.2);';
+        btn.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:4px;height:28px;padding:1px;background:#f59e0b;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;margin-right:4px !important;margin-left:4px !important;box-shadow:0 2px 4px rgba(0,0,0,0.2);';
 
         if (rebelshipMenu.parentNode) {
             rebelshipMenu.parentNode.insertBefore(btn, rebelshipMenu);

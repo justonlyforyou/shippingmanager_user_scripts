@@ -9,6 +9,7 @@ A collection of user scripts for [Shipping Manager](https://shippingmanager.cc/)
 1. [Installation](#installation)
 2. [Scripts Overview](#scripts-overview)
 3. [Detailed Documentation](#detailed-documentation)
+   - [Rebelship Header Optimizer](#rebelship-header-optimizeruserjs---header-optimizer)
    - [Depart Manager](#departmanageruserjs---depart-manager)
    - [Yard Foreman (Auto Repair)](#yard-foremanuserjs---auto-repair)
    - [Auto Happy Staff](#auto_happy_stuffuserjs---auto-happy-staff)
@@ -60,14 +61,15 @@ These browsers are optimized for the scripts, especially for background tasks.
 
 | Script | Version | Description |
 |--------|---------|-------------|
-| departmanager.user.js | 2.46 | Unified: Auto-Bunker, Auto-Depart, Smuggler's Eye, Drydock Protection, Route Settings |
-| yard-foreman.user.js | 2.10 | Auto-repair at wear threshold |
-| auto_happy_stuff.user.js | 1.9 | Auto salary adjustment for crew/management morale |
-| coop-tickets-display.user.js | 5.10 | Co-Op display in header, Auto-COOP sending |
-| reputation-display.user.js | 5.7 | Reputation in header, auto campaign renewal |
+| rebelship-header-optimizer.user.js | 3.47 | **REQUIRED** - Handles all header UI elements, mobile layout optimization |
+| departmanager.user.js | 2.47 | Unified: Auto-Bunker, Auto-Depart, Smuggler's Eye, Drydock Protection, Route Settings |
+| yard-foreman.user.js | 2.11 | Auto-repair at wear threshold |
+| auto_happy_stuff.user.js | 1.19 | Auto salary adjustment for crew/management morale |
+| coop-tickets-display.user.js | 5.15 | Co-Op display in header, Auto-COOP sending |
+| reputation-display.user.js | 5.12 | Reputation in header, auto campaign renewal |
 | fleet-manager.user.js | 4.2 | Mass Moor/Resume with checkboxes |
-| vessel-cart.user.js | 4.13 | Shopping cart for vessel purchase/build |
-| bunker-price-display.user.js | 3.13 | Fuel/CO2 prices and fill level in header |
+| vessel-cart.user.js | 4.14 | Shopping cart for vessel purchase/build |
+| bunker-price-display.user.js | 3.18 | Fuel/CO2 prices and fill level in header |
 | forecast-calendar.user.js | 3.10 | Page-flip calendar with price forecasts |
 | enable-distance-filter.user.js | 8.1 | Filter ports by distance |
 | map-unlock.user.js | 1.3 | Premium Map Themes, Tanker Ops, Metropolis, Zoom |
@@ -92,9 +94,61 @@ These browsers are optimized for the scripts, especially for background tasks.
 
 ---
 
+### rebelship-header-optimizer.user.js - Header Optimizer
+
+**Version:** 3.47 | **Order:** 1 (loads first)
+
+**IMPORTANT:** This script must be installed and enabled for all other RebelShip scripts to work properly. It manages the header layout and coordinates UI elements between scripts.
+
+#### Purpose
+
+Handles all header UI element positioning and creates an optimized mobile layout. This is the foundation script that other scripts depend on.
+
+#### Features
+
+##### Desktop Mode
+- Creates custom VIP Points display (icon on top, value below)
+- Creates custom Cash display next to stock info
+- Subscribes to Pinia store for real-time value updates
+
+##### Mobile Mode (< 768px)
+- **Top Row:** XP Level + Company Name (centered)
+- **Bottom Row:** VIP Points + Cash (centered)
+- **Left Side:** 3-line Stock Display (value, change, percent with trend arrow)
+- **Right Side:** Cart Button + RebelShip Menu
+
+##### Stock Display (Mobile)
+| Line | Content |
+|------|---------|
+| 1 | Current stock value (e.g., $4717.80) |
+| 2 | Change amount (e.g., $14.85) |
+| 3 | Percent change + trend arrow (e.g., +0.31% with SVG) |
+
+**Color Coding:**
+- Green: Stock trending up
+- Red: Stock trending down
+- White: Neutral/unchanged
+
+##### Header Resize Event
+
+When the window is resized, the script:
+1. Removes all userscript header elements
+2. Dispatches `rebelship-header-resize` event
+3. Other scripts listen to this event and reinitialize their displays
+
+This ensures all header elements are properly repositioned after resize.
+
+#### Technical Details
+
+- Uses MutationObserver to keep cloned elements (XP, Stock) in sync with originals
+- Subscribes to Pinia user store for live Cash/VIP updates
+- Coordinates Cart and RebelShip Menu positioning on mobile
+
+---
+
 ### departmanager.user.js - Depart Manager
 
-**Version:** 2.46 | **Background Job:** Yes
+**Version:** 2.47 | **Background Job:** Yes
 
 The main automation script combining several older scripts, providing comprehensive departure and route management.
 
@@ -288,7 +342,7 @@ Adds a **Settings** tab to the Routes modal allowing editing for **ALL vessels**
 
 ### yard-foreman.user.js - Auto Repair
 
-**Version:** 2.10 | **Background Job:** Yes
+**Version:** 2.11 | **Background Job:** Yes
 
 Automatically repairs vessels when their wear reaches a threshold.
 
@@ -318,7 +372,7 @@ Every 15 minutes:
 
 ### auto_happy_stuff.user.js - Auto Happy Staff
 
-**Version:** 1.9 | **Background Job:** Yes
+**Version:** 1.19 | **Background Job:** Yes
 
 Automatically adjusts salaries to keep crew and management morale at target levels.
 
@@ -344,7 +398,7 @@ RebelShip Menu > **"Auto Happy Staff"**
 
 ### coop-tickets-display.user.js - Auto Co-Op
 
-**Version:** 5.10 | **Background Job:** Yes
+**Version:** 5.15 | **Background Job:** Yes
 
 Shows Co-Op tickets in header and automatically sends COOP vessels to alliance members.
 
@@ -378,7 +432,7 @@ Sends COOP vessels to members who:
 
 ### reputation-display.user.js - Auto Reputation
 
-**Version:** 5.7
+**Version:** 5.12
 
 Shows reputation in header and automatically renews expired marketing campaigns.
 
@@ -427,7 +481,7 @@ Checkboxes appear in vessel lists:
 
 ### vessel-cart.user.js - Vessel Shopping Cart
 
-**Version:** 4.13
+**Version:** 4.14
 
 Shopping cart functionality for vessel purchase and building.
 
@@ -451,7 +505,7 @@ Shopping cart functionality for vessel purchase and building.
 
 ### bunker-price-display.user.js - Bunker Prices
 
-**Version:** 3.13
+**Version:** 3.18
 
 Shows current fuel and CO2 prices with fill levels in header.
 

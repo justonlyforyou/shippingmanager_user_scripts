@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Bunker Price Display
 // @namespace    http://tampermonkey.net/
-// @version      3.16
+// @version      3.18
 // @description  Shows current fuel and CO2 bunker prices with fill levels
 // @author       https://github.com/justonlyforyou/
 // @order        22
@@ -109,21 +109,21 @@
 
         // Line 1: Label
         var label = document.createElement('span');
-        label.style.cssText = 'color:#9ca3af;';
+        label.style.cssText = 'color:#9ca3af;font-size:12px;';
         label.textContent = type === 'fuel' ? 'Fuel' : 'CO2';
         block.appendChild(label);
 
         // Line 2: Fill %
         var fill = document.createElement('span');
         fill.id = 'bunker-' + type + '-fill';
-        fill.style.cssText = 'font-weight:bold;font-size:13px;';
+        fill.style.cssText = 'font-weight:bold;font-size:12px;';
         fill.textContent = '...%';
         block.appendChild(fill);
 
         // Line 3: Price
         var price = document.createElement('span');
         price.id = 'bunker-' + type + '-price';
-        price.style.cssText = 'font-size:11px;';
+        price.style.cssText = 'font-size:12px;font-weight:bold;';
         price.textContent = '';
         block.appendChild(price);
 

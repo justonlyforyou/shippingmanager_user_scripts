@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Auto Co-Op & Co-Op Header Display
 // @description Shows open Co-Op tickets, auto-sends COOP vessels to alliance members
-// @version     5.14
+// @version     5.15
 // @author      https://github.com/justonlyforyou/
 // @order       20
 // @match       https://shippingmanager.cc/*
@@ -439,14 +439,14 @@
 
         // Line 1: Label
         var label = document.createElement('span');
-        label.style.cssText = 'display:block;color:#9ca3af;';
-        label.textContent = 'CO-OP';
+        label.style.cssText = 'display:block;color:#9ca3af;font-size:12px;';
+        label.textContent = 'COOP';
         coopElement.appendChild(label);
 
         // Line 2: Value (available/max)
         coopValueElement = document.createElement('span');
         coopValueElement.id = 'coop-tickets-value';
-        coopValueElement.style.cssText = 'display:block;font-weight:bold;font-size:13px;';
+        coopValueElement.style.cssText = 'display:block;font-weight:bold;font-size:12px;';
         coopValueElement.textContent = '.../...';
         coopElement.appendChild(coopValueElement);
 

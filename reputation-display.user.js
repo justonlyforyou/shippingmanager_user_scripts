@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Auto Reputation & Reputation Header Display
 // @description Shows reputation in header, auto-renews campaigns when expired
-// @version     5.11
+// @version     5.12
 // @author      joseywales - Pimped by https://github.com/justonlyforyou/
 // @order       20
 // @match       https://shippingmanager.cc/*
@@ -329,14 +329,14 @@
 
         // Line 1: Label
         var label = document.createElement('span');
-        label.style.cssText = 'display:block;color:#9ca3af;';
-        label.textContent = 'Rep.';
+        label.style.cssText = 'display:block;color:#9ca3af;font-size:12px;';
+        label.textContent = 'Rep';
         reputationElement.appendChild(label);
 
         // Line 2: Value (percentage)
         reputationValueElement = document.createElement('span');
         reputationValueElement.id = 'reputation-value';
-        reputationValueElement.style.cssText = 'display:block;font-weight:bold;font-size:13px;';
+        reputationValueElement.style.cssText = 'display:block;font-weight:bold;font-size:12px;';
         reputationValueElement.textContent = '...%';
         reputationElement.appendChild(reputationValueElement);
 
