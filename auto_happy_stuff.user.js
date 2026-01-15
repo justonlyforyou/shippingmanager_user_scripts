@@ -2,7 +2,7 @@
 // @name         ShippingManager - Auto Happy Staff
 // @namespace    http://tampermonkey.net/
 // @description  Automatically manages staff salaries to maintain crew and management morale at target levels
-// @version      1.14
+// @version      1.15
 // @author       https://github.com/justonlyforyou/
 // @order        25
 // @match        https://shippingmanager.cc/*
@@ -881,10 +881,13 @@
     window.addEventListener('rebelship-header-resize', function() {
         console.log('[Auto Happy Staff] Header resize detected, reinitializing display...');
         moraleDisplayElement = null;
+        crewSmileyElement = null;
+        managementSmileyElement = null;
+        displayRetries = 0;
         setTimeout(function() {
             createMoraleDisplay();
             updateMoraleDisplay();
-        }, 100);
+        }, 450);
     });
 
     if (document.readyState === 'loading') {

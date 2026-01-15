@@ -8,7 +8,7 @@
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-end
-// @enabled      true
+// @enabled      false
 // @background-job-required true
 // ==/UserScript==
 

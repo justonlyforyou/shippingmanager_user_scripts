@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Auto Co-Op & Co-Op Header Display
 // @description Shows open Co-Op tickets, auto-sends COOP vessels to alliance members
-// @version     5.12
+// @version     5.13
 // @author      https://github.com/justonlyforyou/
 // @order       20
 // @match       https://shippingmanager.cc/*
@@ -666,7 +666,8 @@
         log('Header resize detected, reinitializing display...');
         coopElement = null;
         coopValueElement = null;
-        setTimeout(updateCoopDisplay, 100);
+        coopDisplayRetries = 0;
+        setTimeout(updateCoopDisplay, 250);
     });
 
     // Wait for page ready
