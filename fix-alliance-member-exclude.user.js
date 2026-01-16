@@ -321,5 +321,5 @@
 
     setInterval(runFixes, 500);
 
-    console.log('[Exclude Fix] v1.4 loaded - fixing CEO button + adding member buttons (Management tab only)');
+    console.log('[Exclude Fix] loaded');
 })();

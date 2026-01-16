@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Export Messages
 // @description Export all messenger conversations as CSV or JSON
-// @version     1.12
+// @version     1.13
 // @author      https://github.com/justonlyforyou/
 // @order       51
 // @match       https://shippingmanager.cc/*
@@ -129,40 +129,91 @@
         return item;
     }
 
-    // Fetch all chats
-    async function fetchAllChats() {
-        const response = await fetch('/api/messenger/get-chats', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({})
-        });
-        const data = await response.json();
-        return data?.data || [];
+    // Fetch all chats with retry
+    async function fetchAllChats(maxRetries) {
+        maxRetries = maxRetries ?? 3;
+        let lastError;
+
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                const response = await fetch('/api/messenger/get-chats', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({})
+                });
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                const data = await response.json();
+                return data?.data || [];
+            } catch (e) {
+                lastError = e;
+                console.log('[ExportMessages] fetchAllChats attempt ' + attempt + '/' + maxRetries + ' failed:', e.message);
+                if (attempt < maxRetries) {
+                    const delay = attempt * 1000;
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
+            }
+        }
+
+        throw lastError;
     }
 
-    // Fetch messages for a single chat
-    async function fetchChatMessages(chatId) {
-        const response = await fetch('/api/messenger/get-chat', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({ chat_id: chatId })
-        });
-        const data = await response.json();
-        return data?.data?.chat?.messages || [];
+    // Fetch messages for a single chat with retry
+    async function fetchChatMessages(chatId, maxRetries) {
+        maxRetries = maxRetries ?? 3;
+        let lastError;
+
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                const response = await fetch('/api/messenger/get-chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ chat_id: chatId })
+                });
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                const data = await response.json();
+                return data?.data?.chat?.messages || [];
+            } catch (e) {
+                lastError = e;
+                console.log('[ExportMessages] fetchChatMessages attempt ' + attempt + '/' + maxRetries + ' failed:', e.message);
+                if (attempt < maxRetries) {
+                    const delay = attempt * 1000;
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
+            }
+        }
+
+        throw lastError;
     }
 
-    // Fetch alliance chat feed
-    async function fetchAllianceChat() {
-        const response = await fetch('https://shippingmanager.cc/api/alliance/get-chat-feed', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({})
-        });
-        const data = await response.json();
-        return data?.data?.chat_feed || [];
+    // Fetch alliance chat feed with retry
+    async function fetchAllianceChat(maxRetries) {
+        maxRetries = maxRetries ?? 3;
+        let lastError;
+
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                const response = await fetch('https://shippingmanager.cc/api/alliance/get-chat-feed', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({})
+                });
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                const data = await response.json();
+                return data?.data?.chat_feed || [];
+            } catch (e) {
+                lastError = e;
+                console.log('[ExportMessages] fetchAllianceChat attempt ' + attempt + '/' + maxRetries + ' failed:', e.message);
+                if (attempt < maxRetries) {
+                    const delay = attempt * 1000;
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
+            }
+        }
+
+        throw lastError;
     }
 
     // Format timestamp to readable date

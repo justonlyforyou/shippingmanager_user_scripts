@@ -3,9 +3,10 @@
 // @description Important script to handle all the Rebelship UI header elements for all scripts.
 // @version     3.47
 // @author      https://github.com/justonlyforyou/
-// @order       1
+// @order       1000
 // @match       https://shippingmanager.cc/*
 // @run-at      document-end
+// @grant       none
 // @enabled     true
 // ==/UserScript==
 /* globals CustomEvent */

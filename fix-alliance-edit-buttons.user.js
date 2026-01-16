@@ -370,5 +370,5 @@
 
     setInterval(runFix, 500);
 
-    console.log('[Alliance Edit Fix] v1.0 loaded - adding edit buttons for interim_ceo');
+    console.log('[Alliance Edit Fix] loaded');
 })();

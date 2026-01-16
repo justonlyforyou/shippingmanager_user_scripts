@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Shipping Manager - Auto Co-Op & Co-Op Header Display
 // @description Shows open Co-Op tickets, auto-sends COOP vessels to alliance members
-// @version     5.17
+// @version     5.18
 // @author      https://github.com/justonlyforyou/
 // @order       20
 // @match       https://shippingmanager.cc/*
@@ -60,14 +60,30 @@
     }
 
     // ========== API FUNCTIONS ==========
-    async function fetchWithCookie(url, options) {
-        var response = await fetch(url, {
-            credentials: 'include',
-            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-            ...options
-        });
-        if (!response.ok) throw new Error('HTTP ' + response.status);
-        return response.json();
+    async function fetchWithCookie(url, options, maxRetries) {
+        maxRetries = maxRetries ?? 3;
+        var lastError;
+
+        for (var attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                var response = await fetch(url, {
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                    ...options
+                });
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                return response.json();
+            } catch (e) {
+                lastError = e;
+                log('Fetch attempt ' + attempt + '/' + maxRetries + ' failed: ' + e.message);
+                if (attempt < maxRetries) {
+                    var delay = attempt * 1000;
+                    await new Promise(function(r) { setTimeout(r, delay); });
+                }
+            }
+        }
+
+        throw lastError;
     }
 
     async function fetchCoopData() {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shipping Manager - Fast Delivery (Bug-Using)
 // @namespace    https://rebelship.org/
-// @version      1.7
+// @version      1.8
 // @description  Fast delivery for built vessels via drydock exploit. Sends pending vessels in drydock, for resetting the delivery time with the maintenance end ;)
 // @author       https://github.com/justonlyforyou/
 // @order        5
@@ -89,54 +89,86 @@
     // ============================================
     // API FUNCTIONS
     // ============================================
-    async function fetchDrydockStatus(vesselIds) {
+    async function fetchDrydockStatus(vesselIds, maxRetries) {
         // POST /api/maintenance/get - returns maintenance_data with drydock costs
-        const response = await fetch(API_BASE + '/maintenance/get', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({
-                vessel_ids: JSON.stringify(vesselIds)
-            })
-        });
-        if (!response.ok) {
-            throw new Error('HTTP ' + response.status);
-        }
-        const data = await response.json();
+        maxRetries = maxRetries ?? 3;
+        let lastError;
 
-        // Extract drydock_minor costs from maintenance_data
-        let totalCost = 0;
-        const vessels = data.data?.vessels || [];
-        for (const vessel of vessels) {
-            const drydockMinor = vessel.maintenance_data?.find(m => m.type === 'drydock_minor');
-            if (drydockMinor) {
-                totalCost += drydockMinor.discounted_price || drydockMinor.price || 0;
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                const response = await fetch(API_BASE + '/maintenance/get', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({
+                        vessel_ids: JSON.stringify(vesselIds)
+                    })
+                });
+                if (!response.ok) {
+                    throw new Error('HTTP ' + response.status);
+                }
+                const data = await response.json();
+
+                // Extract drydock_minor costs from maintenance_data
+                let totalCost = 0;
+                const vessels = data.data?.vessels || [];
+                for (const vessel of vessels) {
+                    const drydockMinor = vessel.maintenance_data?.find(m => m.type === 'drydock_minor');
+                    if (drydockMinor) {
+                        totalCost += drydockMinor.discounted_price || drydockMinor.price || 0;
+                    }
+                }
+
+                return {
+                    vessels: vessels,
+                    totalCost: totalCost,
+                    cash: data.user?.cash || 0
+                };
+            } catch (e) {
+                lastError = e;
+                log('fetchDrydockStatus attempt ' + attempt + '/' + maxRetries + ' failed: ' + e.message);
+                if (attempt < maxRetries) {
+                    const delay = attempt * 1000;
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
             }
         }
 
-        return {
-            vessels: vessels,
-            totalCost: totalCost,
-            cash: data.user?.cash || 0
-        };
+        throw lastError;
     }
 
-    async function triggerBulkDrydock(vesselIds) {
+    async function triggerBulkDrydock(vesselIds, maxRetries) {
         // POST /api/maintenance/do-major-drydock-maintenance-bulk
-        const response = await fetch(API_BASE + '/maintenance/do-major-drydock-maintenance-bulk', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({
-                vessel_ids: JSON.stringify(vesselIds),
-                speed: 'minimum',
-                maintenance_type: 'minor'
-            })
-        });
-        if (!response.ok) {
-            throw new Error('HTTP ' + response.status);
+        maxRetries = maxRetries ?? 3;
+        let lastError;
+
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                const response = await fetch(API_BASE + '/maintenance/do-major-drydock-maintenance-bulk', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({
+                        vessel_ids: JSON.stringify(vesselIds),
+                        speed: 'minimum',
+                        maintenance_type: 'minor'
+                    })
+                });
+                if (!response.ok) {
+                    throw new Error('HTTP ' + response.status);
+                }
+                return response.json();
+            } catch (e) {
+                lastError = e;
+                log('triggerBulkDrydock attempt ' + attempt + '/' + maxRetries + ' failed: ' + e.message);
+                if (attempt < maxRetries) {
+                    const delay = attempt * 1000;
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
+            }
         }
-        return response.json();
+
+        throw lastError;
     }
 
     // ============================================

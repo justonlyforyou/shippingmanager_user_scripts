@@ -2,7 +2,7 @@
 // @name         ShippingManager - Depart Manager
 // @namespace    https://rebelship.org/
 // @description  Unified departure management: Auto bunker rebuy, auto-depart, Smuggler's Eye pricing, drydock prevention, route settings
-// @version      2.49
+// @version      2.61
 // @author       https://github.com/justonlyforyou/
 // @order        9
 // @match        https://shippingmanager.cc/*
@@ -19,14 +19,11 @@
     var STORAGE_KEY = 'rebelship_depart_manager';
     var AUTOPRICE_CACHE_KEY = 'rebelship_autoprice_cache';
     var AUTOPRICE_CACHE_TTL = 4 * 60 * 60 * 1000; // 4 hours
-    var CHECK_INTERVAL = 60 * 1000; // 60 seconds browser, 15min Android
-    var CHECK_INTERVAL_ANDROID = 15 * 60 * 1000;
+    var CHECK_INTERVAL = 60 * 1000; // 60 seconds
     var API_BASE = 'https://shippingmanager.cc/api';
 
     // Hijacking risk cache - stores route_origin<>route_destination -> risk mapping
     var hijackingRiskCache = {};
-
-    var isAndroidApp = typeof window.RebelShipBridge !== 'undefined';
 
     var DEFAULT_SETTINGS = {
         // Drydock Settings
@@ -80,7 +77,6 @@
         }
     }
 
-    log('v2.39 loaded');
 
     // ============================================
     // STORAGE - Unified storage for all features
@@ -231,26 +227,28 @@
         if (oldBunker) {
             try {
                 var b = JSON.parse(oldBunker);
-                storage.settings.fuelMode = b.fuelMode || 'off';
-                storage.settings.fuelPriceThreshold = b.fuelPriceThreshold || 500;
-                storage.settings.fuelMinCash = b.fuelMinCash || 1000000;
-                storage.settings.fuelIntelligentMaxPrice = b.fuelIntelligentMaxPrice || 600;
-                storage.settings.fuelIntelligentBelowEnabled = b.fuelIntelligentBelowEnabled || false;
-                storage.settings.fuelIntelligentBelow = b.fuelIntelligentBelow || 500;
-                storage.settings.fuelIntelligentShipsEnabled = b.fuelIntelligentShipsEnabled || false;
-                storage.settings.fuelIntelligentShips = b.fuelIntelligentShips || 5;
-                storage.settings.co2Mode = b.co2Mode || 'off';
-                storage.settings.co2PriceThreshold = b.co2PriceThreshold || 10;
-                storage.settings.co2MinCash = b.co2MinCash || 1000000;
-                storage.settings.co2IntelligentMaxPrice = b.co2IntelligentMaxPrice || 12;
-                storage.settings.co2IntelligentBelowEnabled = b.co2IntelligentBelowEnabled || false;
-                storage.settings.co2IntelligentBelow = b.co2IntelligentBelow || 500;
-                storage.settings.co2IntelligentShipsEnabled = b.co2IntelligentShipsEnabled || false;
-                storage.settings.co2IntelligentShips = b.co2IntelligentShips || 5;
-                storage.settings.avoidNegativeCO2 = b.avoidNegativeCO2 || false;
-                storage.settings.autoDepartEnabled = b.autoDepartEnabled || false;
-                if (b.systemNotifications !== undefined) {
-                    storage.settings.systemNotifications = b.systemNotifications;
+                // Support both nested (b.settings.xxx) and flat (b.xxx) storage formats
+                var bs = b.settings || b;
+                storage.settings.fuelMode = bs.fuelMode || 'off';
+                storage.settings.fuelPriceThreshold = bs.fuelPriceThreshold || 500;
+                storage.settings.fuelMinCash = bs.fuelMinCash || 1000000;
+                storage.settings.fuelIntelligentMaxPrice = bs.fuelIntelligentMaxPrice || 600;
+                storage.settings.fuelIntelligentBelowEnabled = bs.fuelIntelligentBelowEnabled || false;
+                storage.settings.fuelIntelligentBelow = bs.fuelIntelligentBelow || 500;
+                storage.settings.fuelIntelligentShipsEnabled = bs.fuelIntelligentShipsEnabled || false;
+                storage.settings.fuelIntelligentShips = bs.fuelIntelligentShips || 5;
+                storage.settings.co2Mode = bs.co2Mode || 'off';
+                storage.settings.co2PriceThreshold = bs.co2PriceThreshold || 10;
+                storage.settings.co2MinCash = bs.co2MinCash || 1000000;
+                storage.settings.co2IntelligentMaxPrice = bs.co2IntelligentMaxPrice || 12;
+                storage.settings.co2IntelligentBelowEnabled = bs.co2IntelligentBelowEnabled || false;
+                storage.settings.co2IntelligentBelow = bs.co2IntelligentBelow || 500;
+                storage.settings.co2IntelligentShipsEnabled = bs.co2IntelligentShipsEnabled || false;
+                storage.settings.co2IntelligentShips = bs.co2IntelligentShips || 5;
+                storage.settings.avoidNegativeCO2 = bs.avoidNegativeCO2 || false;
+                storage.settings.autoDepartEnabled = bs.autoDepartEnabled || false;
+                if (bs.systemNotifications !== undefined) {
+                    storage.settings.systemNotifications = bs.systemNotifications;
                 }
                 log('Migrated autobuy_settings data');
                 localStorage.removeItem('rebelship_autobuy_settings');
@@ -482,95 +480,85 @@
     // ============================================
     // NOTIFICATIONS
     // ============================================
-    function notify(message, type, category) {
+    /**
+     * Unified notification function
+     * - Shows in-game toast (always)
+     * - Sends desktop notification via RebelShipNotify (if enabled in settings)
+     * - Format: "[Depart Manager] MESSAGE"
+     *
+     * @param {string} message - The notification message
+     * @param {string} type - 'success', 'error', 'warning', 'info' (default: 'success')
+     * @param {string} category - Category for grouping (default: 'general')
+     */
+    function notify(message, type, _category) {
         type = type || 'success';
-        category = category || 'general';
+        _category = _category || 'general';
+
+        var formattedMessage = '[Depart Manager] ' + message;
         log(type.toUpperCase() + ': ' + message);
 
-        // In-game toast - always show
+        // In-game toast - always show (uses raw message, game UI handles styling)
         var toastStore = getToastStore();
         if (toastStore) {
             try {
                 if (type === 'error' && toastStore.error) {
                     toastStore.error(message);
+                } else if (type === 'warning' && toastStore.warning) {
+                    toastStore.warning(message);
+                } else if (type === 'info' && toastStore.info) {
+                    toastStore.info(message);
                 } else if (toastStore.success) {
                     toastStore.success(message);
                 }
             } catch {
-                // Ignore
+                // Toast store not available
             }
         }
 
-        // Android bridge
-        if (window.RebelShipNotify) {
-            try {
-                if (category === 'fuel' && window.RebelShipNotify.fuelBought) {
-                    window.RebelShipNotify.fuelBought(message);
-                } else if (category === 'co2' && window.RebelShipNotify.co2Bought) {
-                    window.RebelShipNotify.co2Bought(message);
-                } else if (category === 'depart' && window.RebelShipNotify.shipsDeparted) {
-                    window.RebelShipNotify.shipsDeparted(message);
-                } else if (window.RebelShipNotify.notify) {
-                    window.RebelShipNotify.notify(message);
-                }
-            } catch {
-                // Ignore
-            }
-        }
-
-        // System notification
-        showSystemNotification(message);
-    }
-
-    function showSystemNotification(message) {
+        // Desktop notification via RebelShipNotify (Windows/Android browser)
+        // Only send if systemNotifications is enabled in settings
         var settings = getSettings();
-        if (!settings.systemNotifications) return;
-
-        if (typeof window.RebelShipNotify !== 'undefined' && window.RebelShipNotify.notify) {
+        if (settings.systemNotifications && window.RebelShipNotify && window.RebelShipNotify.notify) {
             try {
-                window.RebelShipNotify.notify(SCRIPT_NAME + ': ' + message);
-                return;
-            } catch {
-                // Fallthrough to web notification
-            }
-        }
-
-        if ('Notification' in window) {
-            if (Notification.permission === 'granted') {
-                try {
-                    new Notification(SCRIPT_NAME, {
-                        body: message,
-                        icon: 'https://shippingmanager.cc/favicon.ico',
-                        tag: 'depart-manager'
-                    });
-                } catch {
-                    // Ignore
-                }
-            } else if (Notification.permission === 'default') {
-                Notification.requestPermission();
+                window.RebelShipNotify.notify(formattedMessage);
+            } catch (e) {
+                log('RebelShipNotify error: ' + e.message, 'error');
             }
         }
     }
+
 
     // ============================================
     // API FUNCTIONS
     // ============================================
     var originalFetch = window.fetch;
 
-    async function apiFetch(endpoint, body) {
-        try {
-            var response = await originalFetch(API_BASE + endpoint, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify(body || {})
-            });
-            if (!response.ok) throw new Error('HTTP ' + response.status);
-            return await response.json();
-        } catch (e) {
-            log('API call failed (' + endpoint + '): ' + e.message, 'error');
-            return null;
+    async function apiFetch(endpoint, body, maxRetries) {
+        maxRetries = maxRetries ?? 3;
+        var lastError;
+
+        for (var attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                var response = await originalFetch(API_BASE + endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify(body || {})
+                });
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                return await response.json();
+            } catch (e) {
+                lastError = e;
+                log('API call (' + endpoint + ') attempt ' + attempt + '/' + maxRetries + ' failed: ' + e.message);
+                if (attempt < maxRetries) {
+                    var delay = attempt * 1000;
+                    await new Promise(function(r) { setTimeout(r, delay); });
+                }
+            }
         }
+
+        log('API call failed (' + endpoint + '): ' + lastError.message, 'error');
+        return null;
     }
 
     async function fetchVesselData() {
@@ -630,66 +618,90 @@
         return null;
     }
 
-    async function fetchBunkerStateAPI() {
-        try {
-            var response = await originalFetch(API_BASE + '/user/get-user-settings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify({})
-            });
-            if (!response.ok) throw new Error('HTTP ' + response.status);
-            var data = await response.json();
-            if (!data.data || !data.data.settings || !data.user) return null;
-            return {
-                fuel: data.user.fuel / 1000,
-                co2: data.user.co2 / 1000,
-                cash: data.user.cash,
-                maxFuel: data.data.settings.max_fuel / 1000,
-                maxCO2: data.data.settings.max_co2 / 1000
-            };
-        } catch (e) {
-            log('fetchBunkerStateAPI failed: ' + e.message, 'error');
-            return null;
+    async function fetchBunkerStateAPI(maxRetries) {
+        maxRetries = maxRetries ?? 3;
+        var lastError;
+
+        for (var attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                var response = await originalFetch(API_BASE + '/user/get-user-settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({})
+                });
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                var data = await response.json();
+                if (!data.data || !data.data.settings || !data.user) return null;
+                return {
+                    fuel: data.user.fuel / 1000,
+                    co2: data.user.co2 / 1000,
+                    cash: data.user.cash,
+                    maxFuel: data.data.settings.max_fuel / 1000,
+                    maxCO2: data.data.settings.max_co2 / 1000
+                };
+            } catch (e) {
+                lastError = e;
+                log('fetchBunkerStateAPI attempt ' + attempt + '/' + maxRetries + ' failed: ' + e.message);
+                if (attempt < maxRetries) {
+                    var delay = attempt * 1000;
+                    await new Promise(function(r) { setTimeout(r, delay); });
+                }
+            }
         }
+
+        log('fetchBunkerStateAPI failed: ' + lastError.message, 'error');
+        return null;
     }
 
-    async function fetchPricesAPI() {
-        try {
-            var response = await originalFetch(API_BASE + '/bunker/get-prices', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify({})
-            });
-            if (!response.ok) throw new Error('HTTP ' + response.status);
-            var data = await response.json();
-            if (!data.data || !data.data.prices) return null;
+    async function fetchPricesAPI(maxRetries) {
+        maxRetries = maxRetries ?? 3;
+        var lastError;
 
-            var prices = data.data.prices;
-            var discountedFuel = data.data.discounted_fuel;
-            var discountedCo2 = data.data.discounted_co2;
+        for (var attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                var response = await originalFetch(API_BASE + '/bunker/get-prices', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({})
+                });
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                var data = await response.json();
+                if (!data.data || !data.data.prices) return null;
 
-            var fuelPrice, co2Price;
-            if (discountedFuel !== undefined) {
-                fuelPrice = discountedFuel;
-            } else {
-                var current = findCurrentPriceSlot(prices);
-                fuelPrice = current ? current.fuel_price : null;
+                var prices = data.data.prices;
+                var discountedFuel = data.data.discounted_fuel;
+                var discountedCo2 = data.data.discounted_co2;
+
+                var fuelPrice, co2Price;
+                if (discountedFuel !== undefined) {
+                    fuelPrice = discountedFuel;
+                } else {
+                    var current = findCurrentPriceSlot(prices);
+                    fuelPrice = current ? current.fuel_price : null;
+                }
+
+                if (discountedCo2 !== undefined) {
+                    co2Price = discountedCo2;
+                } else {
+                    var currentCo2 = findCurrentPriceSlot(prices);
+                    co2Price = currentCo2 ? currentCo2.co2_price : null;
+                }
+
+                return { fuelPrice: fuelPrice, co2Price: co2Price };
+            } catch (e) {
+                lastError = e;
+                log('fetchPricesAPI attempt ' + attempt + '/' + maxRetries + ' failed: ' + e.message);
+                if (attempt < maxRetries) {
+                    var delay = attempt * 1000;
+                    await new Promise(function(r) { setTimeout(r, delay); });
+                }
             }
-
-            if (discountedCo2 !== undefined) {
-                co2Price = discountedCo2;
-            } else {
-                var currentCo2 = findCurrentPriceSlot(prices);
-                co2Price = currentCo2 ? currentCo2.co2_price : null;
-            }
-
-            return { fuelPrice: fuelPrice, co2Price: co2Price };
-        } catch (e) {
-            log('fetchPricesAPI failed: ' + e.message, 'error');
-            return null;
         }
+
+        log('fetchPricesAPI failed: ' + lastError.message, 'error');
+        return null;
     }
 
     function findCurrentPriceSlot(prices) {
@@ -842,9 +854,22 @@
         log('Auto-price cache updated for ' + needsFetch.length + ' routes');
     }
 
+    var lastFuelPurchaseTime = 0;
+    var lastCO2PurchaseTime = 0;
+    var PURCHASE_COOLDOWN_MS = 2000; // 2 seconds cooldown between purchases
+
     async function purchaseFuelAPI(amountTons, pricePerTon) {
         try {
             if (amountTons <= 0) return { success: false, error: 'Amount <= 0' };
+
+            // Prevent duplicate purchases within cooldown period
+            var now = Date.now();
+            if (now - lastFuelPurchaseTime < PURCHASE_COOLDOWN_MS) {
+                log('Fuel purchase skipped - cooldown active (' + (PURCHASE_COOLDOWN_MS - (now - lastFuelPurchaseTime)) + 'ms remaining)');
+                return { success: false, error: 'cooldown' };
+            }
+            lastFuelPurchaseTime = now;
+
             var amountKg = Math.floor(amountTons * 1000);
             log('Purchasing ' + amountTons.toFixed(0) + 't fuel @ $' + pricePerTon + '/t');
 
@@ -872,6 +897,15 @@
     async function purchaseCO2API(amountTons, pricePerTon) {
         try {
             if (amountTons <= 0) return { success: false, error: 'Amount <= 0' };
+
+            // Prevent duplicate purchases within cooldown period
+            var now = Date.now();
+            if (now - lastCO2PurchaseTime < PURCHASE_COOLDOWN_MS) {
+                log('CO2 purchase skipped - cooldown active (' + (PURCHASE_COOLDOWN_MS - (now - lastCO2PurchaseTime)) + 'ms remaining)');
+                return { success: false, error: 'cooldown' };
+            }
+            lastCO2PurchaseTime = now;
+
             var amountKg = Math.floor(amountTons * 1000);
             log('Purchasing ' + amountTons.toFixed(0) + 't CO2 @ $' + pricePerTon + '/t');
 
@@ -2080,18 +2114,11 @@
 
             var threshold = settings.autoDrydockThreshold;
 
-            // Debug: log first vessel to see field names
-            if (vessels.length > 0) {
-                var v0 = vessels[0];
-                log('DEBUG vessel fields: hours_until_check=' + v0.hours_until_check + ', status=' + v0.status + ', next_route_is_maintenance=' + v0.next_route_is_maintenance);
-            }
-
             // Filter: below threshold, not already in drydock or going to drydock
             var needsDrydock = vessels.filter(function(v) {
                 var dominated = v.hours_until_check <= threshold;
                 var notInDrydock = v.status !== 'drydock';
                 var notGoingToDrydock = !v.next_route_is_maintenance && v.route_dry_operation !== 1;
-                log(v.name + ': hours=' + v.hours_until_check + ', status=' + v.status + ', next_maint=' + v.next_route_is_maintenance + ', route_dry_op=' + v.route_dry_operation);
                 return dominated && notInDrydock && notGoingToDrydock;
             });
 
@@ -2344,99 +2371,153 @@
         autoDepartRunning = true;
 
         try {
-            var vessels = await fetchVesselData();
-            var bunker = await getBunkerData();
-            var prices = await fetchPricesAPI();
-
-            if (!vessels || !bunker || !prices) {
-                log('Missing data for auto-depart');
-                if (manual) notify('Failed to fetch data', 'error');
-                return { departed: 0 };
-            }
-
-            var readyVessels = vessels.filter(function(v) {
-                return v.status === 'port' && !v.is_parked && v.route_destination;
-            });
-
-            if (readyVessels.length === 0) {
-                log('No vessels ready to depart');
-                if (manual) notify('No vessels ready to depart', 'info');
-                return { departed: 0 };
-            }
-
-            readyVessels.sort(function(a, b) {
-                return getVesselFuelRequired(b) - getVesselFuelRequired(a);
-            });
-
             var departedCount = 0;
             var totalFuelUsed = 0;
             var totalCO2Used = 0;
             var errors = [];
             var skipped = [];
+            var round = 0;
 
-            for (var i = 0; i < readyVessels.length; i++) {
-                var vessel = readyVessels[i];
-                var fuelNeeded = getVesselFuelRequired(vessel);
-                var co2Needed = calculateCO2Consumption(vessel, vessel.route_distance);
+            // Keep processing until no more vessels are ready
+            while (true) {
+                round++;
+                log('Auto-depart round ' + round);
 
-                bunker = await getBunkerData();
-                if (!bunker) {
-                    errors.push(vessel.name + ': Failed to get bunker data');
-                    continue;
+                var vessels = await fetchVesselData();
+                var bunker = await getBunkerData();
+                var prices = await fetchPricesAPI();
+
+                if (!vessels || !bunker || !prices) {
+                    log('Missing data for auto-depart');
+                    if (manual && departedCount === 0) notify('Failed to fetch data', 'error');
+                    break;
                 }
 
-                // Pre-depart fuel rebuy
-                if (bunker.fuel < fuelNeeded) {
-                    var fuelShortfall = fuelNeeded - bunker.fuel;
-                    if (settings.fuelMode !== 'off') {
-                        if (prices.fuelPrice <= settings.fuelPriceThreshold) {
-                            // Basic: buy shortfall (Final Fill will top up to 100% after)
-                            await purchaseFuelAPI(fuelShortfall + 100, prices.fuelPrice);
-                            bunker = await getBunkerData();
-                        } else if (settings.fuelMode === 'intelligent' && prices.fuelPrice <= settings.fuelIntelligentMaxPrice) {
-                            // Intelligent: buy only shortfall
-                            await purchaseFuelAPI(fuelShortfall + 100, prices.fuelPrice);
-                            bunker = await getBunkerData();
+                var readyVessels = vessels.filter(function(v) {
+                    return v.status === 'port' && !v.is_parked && v.route_destination;
+                });
+
+                if (readyVessels.length === 0) {
+                    log('No more vessels ready to depart (round ' + round + ')');
+                    break;
+                }
+
+                log('Found ' + readyVessels.length + ' vessels ready to depart');
+
+                readyVessels.sort(function(a, b) {
+                    return getVesselFuelRequired(b) - getVesselFuelRequired(a);
+                });
+
+                var roundDeparted = 0;
+                var recentDepartures = [];
+
+                for (var i = 0; i < readyVessels.length; i++) {
+                    var vessel = readyVessels[i];
+                    var fuelNeeded = getVesselFuelRequired(vessel);
+                    var co2Needed = calculateCO2Consumption(vessel, vessel.route_distance);
+
+                    // Fresh bunker BEFORE each ship (prices only change at :00 and :30)
+                    bunker = await getBunkerData();
+
+                    if (!bunker) {
+                        errors.push(vessel.name + ': Failed to get bunker data');
+                        continue;
+                    }
+
+                    // Pre-depart fuel rebuy
+                    if (bunker.fuel < fuelNeeded) {
+                        var fuelShortfall = fuelNeeded - bunker.fuel;
+                        if (settings.fuelMode !== 'off') {
+                            if (prices.fuelPrice <= settings.fuelPriceThreshold) {
+                                await purchaseFuelAPI(fuelShortfall + 100, prices.fuelPrice);
+                                await new Promise(function(r) { setTimeout(r, 250); });
+                                bunker = await getBunkerData();
+                            } else if (settings.fuelMode === 'intelligent' && prices.fuelPrice <= settings.fuelIntelligentMaxPrice) {
+                                await purchaseFuelAPI(fuelShortfall + 100, prices.fuelPrice);
+                                await new Promise(function(r) { setTimeout(r, 250); });
+                                bunker = await getBunkerData();
+                            }
                         }
                     }
-                }
 
-                // Pre-depart CO2 rebuy - buy shortfall to allow departure
-                if (bunker.co2 < co2Needed) {
-                    var co2Shortfall = co2Needed - bunker.co2;
-                    if (settings.co2Mode !== 'off') {
-                        if (prices.co2Price <= settings.co2PriceThreshold) {
-                            // Basic: buy shortfall (Final Fill will top up to 100% after)
-                            await purchaseCO2API(co2Shortfall + 50, prices.co2Price);
-                            bunker = await getBunkerData();
-                        } else if (settings.co2Mode === 'intelligent' && prices.co2Price <= settings.co2IntelligentMaxPrice) {
-                            // Intelligent: buy shortfall to allow departure (Post-depart only fills to 0 if negative)
-                            await purchaseCO2API(co2Shortfall + 50, prices.co2Price);
-                            bunker = await getBunkerData();
+                    // Pre-depart CO2 rebuy
+                    if (bunker.co2 < co2Needed) {
+                        var co2Shortfall = co2Needed - bunker.co2;
+                        if (settings.co2Mode !== 'off') {
+                            if (prices.co2Price <= settings.co2PriceThreshold) {
+                                await purchaseCO2API(co2Shortfall + 50, prices.co2Price);
+                                await new Promise(function(r) { setTimeout(r, 250); });
+                                bunker = await getBunkerData();
+                            } else if (settings.co2Mode === 'intelligent' && prices.co2Price <= settings.co2IntelligentMaxPrice) {
+                                await purchaseCO2API(co2Shortfall + 50, prices.co2Price);
+                                await new Promise(function(r) { setTimeout(r, 250); });
+                                bunker = await getBunkerData();
+                            }
                         }
                     }
+
+                    // Final check: enough fuel?
+                    if (bunker.fuel < fuelNeeded) {
+                        var fuelMsg = vessel.name + ': Insufficient fuel (' + bunker.fuel.toFixed(0) + 't < ' + fuelNeeded.toFixed(0) + 't)';
+                        log(fuelMsg);
+                        skipped.push(fuelMsg);
+                        continue;
+                    }
+
+                    // Final check: enough CO2?
+                    if (bunker.co2 < co2Needed) {
+                        var co2Msg = vessel.name + ': Insufficient CO2 (' + bunker.co2.toFixed(0) + 't < ' + co2Needed.toFixed(0) + 't)';
+                        log(co2Msg);
+                        skipped.push(co2Msg);
+                        continue;
+                    }
+
+                    var result = await departVesselAPI(vessel.id, vessel.route_speed, vessel.route_guards);
+
+                    if (result.success) {
+                        departedCount++;
+                        roundDeparted++;
+                        totalFuelUsed += result.fuelUsed;
+
+                        // Collect departure info for batch notification
+                        recentDepartures.push({
+                            name: vessel.name,
+                            income: result.income,
+                            harborFee: result.harborFee,
+                            fuelUsed: result.fuelUsed
+                        });
+
+                        log(vessel.name + ': Departed');
+
+                        // Every 10 ships: show batch summary with last 5 ships, refresh harbor
+                        if (departedCount % 10 === 0) {
+                            var lastFive = recentDepartures.slice(-5);
+                            var batchMsg = 'Departed ' + departedCount + ' ships. Last 5:\n' +
+                                lastFive.map(function(d) {
+                                    return d.name + ': +$' + formatNumber(d.income);
+                                }).join('\n');
+                            notify(batchMsg, 'success', 'depart');
+                            refreshGameData();
+                        }
+                    } else {
+                        var errMsg = vessel.name + ': ' + result.error;
+                        log(errMsg, 'error');
+                        errors.push(errMsg);
+                    }
+
+                    await new Promise(function(r) { setTimeout(r, 500); });
                 }
 
-                if (bunker.fuel < fuelNeeded) {
-                    var msg = vessel.name + ': Insufficient fuel (' + bunker.fuel.toFixed(0) + 't < ' + fuelNeeded.toFixed(0) + 't)';
-                    log(msg);
-                    skipped.push(msg);
-                    continue;
+                log('Round ' + round + ' complete: ' + roundDeparted + ' departed');
+
+                // If no vessels departed this round, stop (prevents infinite loop on errors)
+                if (roundDeparted === 0) {
+                    log('No vessels departed this round, stopping');
+                    break;
                 }
 
-                var result = await departVesselAPI(vessel.id, vessel.route_speed, vessel.route_guards);
-
-                if (result.success) {
-                    departedCount++;
-                    totalFuelUsed += result.fuelUsed || 0;
-                    log(vessel.name + ': Departed');
-                } else {
-                    var errMsg = vessel.name + ': ' + result.error;
-                    log(errMsg, 'error');
-                    errors.push(errMsg);
-                }
-
-                await new Promise(function(r) { setTimeout(r, 300); });
+                // Small delay before next round to let new ships arrive/register
+                await new Promise(function(r) { setTimeout(r, 1000); });
             }
 
             // Post-depart: Avoid negative CO2 (ONLY for Intelligent Rebuy!)
@@ -2445,8 +2526,9 @@
             var CO2_BUFFER = 100;
             if (settings.avoidNegativeCO2 && departedCount > 0 && settings.co2Mode === 'intelligent') {
                 bunker = await getBunkerData();
+                prices = await fetchPricesAPI();
                 // Only act if CO2 < buffer AND price > basic threshold (otherwise Final Fill handles it)
-                if (bunker && bunker.co2 < CO2_BUFFER && prices.co2Price > settings.co2PriceThreshold) {
+                if (bunker && prices && bunker.co2 < CO2_BUFFER && prices.co2Price > settings.co2PriceThreshold) {
                     // Check intelligent max threshold
                     if (prices.co2Price <= settings.co2IntelligentMaxPrice) {
                         // Refill to 100t buffer (not full!)
@@ -3439,6 +3521,7 @@
     // PERIODIC CHECK
     // ============================================
     async function periodicCheck() {
+        var settings = getSettings();
         log('Running periodic check...');
 
         var appliedCount = await applyAllPendingSettings();
@@ -3451,8 +3534,6 @@
             handleVesselDataResponse({ data: { user_vessels: vessels } });
         }
 
-        var settings = getSettings();
-
         if (settings.autoDrydockEnabled) {
             await runAutoDrydock(false);
         }
@@ -3462,15 +3543,27 @@
         }
 
         if (settings.fuelMode !== 'off') {
-            await autoRebuyFuel();
+            try {
+                await autoRebuyFuel();
+            } catch (e) {
+                log('autoRebuyFuel error: ' + e.message, 'error');
+            }
         }
 
         if (settings.co2Mode !== 'off') {
-            await autoRebuyCO2();
+            try {
+                await autoRebuyCO2();
+            } catch (e) {
+                log('autoRebuyCO2 error: ' + e.message, 'error');
+            }
         }
 
         if (settings.autoDepartEnabled) {
-            await autoDepartVessels(false);
+            try {
+                await autoDepartVessels(false);
+            } catch (e) {
+                log('autoDepartVessels error: ' + e.message, 'error');
+            }
         }
     }
 
@@ -3493,9 +3586,8 @@
 
     function startMonitoring() {
         if (monitoringInterval) clearInterval(monitoringInterval);
-        var interval = isAndroidApp ? CHECK_INTERVAL_ANDROID : CHECK_INTERVAL;
-        log('Starting monitoring (interval: ' + (interval / 1000) + 's)');
-        monitoringInterval = setInterval(periodicCheck, interval);
+        log('Starting monitoring (interval: ' + (CHECK_INTERVAL / 1000) + 's)');
+        monitoringInterval = setInterval(periodicCheck, CHECK_INTERVAL);
     }
 
     function requestNotificationPermission() {
@@ -3531,8 +3623,6 @@
 
     function init() {
         try {
-            log('Initializing...');
-
             migrateOldStorage();
             requestNotificationPermission();
             initUI();
@@ -3544,7 +3634,12 @@
 
             // Initialize auto-price cache before first periodic check
             setTimeout(async function() {
-                await initAutoPriceCache();
+                try {
+                    await initAutoPriceCache();
+                } catch (e) {
+                    log('initAutoPriceCache failed: ' + e.message, 'error');
+                }
+                // ALWAYS start monitoring, even if cache init fails
                 startMonitoring();
                 periodicCheck();
             }, 5000);

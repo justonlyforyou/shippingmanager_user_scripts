@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name        Shipping Manager - Alliance Chat Notification
 // @description Shows a red dot on Alliance button when there are unread messages
-// @version     2.7
+// @version     2.8
 // @author      https://github.com/justonlyforyou/
 // @order       3
 // @match       https://shippingmanager.cc/*
 // @run-at      document-end
+// @grant       none
 // @enabled     false
 // ==/UserScript==
 
@@ -124,93 +125,126 @@
 
     var cachedAllianceId = null;
 
-    // Fetch alliance ID from API
-    async function fetchAllianceId() {
+    // Fetch alliance ID from API with retry
+    async function fetchAllianceId(maxRetries) {
         if (cachedAllianceId) return cachedAllianceId;
 
-        try {
-            var response = await fetch('/api/alliance/get-user-alliance', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify({})
-            });
+        maxRetries = maxRetries ?? 3;
+        var lastError;
 
-            var data = await response.json();
+        for (var attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                var response = await fetch('/api/alliance/get-user-alliance', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({})
+                });
 
-            if (data && data.data && data.data.alliance && data.data.alliance.id) {
-                cachedAllianceId = data.data.alliance.id;
-                console.log('[AllianceChatNotify] Fetched alliance ID:', cachedAllianceId);
-                return cachedAllianceId;
+                if (!response.ok) {
+                    throw new Error('HTTP ' + response.status);
+                }
+
+                var data = await response.json();
+
+                if (data && data.data && data.data.alliance && data.data.alliance.id) {
+                    cachedAllianceId = data.data.alliance.id;
+                    console.log('[AllianceChatNotify] Fetched alliance ID:', cachedAllianceId);
+                    return cachedAllianceId;
+                }
+
+                console.log('[AllianceChatNotify] No alliance found in API response');
+                return null;
+            } catch (e) {
+                lastError = e;
+                console.log('[AllianceChatNotify] fetchAllianceId attempt ' + attempt + '/' + maxRetries + ' failed:', e.message);
+                if (attempt < maxRetries) {
+                    var delay = attempt * 1000;
+                    await new Promise(function(r) { setTimeout(r, delay); });
+                }
             }
-
-            console.log('[AllianceChatNotify] No alliance found in API response');
-            return null;
-        } catch (e) {
-            console.error('[AllianceChatNotify] Failed to fetch alliance ID:', e);
-            return null;
         }
+
+        console.error('[AllianceChatNotify] Failed to fetch alliance ID:', lastError);
+        return null;
     }
 
-    // Fetch latest chat messages and check for unread
-    async function checkForUnreadMessages() {
+    // Fetch latest chat messages and check for unread with retry
+    async function checkForUnreadMessages(maxRetries) {
         var allianceId = await fetchAllianceId();
         if (!allianceId) {
             console.log('[AllianceChatNotify] No alliance ID - user may not be in an alliance');
             return;
         }
 
-        try {
-            var response = await fetch('/api/alliance/get-chat-feed', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify({ alliance_id: allianceId })
-            });
+        maxRetries = maxRetries ?? 3;
+        var lastError;
 
-            var data = await response.json();
+        for (var attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                var response = await fetch('/api/alliance/get-chat-feed', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ alliance_id: allianceId })
+                });
 
-            // API returns data.chat_feed not data.messages
-            if (!data || !data.data || !data.data.chat_feed) {
-                console.log('[AllianceChatNotify] No chat_feed data');
-                return;
-            }
+                if (!response.ok) {
+                    throw new Error('HTTP ' + response.status);
+                }
 
-            var chatFeed = data.data.chat_feed;
-            if (chatFeed.length === 0) {
-                hasUnread = false;
+                var data = await response.json();
+
+                // API returns data.chat_feed not data.messages
+                if (!data || !data.data || !data.data.chat_feed) {
+                    console.log('[AllianceChatNotify] No chat_feed data');
+                    return;
+                }
+
+                var chatFeed = data.data.chat_feed;
+                if (chatFeed.length === 0) {
+                    hasUnread = false;
+                    updateNotificationDots();
+                    return;
+                }
+
+                // Find the newest message timestamp (only type: "chat", not "feed")
+                newestMessageTimestamp = 0;
+                chatFeed.forEach(function(msg) {
+                    // Only count actual chat messages, not feed items like "member_left"
+                    if (msg.type === 'chat') {
+                        var msgTime = msg.time_created || 0;
+                        if (msgTime > newestMessageTimestamp) {
+                            newestMessageTimestamp = msgTime;
+                        }
+                    }
+                });
+
+                // Check if there are unread messages
+                var wasUnread = hasUnread;
+                if (newestMessageTimestamp > lastReadTimestamp) {
+                    hasUnread = true;
+                    if (!wasUnread) {
+                        console.log('[AllianceChatNotify] Unread messages detected! Newest:', newestMessageTimestamp, 'Last read:', lastReadTimestamp);
+                    }
+                } else {
+                    hasUnread = false;
+                }
+
                 updateNotificationDots();
                 return;
-            }
 
-            // Find the newest message timestamp (only type: "chat", not "feed")
-            newestMessageTimestamp = 0;
-            chatFeed.forEach(function(msg) {
-                // Only count actual chat messages, not feed items like "member_left"
-                if (msg.type === 'chat') {
-                    var msgTime = msg.time_created || 0;
-                    if (msgTime > newestMessageTimestamp) {
-                        newestMessageTimestamp = msgTime;
-                    }
+            } catch (e) {
+                lastError = e;
+                console.log('[AllianceChatNotify] checkForUnreadMessages attempt ' + attempt + '/' + maxRetries + ' failed:', e.message);
+                if (attempt < maxRetries) {
+                    var delay = attempt * 1000;
+                    await new Promise(function(r) { setTimeout(r, delay); });
                 }
-            });
-
-            // Check if there are unread messages
-            var wasUnread = hasUnread;
-            if (newestMessageTimestamp > lastReadTimestamp) {
-                hasUnread = true;
-                if (!wasUnread) {
-                    console.log('[AllianceChatNotify] Unread messages detected! Newest:', newestMessageTimestamp, 'Last read:', lastReadTimestamp);
-                }
-            } else {
-                hasUnread = false;
             }
-
-            updateNotificationDots();
-
-        } catch (e) {
-            console.error('[AllianceChatNotify] Failed to check messages:', e);
         }
+
+        console.error('[AllianceChatNotify] Failed to check messages:', lastError);
     }
 
     // Mark messages as read after delay
@@ -301,7 +335,7 @@
         // Periodic dot update (in case elements are added dynamically)
         setInterval(updateNotificationDots, 1000);
 
-        console.log('[AllianceChatNotify] Script loaded v1.1');
+        console.log('[AllianceChatNotify] Script loaded');
     }
 
     // Wait for page to load

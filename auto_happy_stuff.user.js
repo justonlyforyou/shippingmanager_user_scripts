@@ -41,7 +41,7 @@
     var managementSmileyElement = null;
     var displayRetries = 0;
 
-    console.log('[Auto Happy Staff] v1.18 loaded');
+    console.log('[Auto Happy Staff] loaded');
 
     // ============================================
     // HEADER SMILEY DISPLAY

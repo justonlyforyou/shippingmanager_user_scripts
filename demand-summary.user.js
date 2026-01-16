@@ -2,7 +2,7 @@
 // @name         Shipping Manager - Demand Summary
 // @namespace    https://rebelship.org/
 // @description  Shows port demand with vessel capacity allocation overview
-// @version      4.14
+// @version      4.15
 // @author       https://github.com/justonlyforyou/
 // @order        11
 // @match        https://shippingmanager.cc/*
@@ -155,55 +155,92 @@
     }
 
     // ========== API FUNCTIONS ==========
-    async function fetchAllPortCodes() {
+    async function fetchAllPortCodes(maxRetries) {
         // Get port codes from game store or API
         const gameStore = getGameStore();
         if (gameStore && gameStore.ports && gameStore.ports.length > 0) {
             return gameStore.ports.map(p => p.code);
         }
 
-        // Fallback: fetch from API
-        const response = await fetch(API_BASE + '/game/index', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({})
-        });
+        // Fallback: fetch from API with retry
+        maxRetries = maxRetries ?? 3;
+        let lastError;
 
-        if (!response.ok) {
-            throw new Error('Failed to fetch game index');
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                const response = await fetch(API_BASE + '/game/index', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({})
+                });
+
+                if (!response.ok) {
+                    throw new Error('HTTP ' + response.status);
+                }
+
+                const data = await response.json();
+                if (!data.data || !data.data.ports) {
+                    throw new Error('No ports in game index');
+                }
+
+                return data.data.ports.map(p => p.code);
+            } catch (e) {
+                lastError = e;
+                log('fetchAllPortCodes attempt ' + attempt + '/' + maxRetries + ' failed: ' + e.message);
+                if (attempt < maxRetries) {
+                    const delay = attempt * 1000;
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
+            }
         }
 
-        const data = await response.json();
-        if (!data.data || !data.data.ports) {
-            throw new Error('No ports in game index');
-        }
-
-        return data.data.ports.map(p => p.code);
+        throw lastError;
     }
 
-    async function fetchPortsDemand(portCodes) {
+    async function fetchPortsDemand(portCodes, maxRetries) {
         // Fetch in batches of 50 to avoid request size issues
         const BATCH_SIZE = 50;
         const allPorts = [];
+        maxRetries = maxRetries ?? 3;
 
         for (let i = 0; i < portCodes.length; i += BATCH_SIZE) {
             const batch = portCodes.slice(i, i + BATCH_SIZE);
+            const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+            let lastError;
+            let success = false;
 
-            const response = await fetch(API_BASE + '/port/get-ports', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify({ port_code: batch })
-            });
+            for (let attempt = 1; attempt <= maxRetries; attempt++) {
+                try {
+                    const response = await fetch(API_BASE + '/port/get-ports', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                        body: JSON.stringify({ port_code: batch })
+                    });
 
-            if (!response.ok) {
-                throw new Error('Failed to fetch ports batch ' + (i / BATCH_SIZE + 1));
+                    if (!response.ok) {
+                        throw new Error('HTTP ' + response.status);
+                    }
+
+                    const data = await response.json();
+                    if (data.data && data.data.port) {
+                        allPorts.push(...data.data.port);
+                    }
+                    success = true;
+                    break;
+                } catch (e) {
+                    lastError = e;
+                    log('fetchPortsDemand batch ' + batchNum + ' attempt ' + attempt + '/' + maxRetries + ' failed: ' + e.message);
+                    if (attempt < maxRetries) {
+                        const delay = attempt * 1000;
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                    }
+                }
             }
 
-            const data = await response.json();
-            if (data.data && data.data.port) {
-                allPorts.push(...data.data.port);
+            if (!success) {
+                throw new Error('Failed to fetch ports batch ' + batchNum + ': ' + lastError.message);
             }
 
             // Small delay between batches

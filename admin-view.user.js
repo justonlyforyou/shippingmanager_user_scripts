@@ -13,7 +13,7 @@
 (function() {
     'use strict';
 
-    console.log('[AdminView] v8.5 loaded');
+    console.log('[AdminView] loaded');
 
     // Inject into page context
     const script = document.createElement('script');
