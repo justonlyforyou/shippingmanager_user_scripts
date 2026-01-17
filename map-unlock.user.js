@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name        Shipping Manager - Premium Feature Unlocker
 // @description Unlocks premium map themes, tanker ops, metropolis and extended zoom
-// @version     1.7
+// @version     1.8
 // @author      https://github.com/justonlyforyou/
-// @order       2
+// @order       15
 // @match       https://shippingmanager.cc/*
 // @run-at      document-end
 // @enabled     false

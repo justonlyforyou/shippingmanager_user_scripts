@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name        Shipping Manager - Rebelship Header Optimizer
 // @description Important script to handle all the Rebelship UI header elements for all scripts.
-// @version     3.47
+// @version     3.48
 // @author      https://github.com/justonlyforyou/
-// @order       1000
+// @order       999
 // @match       https://shippingmanager.cc/*
 // @run-at      document-end
 // @grant       none

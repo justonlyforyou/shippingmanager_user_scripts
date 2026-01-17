@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         ShippingManager - Bunker Price Display
 // @namespace    http://tampermonkey.net/
-// @version      3.18
+// @version      3.19
 // @description  Shows current fuel and CO2 bunker prices with fill levels
 // @author       https://github.com/justonlyforyou/
-// @order        22
+// @order        3
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-end

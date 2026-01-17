@@ -1,10 +1,10 @@
 // ==UserScript==
-// @name         ShippingManager - Forecast Calendar
+// @name         ShippingManager - Fuel / CO² Price Forecast Calendar
 // @namespace    http://tampermonkey.net/
-// @version      3.13
+// @version      3.18
 // @description  Embedded forecast calendar with page-flip navigation
 // @author       https://github.com/justonlyforyou/
-// @order        24
+// @order        18
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-end
@@ -48,117 +48,123 @@
     // ============================================
     const REBELSHIP_LOGO = '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><path d="M20 21c-1.39 0-2.78-.47-4-1.32-2.44 1.71-5.56 1.71-8 0C6.78 20.53 5.39 21 4 21H2v2h2c1.38 0 2.74-.35 4-.99 2.52 1.29 5.48 1.29 8 0 1.26.65 2.62.99 4 .99h2v-2h-2zM3.95 19H4c1.6 0 3.02-.88 4-2 .98 1.12 2.4 2 4 2s3.02-.88 4-2c.98 1.12 2.4 2 4 2h.05l1.89-6.68c.08-.26.06-.54-.06-.78s-.34-.42-.6-.5L20 10.62V6c0-1.1-.9-2-2-2h-3V1H9v3H6c-1.1 0-2 .9-2 2v4.62l-1.29.42c-.26.08-.48.26-.6.5s-.15.52-.06.78L3.95 19zM6 6h12v3.97L12 8 6 9.97V6z"/></svg>';
 
-    function getOrCreateRebelShipMenu() {
-        // Check if dropdown already exists (it's in document.body now)
-        var existingDropdown = document.getElementById('rebelship-dropdown');
-        if (existingDropdown) return existingDropdown;
+    // Wait for messaging icon using MutationObserver
+    function waitForMessagingIcon(callback) {
+        var messagingIcon = document.querySelector('div.messaging.cursor-pointer') || document.querySelector('.messaging');
+        if (messagingIcon) { callback(messagingIcon); return; }
+        var observer = new MutationObserver(function(mutations, obs) {
+            var icon = document.querySelector('div.messaging.cursor-pointer') || document.querySelector('.messaging');
+            if (icon) { obs.disconnect(); callback(icon); }
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+        setTimeout(function() { observer.disconnect(); }, 5000);
+    }
 
-        // Check if another script is creating the menu
-        if (window._rebelshipMenuCreating) return null;
+    function getOrCreateRebelShipMenu(callback) {
+        var existingDropdown = document.getElementById('rebelship-dropdown');
+        if (existingDropdown) { if (callback) callback(existingDropdown); return existingDropdown; }
+
+        if (window._rebelshipMenuCreating) { setTimeout(function() { getOrCreateRebelShipMenu(callback); }, 100); return null; }
         window._rebelshipMenuCreating = true;
 
-        // Double-check after lock
         existingDropdown = document.getElementById('rebelship-dropdown');
-        if (existingDropdown) { window._rebelshipMenuCreating = false; return existingDropdown; }
+        if (existingDropdown) { window._rebelshipMenuCreating = false; if (callback) callback(existingDropdown); return existingDropdown; }
 
-        var messagingIcon = document.querySelector('div.messaging.cursor-pointer');
-        if (!messagingIcon) messagingIcon = document.querySelector('.messaging');
-        if (!messagingIcon) { window._rebelshipMenuCreating = false; return null; }
+        waitForMessagingIcon(function(messagingIcon) {
+            var container = document.createElement('div');
+            container.id = 'rebelship-menu';
+            container.style.cssText = 'position:relative;display:inline-block;vertical-align:middle;margin-right:4px !important;z-index:999999;';
 
-        var container = document.createElement('div');
-        container.id = 'rebelship-menu';
-        container.style.cssText = 'position:relative;display:inline-block;vertical-align:middle;margin-right:4px !important;z-index:999999;';
+            var btn = document.createElement('button');
+            btn.id = 'rebelship-menu-btn';
+            btn.innerHTML = REBELSHIP_LOGO;
+            btn.title = 'RebelShip Menu';
+            btn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:28px;height:28px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:white;border:none;border-radius:6px;cursor:pointer;box-shadow:0 2px 4px rgba(0,0,0,0.2);';
 
-        var btn = document.createElement('button');
-        btn.id = 'rebelship-menu-btn';
-        btn.innerHTML = REBELSHIP_LOGO;
-        btn.title = 'RebelShip Menu';
+            var dropdown = document.createElement('div');
+            dropdown.id = 'rebelship-dropdown';
+            dropdown.className = 'rebelship-dropdown';
+            dropdown.style.cssText = 'display:none;position:fixed;background:#1f2937;border:1px solid #374151;border-radius:4px;min-width:200px;z-index:999999;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
 
-        btn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:28px;height:28px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:white;border:none;border-radius:6px;cursor:pointer;box-shadow:0 2px 4px rgba(0,0,0,0.2);';
+            container.appendChild(btn);
+            document.body.appendChild(dropdown);
 
-        var dropdown = document.createElement('div');
-        dropdown.id = 'rebelship-dropdown';
-        dropdown.className = 'rebelship-dropdown';
-        dropdown.style.cssText = 'display:none;position:fixed;background:#1f2937;border:1px solid #374151;border-radius:4px;min-width:200px;z-index:999999;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
+            btn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                if (dropdown.style.display === 'block') {
+                    dropdown.style.display = 'none';
+                } else {
+                    var rect = btn.getBoundingClientRect();
+                    dropdown.style.top = (rect.bottom + 4) + 'px';
+                    dropdown.style.right = (window.innerWidth - rect.right) + 'px';
+                    dropdown.style.display = 'block';
+                }
+            });
 
-        container.appendChild(btn);
-        document.body.appendChild(dropdown);
+            document.addEventListener('click', function(e) {
+                if (!container.contains(e.target) && !dropdown.contains(e.target)) {
+                    dropdown.style.display = 'none';
+                }
+            });
 
-        btn.addEventListener('click', function(e) {
-            e.stopPropagation();
-            if (dropdown.style.display === 'block') {
-                dropdown.style.display = 'none';
-            } else {
-                var rect = btn.getBoundingClientRect();
-                dropdown.style.top = (rect.bottom + 4) + 'px';
-                dropdown.style.right = (window.innerWidth - rect.right) + 'px';
-                dropdown.style.display = 'block';
+            if (messagingIcon.parentNode) {
+                messagingIcon.parentNode.insertBefore(container, messagingIcon);
             }
+
+            window._rebelshipMenuCreating = false;
+            if (callback) callback(dropdown);
         });
-
-        document.addEventListener('click', function(e) {
-            if (!container.contains(e.target) && !dropdown.contains(e.target)) {
-                dropdown.style.display = 'none';
-            }
-        });
-
-        if (messagingIcon.parentNode) {
-            messagingIcon.parentNode.insertBefore(container, messagingIcon);
-        }
-
-        window._rebelshipMenuCreating = false;
-        return dropdown;
+        return null;
     }
 
     function addMenuItem(label, onClick, scriptOrder) {
-        const dropdown = getOrCreateRebelShipMenu();
-        if (!dropdown) {
-            setTimeout(() => addMenuItem(label, onClick, scriptOrder), 1000);
-            return null;
-        }
-
-        if (dropdown.querySelector(`[data-rebelship-item="${label}"]`)) {
-            return dropdown.querySelector(`[data-rebelship-item="${label}"]`);
-        }
-
-        const item = document.createElement('div');
-        item.dataset.rebelshipItem = label;
-        item.dataset.order = scriptOrder;
-        item.style.cssText = 'position:relative;';
-
-        const itemBtn = document.createElement('div');
-        itemBtn.style.cssText = 'padding:10px 12px;cursor:pointer;color:#fff;font-size:13px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #374151;';
-        itemBtn.innerHTML = '<span>' + label + '</span>';
-
-        itemBtn.addEventListener('mouseenter', () => itemBtn.style.background = '#374151');
-        itemBtn.addEventListener('mouseleave', () => itemBtn.style.background = 'transparent');
-
-        if (onClick) {
-            itemBtn.addEventListener('click', () => {
-                dropdown.style.display = 'none';
-                onClick();
-            });
-        }
-
-        item.appendChild(itemBtn);
-
-        // Insert in sorted order by scriptOrder
-        const items = dropdown.querySelectorAll('[data-rebelship-item]');
-        let insertBefore = null;
-        for (let i = 0; i < items.length; i++) {
-            const existingOrder = parseInt(items[i].dataset.order, 10);
-            if (scriptOrder < existingOrder) {
-                insertBefore = items[i];
-                break;
+        function doAddItem(dropdown) {
+            if (dropdown.querySelector('[data-rebelship-item="' + label + '"]')) {
+                return dropdown.querySelector('[data-rebelship-item="' + label + '"]');
             }
-        }
-        if (insertBefore) {
-            dropdown.insertBefore(item, insertBefore);
-        } else {
-            dropdown.appendChild(item);
+
+            var item = document.createElement('div');
+            item.dataset.rebelshipItem = label;
+            item.dataset.order = scriptOrder;
+            item.style.cssText = 'position:relative;';
+
+            var itemBtn = document.createElement('div');
+            itemBtn.style.cssText = 'padding:10px 12px;cursor:pointer;color:#fff;font-size:13px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #374151;';
+            itemBtn.innerHTML = '<span>' + label + '</span>';
+
+            itemBtn.addEventListener('mouseenter', function() { itemBtn.style.background = '#374151'; });
+            itemBtn.addEventListener('mouseleave', function() { itemBtn.style.background = 'transparent'; });
+
+            if (onClick) {
+                itemBtn.addEventListener('click', function() {
+                    dropdown.style.display = 'none';
+                    onClick();
+                });
+            }
+
+            item.appendChild(itemBtn);
+
+            var items = dropdown.querySelectorAll('[data-rebelship-item]');
+            var insertBefore = null;
+            for (var i = 0; i < items.length; i++) {
+                var existingOrder = parseInt(items[i].dataset.order, 10);
+                if (scriptOrder < existingOrder) {
+                    insertBefore = items[i];
+                    break;
+                }
+            }
+            if (insertBefore) {
+                dropdown.insertBefore(item, insertBefore);
+            } else {
+                dropdown.appendChild(item);
+            }
+            return item;
         }
 
-        return item;
+        var dropdown = document.getElementById('rebelship-dropdown');
+        if (dropdown) { return doAddItem(dropdown); }
+        getOrCreateRebelShipMenu(function(dd) { doAddItem(dd); });
+        return null;
     }
 
     // ============================================
@@ -847,7 +853,7 @@
         style.textContent = FORECAST_CSS;
         document.head.appendChild(style);
 
-        addMenuItem('Bunker Forecast', openForecast, 24);
+        addMenuItem('Bunker Forecast', openForecast, 18);
         console.log('[Forecast] Menu item added');
     }
 

@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name        Shipping Manager - Open Alliance Search
 // @description Search all open alliances 
-// @version     3.10
+// @version     3.13
 // @author      https://github.com/justonlyforyou/
-// @order       10
+// @order       9
 // @match       https://shippingmanager.cc/*
 // @run-at      document-end
 // @enabled     false
@@ -350,98 +350,159 @@
         return filtered;
     }
 
+    // Wait for messaging icon using MutationObserver
+    function waitForMessagingIcon(callback) {
+        var messagingIcon = document.querySelector('div.messaging.cursor-pointer');
+        if (!messagingIcon) messagingIcon = document.querySelector('.messaging');
+
+        if (messagingIcon) {
+            callback(messagingIcon);
+            return;
+        }
+
+        var observer = new MutationObserver(function(mutations, obs) {
+            var icon = document.querySelector('div.messaging.cursor-pointer');
+            if (!icon) icon = document.querySelector('.messaging');
+            if (icon) {
+                obs.disconnect();
+                callback(icon);
+            }
+        });
+
+        observer.observe(document.body, { childList: true, subtree: true });
+
+        // Timeout fallback after 5 seconds
+        setTimeout(function() {
+            observer.disconnect();
+        }, 5000);
+    }
+
     // Get or create RebelShip menu (same position for mobile and desktop)
-    function getOrCreateRebelShipMenu() {
+    function getOrCreateRebelShipMenu(callback) {
         // Check if dropdown already exists (it's in document.body now)
         var existingDropdown = document.getElementById('rebelship-dropdown');
-        if (existingDropdown) return existingDropdown;
+        if (existingDropdown) {
+            if (callback) callback(existingDropdown);
+            return existingDropdown;
+        }
 
         var menu = document.getElementById('rebelship-menu');
-        if (menu && existingDropdown) return existingDropdown;
+        if (menu) {
+            existingDropdown = document.getElementById('rebelship-dropdown');
+            if (existingDropdown) {
+                if (callback) callback(existingDropdown);
+                return existingDropdown;
+            }
+        }
 
-        if (window._rebelshipMenuCreating) return null;
+        if (window._rebelshipMenuCreating) {
+            // Wait for menu creation to complete
+            setTimeout(function() { getOrCreateRebelShipMenu(callback); }, 100);
+            return null;
+        }
         window._rebelshipMenuCreating = true;
 
         existingDropdown = document.getElementById('rebelship-dropdown');
-        if (existingDropdown) { window._rebelshipMenuCreating = false; return existingDropdown; }
+        if (existingDropdown) {
+            window._rebelshipMenuCreating = false;
+            if (callback) callback(existingDropdown);
+            return existingDropdown;
+        }
 
-        var messagingIcon = document.querySelector('div.messaging.cursor-pointer');
-        if (!messagingIcon) messagingIcon = document.querySelector('.messaging');
-        if (!messagingIcon) { window._rebelshipMenuCreating = false; return null; }
+        // Use MutationObserver to wait for messaging icon
+        waitForMessagingIcon(function(messagingIcon) {
+            // Double-check dropdown wasn't created while waiting
+            var dropdown = document.getElementById('rebelship-dropdown');
+            if (dropdown) {
+                window._rebelshipMenuCreating = false;
+                if (callback) callback(dropdown);
+                return;
+            }
 
-        var container = document.createElement('div');
-        container.id = 'rebelship-menu';
-        container.style.cssText = 'position:relative;display:inline-block;vertical-align:middle;margin-right:4px !important;z-index:999999;';
+            var container = document.createElement('div');
+            container.id = 'rebelship-menu';
+            container.style.cssText = 'position:relative;display:inline-block;vertical-align:middle;margin-right:4px !important;z-index:999999;';
 
-        var btn = document.createElement('button');
-        btn.id = 'rebelship-menu-btn';
-        btn.innerHTML = REBELSHIP_LOGO;
-        btn.title = 'RebelShip Menu';
-        btn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:28px;height:28px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:white;border:none;border-radius:6px;cursor:pointer;box-shadow:0 2px 4px rgba(0,0,0,0.2);';
+            var btn = document.createElement('button');
+            btn.id = 'rebelship-menu-btn';
+            btn.innerHTML = REBELSHIP_LOGO;
+            btn.title = 'RebelShip Menu';
+            btn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:28px;height:28px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:white;border:none;border-radius:6px;cursor:pointer;box-shadow:0 2px 4px rgba(0,0,0,0.2);';
 
-        var dropdown = document.createElement('div');
-        dropdown.id = 'rebelship-dropdown';
-        dropdown.className = 'rebelship-dropdown';
-        dropdown.style.cssText = 'display:none;position:fixed;background:#1f2937;border:1px solid #374151;border-radius:4px;min-width:200px;z-index:999999;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
+            dropdown = document.createElement('div');
+            dropdown.id = 'rebelship-dropdown';
+            dropdown.className = 'rebelship-dropdown';
+            dropdown.style.cssText = 'display:none;position:fixed;background:#1f2937;border:1px solid #374151;border-radius:4px;min-width:200px;z-index:999999;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
 
-        container.appendChild(btn);
-        document.body.appendChild(dropdown);
-        btn.addEventListener('click', function(e) { e.stopPropagation(); if (dropdown.style.display === 'block') { dropdown.style.display = 'none'; } else { var rect = btn.getBoundingClientRect(); dropdown.style.top = (rect.bottom + 4) + 'px'; dropdown.style.right = (window.innerWidth - rect.right) + 'px'; dropdown.style.display = 'block'; } });
-        document.addEventListener('click', function(e) { if (!container.contains(e.target) && !dropdown.contains(e.target)) dropdown.style.display = 'none'; });
+            container.appendChild(btn);
+            document.body.appendChild(dropdown);
+            btn.addEventListener('click', function(e) { e.stopPropagation(); if (dropdown.style.display === 'block') { dropdown.style.display = 'none'; } else { var rect = btn.getBoundingClientRect(); dropdown.style.top = (rect.bottom + 4) + 'px'; dropdown.style.right = (window.innerWidth - rect.right) + 'px'; dropdown.style.display = 'block'; } });
+            document.addEventListener('click', function(e) { if (!container.contains(e.target) && !dropdown.contains(e.target)) dropdown.style.display = 'none'; });
 
-        if (messagingIcon.parentNode) messagingIcon.parentNode.insertBefore(container, messagingIcon);
+            if (messagingIcon.parentNode) messagingIcon.parentNode.insertBefore(container, messagingIcon);
 
-        window._rebelshipMenuCreating = false;
-        return dropdown;
+            window._rebelshipMenuCreating = false;
+            console.log('[RebelShip] Menu created successfully');
+            if (callback) callback(dropdown);
+        });
+
+        return null;
     }
 
     // Add menu item
     function addMenuItem(label, onClick, scriptOrder) {
-        var dropdown = getOrCreateRebelShipMenu();
-        if (!dropdown) {
-            setTimeout(function() { addMenuItem(label, onClick, scriptOrder); }, 1000);
-            return null;
-        }
-
-        if (dropdown.querySelector('[data-rebelship-item="' + label + '"]')) {
-            return dropdown.querySelector('[data-rebelship-item="' + label + '"]');
-        }
-
-        var item = document.createElement('div');
-        item.dataset.rebelshipItem = label;
-        item.dataset.order = scriptOrder;
-        item.style.cssText = 'position:relative;';
-
-        var itemBtn = document.createElement('div');
-        itemBtn.style.cssText = 'padding:10px 12px;cursor:pointer;color:#fff;font-size:13px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #374151;';
-        itemBtn.innerHTML = '<span>' + label + '</span>';
-
-        itemBtn.addEventListener('mouseenter', function() { itemBtn.style.background = '#374151'; });
-        itemBtn.addEventListener('mouseleave', function() { itemBtn.style.background = 'transparent'; });
-
-        if (onClick) {
-            itemBtn.addEventListener('click', onClick);
-        }
-
-        item.appendChild(itemBtn);
-
-        // Insert in sorted order by scriptOrder
-        var items = dropdown.querySelectorAll('[data-rebelship-item]');
-        var insertBefore = null;
-        for (var i = 0; i < items.length; i++) {
-            var existingOrder = parseInt(items[i].dataset.order, 10);
-            if (scriptOrder < existingOrder) {
-                insertBefore = items[i];
-                break;
+        function doAddItem(dropdown) {
+            if (dropdown.querySelector('[data-rebelship-item="' + label + '"]')) {
+                return dropdown.querySelector('[data-rebelship-item="' + label + '"]');
             }
-        }
-        if (insertBefore) {
-            dropdown.insertBefore(item, insertBefore);
-        } else {
-            dropdown.appendChild(item);
+
+            var item = document.createElement('div');
+            item.dataset.rebelshipItem = label;
+            item.dataset.order = scriptOrder;
+            item.style.cssText = 'position:relative;';
+
+            var itemBtn = document.createElement('div');
+            itemBtn.style.cssText = 'padding:10px 12px;cursor:pointer;color:#fff;font-size:13px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #374151;';
+            itemBtn.innerHTML = '<span>' + label + '</span>';
+
+            itemBtn.addEventListener('mouseenter', function() { itemBtn.style.background = '#374151'; });
+            itemBtn.addEventListener('mouseleave', function() { itemBtn.style.background = 'transparent'; });
+
+            if (onClick) {
+                itemBtn.addEventListener('click', onClick);
+            }
+
+            item.appendChild(itemBtn);
+
+            // Insert in sorted order by scriptOrder
+            var items = dropdown.querySelectorAll('[data-rebelship-item]');
+            var insertBefore = null;
+            for (var i = 0; i < items.length; i++) {
+                var existingOrder = parseInt(items[i].dataset.order, 10);
+                if (scriptOrder < existingOrder) {
+                    insertBefore = items[i];
+                    break;
+                }
+            }
+            if (insertBefore) {
+                dropdown.insertBefore(item, insertBefore);
+            } else {
+                dropdown.appendChild(item);
+            }
+
+            return item;
         }
 
-        return item;
+        var dropdown = document.getElementById('rebelship-dropdown');
+        if (dropdown) {
+            return doAddItem(dropdown);
+        }
+
+        // Use callback-based approach
+        getOrCreateRebelShipMenu(function(dd) {
+            doAddItem(dd);
+        });
+        return null;
     }
 
     var injectRetryCount = 0;

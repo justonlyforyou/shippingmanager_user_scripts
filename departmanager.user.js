@@ -2,9 +2,9 @@
 // @name         ShippingManager - Depart Manager
 // @namespace    https://rebelship.org/
 // @description  Unified departure management: Auto bunker rebuy, auto-depart, Smuggler's Eye pricing, drydock prevention, route settings
-// @version      2.61
+// @version      2.79
 // @author       https://github.com/justonlyforyou/
-// @order        9
+// @order        20
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-end
@@ -20,6 +20,8 @@
     var AUTOPRICE_CACHE_KEY = 'rebelship_autoprice_cache';
     var AUTOPRICE_CACHE_TTL = 4 * 60 * 60 * 1000; // 4 hours
     var CHECK_INTERVAL = 60 * 1000; // 60 seconds
+    var LAST_CHECK_KEY = 'rebelship_depart_last_check';
+    var CATCHUP_THRESHOLD = 2 * 60 * 1000; // 2 minutes - if more time passed, run immediate catch-up
     var API_BASE = 'https://shippingmanager.cc/api';
 
     // Hijacking risk cache - stores route_origin<>route_destination -> risk mapping
@@ -32,6 +34,8 @@
         autoDrydockType: 'major',
         autoDrydockSpeed: 'minimum',
         autoDrydockMinCash: 500000,
+        drydockNotifyIngame: true,
+        drydockNotifySystem: false,
         // Smuggler's Eye Settings
         smugglersEyeEnabled: false,
         instant4Percent: true,
@@ -40,6 +44,8 @@
         gradualIncreaseInterval: 25,
         targetPercent: 8,
         maxGuardsOnPirateRoutes: true,
+        smugglersEyeNotifyIngame: true,
+        smugglersEyeNotifySystem: false,
         // Fuel Settings
         fuelMode: 'off',
         fuelPriceThreshold: 500,
@@ -49,6 +55,8 @@
         fuelIntelligentBelow: 500,
         fuelIntelligentShipsEnabled: false,
         fuelIntelligentShips: 5,
+        fuelNotifyIngame: true,
+        fuelNotifySystem: false,
         // CO2 Settings
         co2Mode: 'off',
         co2PriceThreshold: 10,
@@ -59,9 +67,13 @@
         co2IntelligentShipsEnabled: false,
         co2IntelligentShips: 5,
         avoidNegativeCO2: false,
+        co2NotifyIngame: true,
+        co2NotifySystem: false,
         // Depart Settings
         autoDepartEnabled: false,
-        // Notifications
+        departNotifyIngame: true,
+        departNotifySystem: false,
+        // Notifications (legacy, kept for backward compatibility)
         systemNotifications: false
     };
 
@@ -124,6 +136,24 @@
         storage.settings = settings;
         saveStorage(storage);
         log('Settings saved');
+    }
+
+    function getLastCheckTime() {
+        try {
+            var timestamp = localStorage.getItem(LAST_CHECK_KEY);
+            return timestamp ? parseInt(timestamp, 10) : 0;
+        } catch (err) {
+            log('Failed to read last check time: ' + err.message, 'error');
+            return 0;
+        }
+    }
+
+    function saveLastCheckTime() {
+        try {
+            localStorage.setItem(LAST_CHECK_KEY, Date.now().toString());
+        } catch (e) {
+            log('Failed to save last check time: ' + e.message, 'error');
+        }
     }
 
     function syncSettingsToAndroid(settings) {
@@ -490,35 +520,58 @@
      * @param {string} type - 'success', 'error', 'warning', 'info' (default: 'success')
      * @param {string} category - Category for grouping (default: 'general')
      */
-    function notify(message, type, _category) {
+    function notify(message, type, category) {
         type = type || 'success';
-        _category = _category || 'general';
+        category = category || 'general';
 
         var formattedMessage = '[Depart Manager] ' + message;
         log(type.toUpperCase() + ': ' + message);
 
-        // In-game toast - always show (uses raw message, game UI handles styling)
-        var toastStore = getToastStore();
-        if (toastStore) {
-            try {
-                if (type === 'error' && toastStore.error) {
-                    toastStore.error(message);
-                } else if (type === 'warning' && toastStore.warning) {
-                    toastStore.warning(message);
-                } else if (type === 'info' && toastStore.info) {
-                    toastStore.info(message);
-                } else if (toastStore.success) {
-                    toastStore.success(message);
+        var settings = getSettings();
+
+        // Determine notification settings based on category
+        var showIngame = true;
+        var showSystem = false;
+
+        if (category === 'fuel') {
+            showIngame = settings.fuelNotifyIngame !== false;
+            showSystem = settings.fuelNotifySystem === true;
+        } else if (category === 'co2') {
+            showIngame = settings.co2NotifyIngame !== false;
+            showSystem = settings.co2NotifySystem === true;
+        } else if (category === 'smuggler') {
+            showIngame = settings.smugglersEyeNotifyIngame !== false;
+            showSystem = settings.smugglersEyeNotifySystem === true;
+        } else if (category === 'drydock') {
+            showIngame = settings.drydockNotifyIngame !== false;
+            showSystem = settings.drydockNotifySystem === true;
+        } else if (category === 'depart') {
+            showIngame = settings.departNotifyIngame !== false;
+            showSystem = settings.departNotifySystem === true;
+        }
+
+        // In-game toast (uses raw message, game UI handles styling)
+        if (showIngame) {
+            var toastStore = getToastStore();
+            if (toastStore) {
+                try {
+                    if (type === 'error' && toastStore.error) {
+                        toastStore.error(message);
+                    } else if (type === 'warning' && toastStore.warning) {
+                        toastStore.warning(message);
+                    } else if (type === 'info' && toastStore.info) {
+                        toastStore.info(message);
+                    } else if (toastStore.success) {
+                        toastStore.success(message);
+                    }
+                } catch {
+                    // Toast store not available
                 }
-            } catch {
-                // Toast store not available
             }
         }
 
         // Desktop notification via RebelShipNotify (Windows/Android browser)
-        // Only send if systemNotifications is enabled in settings
-        var settings = getSettings();
-        if (settings.systemNotifications && window.RebelShipNotify && window.RebelShipNotify.notify) {
+        if (showSystem && window.RebelShipNotify && window.RebelShipNotify.notify) {
             try {
                 window.RebelShipNotify.notify(formattedMessage);
             } catch (e) {
@@ -957,7 +1010,9 @@
                 success: true,
                 income: departInfo.depart_income,
                 harborFee: departInfo.harbor_fee,
-                fuelUsed: departInfo.fuel_usage / 1000
+                channelFee: departInfo.channel_payment,
+                fuelUsed: departInfo.fuel_usage / 1000,
+                co2Used: departInfo.co2_emission / 1000
             };
         } catch (e) {
             log('departVesselAPI failed: ' + e.message, 'error');
@@ -1696,27 +1751,72 @@
 
             log('Drydock request detected for ' + vesselIds.length + ' vessel(s)');
 
-            var vessels = await fetchVesselData();
-            if (!vessels || vessels.length === 0) return;
-
-            var vesselMap = new Map(vessels.map(function(v) { return [v.id, v]; }));
+            var MAX_RETRIES = 3;
+            var RETRY_DELAY_MS = 750;
 
             for (var i = 0; i < vesselIds.length; i++) {
                 var vesselId = vesselIds[i];
-                var vessel = vesselMap.get(vesselId);
-                if (!vessel) continue;
+                var vessel = null;
+                var retryCount = 0;
+                var validData = false;
+
+                while (retryCount < MAX_RETRIES && !validData) {
+                    var vessels = await fetchVesselData();
+                    if (!vessels || vessels.length === 0) {
+                        retryCount++;
+                        log('Retry ' + retryCount + '/' + MAX_RETRIES + ': No vessel data received');
+                        await new Promise(function(r) { setTimeout(r, RETRY_DELAY_MS); });
+                        continue;
+                    }
+
+                    var vesselMap = new Map(vessels.map(function(v) { return [v.id, v]; }));
+                    vessel = vesselMap.get(vesselId);
+
+                    if (!vessel) {
+                        retryCount++;
+                        log('Retry ' + retryCount + '/' + MAX_RETRIES + ': Vessel ' + vesselId + ' not found');
+                        await new Promise(function(r) { setTimeout(r, RETRY_DELAY_MS); });
+                        continue;
+                    }
+
+                    if (vessel.route_speed === undefined ||
+                        vessel.route_guards === undefined ||
+                        !vessel.prices ||
+                        vessel.hours_until_check === undefined) {
+                        retryCount++;
+                        log('Retry ' + retryCount + '/' + MAX_RETRIES + ': ' + vessel.name + ' has incomplete data');
+                        await new Promise(function(r) { setTimeout(r, RETRY_DELAY_MS); });
+                        continue;
+                    }
+
+                    validData = true;
+                }
+
+                if (!validData) {
+                    var missing = [];
+                    if (!vessel) {
+                        log('ERROR: Vessel ' + vesselId + ' not found after ' + MAX_RETRIES + ' retries, skipping', 'error');
+                        continue;
+                    }
+                    if (vessel.route_speed === undefined) missing.push('route_speed');
+                    if (vessel.route_guards === undefined) missing.push('route_guards');
+                    if (!vessel.prices) missing.push('prices');
+                    if (vessel.hours_until_check === undefined) missing.push('hours_until_check');
+                    log(vessel.name + ': ERROR - Missing fields after ' + MAX_RETRIES + ' retries: ' + missing.join(', '), 'error');
+                    continue;
+                }
 
                 var hasActiveRoute = (vessel.active_route && vessel.active_route.route_id) || vessel.route_id;
                 var isBugUse = !hasActiveRoute;
 
                 saveDrydockVessel(vesselId, {
                     name: vessel.name,
-                    speed: vessel.route_speed || vessel.max_speed,
-                    guards: vessel.route_guards || 0,
-                    prices: vessel.prices || {},
-                    hoursAtDrydock: vessel.hours_until_check || 0,
+                    speed: vessel.route_speed,
+                    guards: vessel.route_guards,
+                    prices: vessel.prices,
+                    hoursAtDrydock: vessel.hours_until_check,
                     routeId: vessel.active_route ? vessel.active_route.route_id : null,
-                    originPort: vessel.route_origin || vessel.current_port_code,
+                    originPort: vessel.route_origin ? vessel.route_origin : vessel.current_port_code,
                     destinationPort: vessel.route_destination,
                     status: isBugUse ? 'bug_use' : 'pre_drydock'
                 });
@@ -1730,7 +1830,7 @@
         }
     }
 
-    function handleVesselDataResponse(data) {
+    async function handleVesselDataResponse(data) {
         var vessels = [];
         if (data && data.data && data.data.user_vessels) {
             vessels = data.data.user_vessels;
@@ -1738,6 +1838,9 @@
             vessels = data.vessels;
         }
         if (vessels.length === 0) return;
+
+        // Update hijacking risk cache from intercepted vessel data (game/index, etc.)
+        updateHijackingRiskCache(vessels);
 
         var vesselMap = new Map(vessels.map(function(v) { return [v.id, v]; }));
 
@@ -1766,8 +1869,8 @@
             if (preVessel.route_dry_operation === 1) continue;
             if (preVessel.status === 'maintenance') continue;
 
-            var currentHours = preVessel.hours_until_check || 0;
-            var savedHours = preEntry.data.hoursAtDrydock || 0;
+            var currentHours = preVessel.hours_until_check;
+            var savedHours = preEntry.data.hoursAtDrydock;
 
             if (currentHours > savedHours) {
                 log(preEntry.data.name + ': Drydock complete (hours: ' + savedHours + ' -> ' + currentHours + ')');
@@ -1783,7 +1886,7 @@
             if (!pastVessel) continue;
 
             if ((pastVessel.status === 'port' || pastVessel.status === 'anchor') && !pastVessel.is_parked) {
-                restoreDrydockSettings(pastEntry.vesselId, pastEntry.data, pastVessel);
+                await restoreDrydockSettings(pastEntry.vesselId, pastEntry.data, pastVessel);
             }
         }
     }
@@ -2125,7 +2228,7 @@
             log('Drydock check: ' + vessels.length + ' total, ' + needsDrydock.length + ' need drydock (threshold: ' + threshold + 'h)');
 
             if (needsDrydock.length === 0) {
-                if (manual) notify('No vessels need drydock');
+                if (manual) notify('No vessels need drydock', 'info', 'drydock');
                 return;
             }
 
@@ -2133,7 +2236,7 @@
 
             var userData = await fetchUserData();
             if (!userData || !userData.user) {
-                if (manual) notify('Could not fetch user data', 'error');
+                if (manual) notify('Could not fetch user data', 'error', 'drydock');
                 return;
             }
 
@@ -2145,7 +2248,7 @@
 
             var costData = await getMaintenanceCost(vesselIds, costSpeedValue, settings.autoDrydockType);
             if (!costData) {
-                if (manual) notify('Could not get maintenance cost', 'error');
+                if (manual) notify('Could not get maintenance cost', 'error', 'drydock');
                 return;
             }
 
@@ -2160,7 +2263,7 @@
             var cashAfter = cash - totalCost;
             if (cashAfter < minCash) {
                 log('Insufficient funds: $' + cash + ' - $' + totalCost + ' = $' + cashAfter + ' < min $' + minCash);
-                if (manual) notify('Insufficient funds for drydock', 'error');
+                if (manual) notify('Insufficient funds for drydock', 'error', 'drydock');
                 return;
             }
 
@@ -2188,12 +2291,12 @@
             if (result) {
                 var vesselNames = needsDrydock.map(function(v) { return v.name; }).join(', ');
                 log('Sent ' + needsDrydock.length + ' vessel(s) to drydock: ' + vesselNames);
-                notify('Sent ' + needsDrydock.length + ' vessel(s) to drydock');
+                notify('Sent ' + needsDrydock.length + ' vessel(s) to drydock', 'success', 'drydock');
             }
 
         } catch (e) {
             log('Auto drydock error: ' + e.message, 'error');
-            if (manual) notify('Error: ' + e.message, 'error');
+            if (manual) notify('Error: ' + e.message, 'error', 'drydock');
         } finally {
             autoDrydockRunning = false;
         }
@@ -2374,9 +2477,17 @@
             var departedCount = 0;
             var totalFuelUsed = 0;
             var totalCO2Used = 0;
+            var totalIncome = 0;
+            var recentDepartures = [];
             var errors = [];
             var skipped = [];
             var round = 0;
+
+            // Batch tracking for notifications (reset after each batch of 10)
+            var batchCount = 0;
+            var batchFuel = 0;
+            var batchCO2 = 0;
+            var batchIncome = 0;
 
             // Keep processing until no more vessels are ready
             while (true) {
@@ -2409,7 +2520,6 @@
                 });
 
                 var roundDeparted = 0;
-                var recentDepartures = [];
 
                 for (var i = 0; i < readyVessels.length; i++) {
                     var vessel = readyVessels[i];
@@ -2478,6 +2588,14 @@
                         departedCount++;
                         roundDeparted++;
                         totalFuelUsed += result.fuelUsed;
+                        totalCO2Used += result.co2Used;
+                        totalIncome += result.income;
+
+                        // Track batch-specific totals
+                        batchCount++;
+                        batchFuel += result.fuelUsed;
+                        batchCO2 += result.co2Used;
+                        batchIncome += result.income;
 
                         // Collect departure info for batch notification
                         recentDepartures.push({
@@ -2489,15 +2607,17 @@
 
                         log(vessel.name + ': Departed');
 
-                        // Every 10 ships: show batch summary with last 5 ships, refresh harbor
-                        if (departedCount % 10 === 0) {
-                            var lastFive = recentDepartures.slice(-5);
-                            var batchMsg = 'Departed ' + departedCount + ' ships. Last 5:\n' +
-                                lastFive.map(function(d) {
-                                    return d.name + ': +$' + formatNumber(d.income);
-                                }).join('\n');
+                        // Every 10 ships: show batch summary, refresh harbor
+                        if (batchCount >= 10) {
+                            var batchMsg = 'Departed ' + batchCount + ' | +$' + formatNumber(batchIncome) +
+                                ' | Fuel: ' + batchFuel.toFixed(0) + 't | CO2: ' + batchCO2.toFixed(0) + 't';
                             notify(batchMsg, 'success', 'depart');
                             refreshGameData();
+                            // Reset batch counters
+                            batchCount = 0;
+                            batchFuel = 0;
+                            batchCO2 = 0;
+                            batchIncome = 0;
                         }
                     } else {
                         var errMsg = vessel.name + ': ' + result.error;
@@ -2570,8 +2690,11 @@
                 }
             }
 
-            if (departedCount > 0) {
-                notify('Departed ' + departedCount + ' vessel(s)', 'success', 'depart');
+            // Send notification for remaining ships in partial batch (less than 10)
+            if (batchCount > 0) {
+                var remainderMsg = 'Departed ' + batchCount + ' | +$' + formatNumber(batchIncome) +
+                    ' | Fuel: ' + batchFuel.toFixed(0) + 't | CO2: ' + batchCO2.toFixed(0) + 't';
+                notify(remainderMsg, 'success', 'depart');
                 refreshGameData();
             }
 
@@ -2588,7 +2711,7 @@
                 }
             }
 
-            return { departed: departedCount, fuelUsed: totalFuelUsed, co2Used: totalCO2Used };
+            return { departed: departedCount, fuelUsed: totalFuelUsed, co2Used: totalCO2Used, income: totalIncome };
 
         } catch (e) {
             log('Auto-depart error: ' + e.message, 'error');
@@ -2606,6 +2729,44 @@
     var rsActiveSubtab = 'cargo';
     var rsSettingsTabAdded = false;
     var rsCachedVessels = null;
+
+    function rsOpenVesselPreview(vesselId) {
+        // Find the vessel in cached data
+        var vessel = rsCachedVessels ? rsCachedVessels.find(function(v) { return v.id === vesselId; }) : null;
+        if (!vessel) {
+            log('Vessel not found for preview: ' + vesselId, 'error');
+            return;
+        }
+
+        // Open vessel popover using same pattern as game's vesselClick
+        try {
+            var app = document.getElementById('app');
+            if (app && app.__vue_app__) {
+                var vueApp = app.__vue_app__;
+                var routeStore = vueApp.config.globalProperties.$pinia._s.get('route');
+                var globalStore = vueApp.config.globalProperties.$pinia._s.get('global');
+                var modalStore = vueApp.config.globalProperties.$pinia._s.get('modal');
+
+                if (routeStore && globalStore && modalStore) {
+                    // Set selectedVessel on routeStore
+                    routeStore.selectedVessel = vessel;
+                    // Use $patch to set popupData and trackedVessel (same as game's vesselClick)
+                    globalStore.$patch(function(state) {
+                        state.popupData.show = true;
+                        state.popupData.type = 'vessel';
+                        state.trackedVessel = vessel;
+                        state.isSideBarOpen = false;
+                    });
+                    // Close the modal
+                    modalStore.closeAll();
+                    return;
+                }
+            }
+        } catch (e) {
+            log('Failed to open vessel preview via Vue: ' + e.message);
+        }
+
+    }
 
     function rsGetAutoPrice(vessel, key) {
         // Read from central cache
@@ -2823,7 +2984,16 @@
         }
 
         var price1Html = '<input type="number" step="0.01" data-vessel-id="' + v.id + '" data-change-key="' + key1 + '" data-original="' + (price1 !== null ? price1 : '') + '" value="' + (price1 !== null ? price1 : '') + '" placeholder="-">';
+        var pendingPrice1 = hasPending && pending.prices ? (isCargo ? pending.prices.dry : pending.prices.fuel) : null;
+        if (pendingPrice1 !== null && pendingPrice1 !== undefined && pendingPrice1 !== price1) {
+            price1Html += '<span class="pending-indicator">->' + pendingPrice1 + '</span>';
+        }
+
         var price2Html = '<input type="number" step="0.01" data-vessel-id="' + v.id + '" data-change-key="' + key2 + '" data-original="' + (price2 !== null ? price2 : '') + '" value="' + (price2 !== null ? price2 : '') + '" placeholder="-">';
+        var pendingPrice2 = hasPending && pending.prices ? (isCargo ? pending.prices.refrigerated : pending.prices.crude_oil) : null;
+        if (pendingPrice2 !== null && pendingPrice2 !== undefined && pendingPrice2 !== price2) {
+            price2Html += '<span class="pending-indicator">->' + pendingPrice2 + '</span>';
+        }
 
         var guardsHtml = '<select data-vessel-id="' + v.id + '" data-change-key="guards" data-original="' + currentGuards + '">' +
             [0,1,2,3,4,5,6,7,8,9,10].map(function(i) { return '<option value="' + i + '"' + (i === currentGuards ? ' selected' : '') + '>' + i + '</option>'; }).join('') + '</select>';
@@ -2839,7 +3009,7 @@
         return '<tr>' +
             '<td class="status-cell"><span class="status-icon ' + statusInfo.cssClass + '" title="' + statusInfo.tooltip + '">' + statusInfo.code + '</span></td>' +
             '<td class="route-cell">' + route + '</td>' +
-            '<td class="name-cell">' + rsEscapeHtml(v.name) + '</td>' +
+            '<td class="name-cell" title="' + rsEscapeHtml(v.name) + '" data-vessel-id="' + v.id + '">' + rsEscapeHtml(v.name) + '</td>' +
             '<td class="num">' + speedHtml + '</td>' +
             '<td class="num max-speed">' + v.max_speed + '</td>' +
             '<td class="num auto-price">' + autoDisplay + '</td>' +
@@ -2901,6 +3071,14 @@
         wrapper.querySelectorAll('input, select').forEach(function(el) {
             el.addEventListener('input', rsHandleChange);
             el.addEventListener('change', rsHandleChange);
+        });
+
+        // Click handler for vessel name - shows vessel on map with route preview
+        wrapper.querySelectorAll('.name-cell').forEach(function(cell) {
+            cell.addEventListener('click', function() {
+                var vesselId = parseInt(cell.dataset.vesselId, 10);
+                if (vesselId) rsOpenVesselPreview(vesselId);
+            });
         });
     }
 
@@ -3032,7 +3210,7 @@
         modalCloseObserver.observe(document.body, { childList: true, subtree: true });
 
         var style = document.createElement('style');
-        style.textContent = '#rs-settings-container{width:100%;height:100%;display:flex;flex-direction:column;background:#f5f5f5;color:#01125d;font-family:Lato,sans-serif;font-size:11px}.rs-header{display:flex;align-items:center;gap:4px;padding:4px 6px;background:#e8e8e8;border-bottom:1px solid #ccc}.rs-subtab{padding:3px 8px;background:#fff;color:#01125d;border:1px solid #ccc;border-radius:3px;cursor:pointer;font-size:10px;font-weight:600}.rs-subtab:hover{background:#ddd}.rs-subtab.active{background:#0db8f4;color:#fff;border-color:#0db8f4}.rs-save-btn{margin-left:auto;padding:3px 10px;background:#22c55e;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:10px;font-weight:600;opacity:0.4}.rs-save-btn.has-changes{opacity:1}.rs-status{font-size:9px;color:#666;margin-left:6px}.rs-table-wrapper{flex:1;overflow:auto;padding-bottom:0}.rs-table{width:100%;border-collapse:collapse;font-size:10px}.rs-table thead{position:sticky;top:0;background:#e0e0e0;z-index:1}.rs-table th{padding:1px;text-align:center;font-weight:600;color:#01125d;border-bottom:1px solid #ccc;white-space:nowrap;background:#e0e0e0;font-size:10px}.rs-table td{padding:1px;border-bottom:1px solid #ddd;vertical-align:middle;text-align:center}.rs-table td.route-cell,.rs-table td.name-cell{text-align:left}.rs-table td.max-speed,.rs-table td.auto-price,.rs-table td.pct-diff{color:#666;font-size:9px}.rs-table tr:hover{background:#e8f4fc}.rs-table .warning{color:#d97706}.rs-table .status-cell{width:22px;text-align:center;padding:1px}.rs-table .status-icon{display:inline-block;width:18px;height:14px;line-height:14px;text-align:center;font-size:8px;font-weight:700;border-radius:2px}.rs-table .status-icon.status-e{background:#3b82f6;color:#fff}.rs-table .status-icon.status-p{background:#22c55e;color:#fff}.rs-table .status-icon.status-a{background:#f59e0b;color:#fff}.rs-table .status-icon.status-mp,.rs-table .status-icon.status-me{background:#8b5cf6;color:#fff}.rs-table .status-icon.status-m{background:#ef4444;color:#fff}.rs-table .status-icon.status-d{background:#6366f1;color:#fff}.rs-table .status-icon.status-td{background:#f97316;color:#fff}.rs-table .status-icon.status-fd{background:#14b8a6;color:#fff}.rs-table .status-icon.status-eo{background:#1d4ed8;color:#fff}.rs-table .status-icon.status-er{background:#0891b2;color:#fff}.rs-table .status-icon.status-bu{background:#dc2626;color:#fff}.rs-table .route-cell{font-size:9px;white-space:nowrap}.rs-table .name-cell{max-width:77px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px}.rs-table input[type="number"]{width:32px;padding:1px 2px;margin:0;background:#fff;border:1px solid #ccc;border-radius:2px;color:#01125d;font-size:10px;text-align:right;box-sizing:border-box;-moz-appearance:textfield}.rs-table input.speed-input{width:24px}.rs-table .pct-positive{color:#22c55e}.rs-table .pct-negative{color:#ef4444}.rs-table input[type="number"]::-webkit-outer-spin-button,.rs-table input[type="number"]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}.rs-table input[type="number"]:focus{outline:none;border-color:#0db8f4}.rs-table input.changed{background:#fef3c7;border-color:#f59e0b}.rs-table select{padding:1px 2px;background:#fff;border:1px solid #ccc;border-radius:2px;color:#01125d;font-size:10px;cursor:pointer}.rs-table select:focus{outline:none;border-color:#0db8f4}.rs-table select.changed{background:#fef3c7;border-color:#f59e0b}.rs-loading,.rs-error,.rs-no-data{padding:20px;text-align:center;color:#666}.rs-table .pending-indicator{display:inline;font-size:9px;color:#8b5cf6;font-weight:600;margin-left:2px}.rs-table th[data-tip]{position:relative;cursor:help}.rs-table th[data-tip]:hover::after{content:attr(data-tip);position:absolute;top:100%;left:50%;transform:translateX(-50%);background:#333;color:#fff;padding:6px 10px;border-radius:4px;font-size:10px;font-weight:400;white-space:pre-line;z-index:100;min-width:100px;max-width:180px;text-align:left;box-shadow:0 2px 8px rgba(0,0,0,0.3);margin-top:4px}.rs-table th[data-tip]:nth-child(-n+3):hover::after{left:0;transform:translateX(0)}.rs-table th[data-tip]:nth-last-child(-n+5):hover::after{left:auto;right:0;transform:translateX(0)}';
+        style.textContent = '#rs-settings-container{width:100%;height:100%;display:flex;flex-direction:column;background:#f5f5f5;color:#01125d;font-family:Lato,sans-serif;font-size:11px}.rs-header{display:flex;align-items:center;gap:4px;padding:4px 6px;background:#e8e8e8;border-bottom:1px solid #ccc}.rs-subtab{padding:3px 8px;background:#fff;color:#01125d;border:1px solid #ccc;border-radius:3px;cursor:pointer;font-size:10px;font-weight:600}.rs-subtab:hover{background:#ddd}.rs-subtab.active{background:#0db8f4;color:#fff;border-color:#0db8f4}.rs-save-btn{margin-left:auto;padding:3px 10px;background:#22c55e;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:10px;font-weight:600;opacity:0.4}.rs-save-btn.has-changes{opacity:1}.rs-status{font-size:9px;color:#666;margin-left:6px}.rs-table-wrapper{flex:1;overflow:auto;padding-bottom:50px}.rs-table{width:100%;border-collapse:collapse;font-size:10px}.rs-table thead{position:sticky;top:0;background:#e0e0e0;z-index:1}.rs-table th{padding:1px;text-align:center;font-weight:600;color:#01125d;border-bottom:1px solid #ccc;white-space:nowrap;background:#e0e0e0;font-size:10px}.rs-table td{padding:1px;border-bottom:1px solid #ddd;vertical-align:middle;text-align:center}.rs-table td.route-cell,.rs-table td.name-cell{text-align:left}.rs-table td.max-speed,.rs-table td.auto-price,.rs-table td.pct-diff{color:#666;font-size:9px}.rs-table tr:hover{background:#e8f4fc}.rs-table .warning{color:#d97706}.rs-table .status-cell{width:22px;text-align:center;padding:1px}.rs-table .status-icon{display:inline-block;height:14px;line-height:14px;text-align:center;font-size:8px;font-weight:700;border-radius:2px;padding:0 2px}.rs-table .status-icon.status-e{background:#3b82f6;color:#fff}.rs-table .status-icon.status-p{background:#22c55e;color:#fff}.rs-table .status-icon.status-a{background:#f59e0b;color:#fff}.rs-table .status-icon.status-mp,.rs-table .status-icon.status-me{background:#8b5cf6;color:#fff}.rs-table .status-icon.status-m{background:#ef4444;color:#fff}.rs-table .status-icon.status-d{background:#6366f1;color:#fff}.rs-table .status-icon.status-td{background:#f97316;color:#fff}.rs-table .status-icon.status-fd{background:#14b8a6;color:#fff}.rs-table .status-icon.status-eo{background:#1d4ed8;color:#fff}.rs-table .status-icon.status-er{background:#0891b2;color:#fff}.rs-table .status-icon.status-bu{background:#dc2626;color:#fff}.rs-table .route-cell{font-size:9px;white-space:nowrap}.rs-table .name-cell{max-width:60px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;cursor:pointer}.rs-table .name-cell:hover{text-decoration:underline}.rs-table input[type="number"]{width:32px;padding:1px 2px;margin:0;background:#fff;border:1px solid #ccc;border-radius:2px;color:#01125d;font-size:10px;text-align:right;box-sizing:border-box;-moz-appearance:textfield}.rs-table input.speed-input{width:24px}.rs-table .pct-positive{color:#22c55e}.rs-table .pct-negative{color:#ef4444}.rs-table input[type="number"]::-webkit-outer-spin-button,.rs-table input[type="number"]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}.rs-table input[type="number"]:focus{outline:none;border-color:#0db8f4}.rs-table input.changed{background:#fef3c7;border-color:#f59e0b}.rs-table select{padding:1px 2px;background:#fff;border:1px solid #ccc;border-radius:2px;color:#01125d;font-size:10px;cursor:pointer}.rs-table select:focus{outline:none;border-color:#0db8f4}.rs-table select.changed{background:#fef3c7;border-color:#f59e0b}.rs-loading,.rs-error,.rs-no-data{padding:20px;text-align:center;color:#666}.rs-table .pending-indicator{display:inline;font-size:9px;color:#8b5cf6;font-weight:600;margin-left:2px}.rs-table th[data-tip]{position:relative;cursor:help}.rs-table th[data-tip]:hover::after{content:attr(data-tip);position:absolute;top:100%;left:50%;transform:translateX(-50%);background:#333;color:#fff;padding:6px 10px;border-radius:4px;font-size:10px;font-weight:400;white-space:pre-line;z-index:100;min-width:100px;max-width:180px;text-align:left;box-shadow:0 2px 8px rgba(0,0,0,0.3);margin-top:4px}.rs-table th[data-tip]:nth-child(-n+3):hover::after{left:0;transform:translateX(0)}.rs-table th[data-tip]:nth-last-child(-n+5):hover::after{left:auto;right:0;transform:translateX(0)}';
         centralContainer.appendChild(style);
 
         rsRenderSettingsPanel();
@@ -3143,6 +3321,18 @@
             html += '<input type="number" id="dm-fuel-intel-ships" value="' + settings.fuelIntelligentShips + '" style="width:100%;padding:6px;border:1px solid #ccc;border-radius:4px;">';
             html += '</div>';
             html += '</div>';
+            // Fuel Notifications
+            html += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid #ddd;">';
+            html += '<div style="font-weight:600;font-size:13px;margin-bottom:8px;">Notifications</div>';
+            html += '<div style="display:flex;gap:16px;">';
+            html += '<label style="display:flex;align-items:center;cursor:pointer;">';
+            html += '<input type="checkbox" id="dm-fuel-notify-ingame"' + (settings.fuelNotifyIngame ? ' checked' : '') + ' style="width:16px;height:16px;margin-right:6px;accent-color:#0db8f4;">';
+            html += '<span style="font-size:12px;">Ingame</span></label>';
+            html += '<label style="display:flex;align-items:center;cursor:pointer;">';
+            html += '<input type="checkbox" id="dm-fuel-notify-system"' + (settings.fuelNotifySystem ? ' checked' : '') + ' style="width:16px;height:16px;margin-right:6px;accent-color:#0db8f4;">';
+            html += '<span style="font-size:12px;">System</span></label>';
+            html += '</div>';
+            html += '</div>';
             html += '</div>';
 
             // === CO2 SETTINGS ===
@@ -3198,6 +3388,18 @@
             html += '<input type="checkbox" id="dm-avoid-neg-co2"' + (settings.avoidNegativeCO2 ? ' checked' : '') + ' style="width:18px;height:18px;margin-right:10px;accent-color:#0db8f4;">';
             html += '<span>Avoid Negative CO2 (Intelligent: to 100t buffer, Basic: to 100%)</span></label>';
             html += '</div>';
+            // CO2 Notifications
+            html += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid #ddd;">';
+            html += '<div style="font-weight:600;font-size:13px;margin-bottom:8px;">Notifications</div>';
+            html += '<div style="display:flex;gap:16px;">';
+            html += '<label style="display:flex;align-items:center;cursor:pointer;">';
+            html += '<input type="checkbox" id="dm-co2-notify-ingame"' + (settings.co2NotifyIngame ? ' checked' : '') + ' style="width:16px;height:16px;margin-right:6px;accent-color:#0db8f4;">';
+            html += '<span style="font-size:12px;">Ingame</span></label>';
+            html += '<label style="display:flex;align-items:center;cursor:pointer;">';
+            html += '<input type="checkbox" id="dm-co2-notify-system"' + (settings.co2NotifySystem ? ' checked' : '') + ' style="width:16px;height:16px;margin-right:6px;accent-color:#0db8f4;">';
+            html += '<span style="font-size:12px;">System</span></label>';
+            html += '</div>';
+            html += '</div>';
             html += '</div>';
             html += '</div>'; // Close flex container
 
@@ -3209,6 +3411,18 @@
             html += '<input type="checkbox" id="dm-auto-depart"' + (settings.autoDepartEnabled ? ' checked' : '') + ' style="width:18px;height:18px;margin-right:10px;accent-color:#0db8f4;">';
             html += '<span style="font-weight:600;">Enable Auto-Depart</span></label>';
             html += '<div style="font-size:12px;color:#666;margin-top:4px;">Automatically departs vessels with routes when fuel is available.</div>';
+            html += '</div>';
+            // Depart Notifications
+            html += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid #ddd;">';
+            html += '<div style="font-weight:600;font-size:13px;margin-bottom:8px;">Notifications</div>';
+            html += '<div style="display:flex;gap:16px;">';
+            html += '<label style="display:flex;align-items:center;cursor:pointer;">';
+            html += '<input type="checkbox" id="dm-depart-notify-ingame"' + (settings.departNotifyIngame ? ' checked' : '') + ' style="width:16px;height:16px;margin-right:6px;accent-color:#0db8f4;">';
+            html += '<span style="font-size:12px;">Ingame</span></label>';
+            html += '<label style="display:flex;align-items:center;cursor:pointer;">';
+            html += '<input type="checkbox" id="dm-depart-notify-system"' + (settings.departNotifySystem ? ' checked' : '') + ' style="width:16px;height:16px;margin-right:6px;accent-color:#0db8f4;">';
+            html += '<span style="font-size:12px;">System</span></label>';
+            html += '</div>';
             html += '</div>';
             html += '</div>';
 
@@ -3249,6 +3463,18 @@
             html += '<input type="checkbox" id="dm-max-guards"' + (settings.maxGuardsOnPirateRoutes ? ' checked' : '') + ' style="width:18px;height:18px;margin-right:10px;margin-top:2px;accent-color:#0db8f4;">';
             html += '<span>Max Guards on Pirate Routes<br><small style="font-weight:normal;color:#666;">(set 10 guards when hijacking risk > 0)</small></span></label>';
             html += '</div>';
+            // Smuggler's Eye Notifications
+            html += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid #ddd;">';
+            html += '<div style="font-weight:600;font-size:13px;margin-bottom:8px;">Notifications</div>';
+            html += '<div style="display:flex;gap:16px;">';
+            html += '<label style="display:flex;align-items:center;cursor:pointer;">';
+            html += '<input type="checkbox" id="dm-smuggler-notify-ingame"' + (settings.smugglersEyeNotifyIngame ? ' checked' : '') + ' style="width:16px;height:16px;margin-right:6px;accent-color:#0db8f4;">';
+            html += '<span style="font-size:12px;">Ingame</span></label>';
+            html += '<label style="display:flex;align-items:center;cursor:pointer;">';
+            html += '<input type="checkbox" id="dm-smuggler-notify-system"' + (settings.smugglersEyeNotifySystem ? ' checked' : '') + ' style="width:16px;height:16px;margin-right:6px;accent-color:#0db8f4;">';
+            html += '<span style="font-size:12px;">System</span></label>';
+            html += '</div>';
+            html += '</div>';
             html += '</div>';
 
             // === DRYDOCK SETTINGS ===
@@ -3285,15 +3511,17 @@
             html += '<label style="display:block;font-weight:600;margin-bottom:6px;">Min Cash Reserve ($)</label>';
             html += '<input type="number" id="dm-drydock-mincash" value="' + settings.autoDrydockMinCash + '" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;">';
             html += '</div>';
-            html += '</div>';
-
-            // === NOTIFICATIONS ===
-            html += '<div style="background:#fff;border-radius:8px;padding:16px;margin-bottom:16px;border:1px solid #ddd;">';
-            html += '<div style="font-weight:700;font-size:16px;margin-bottom:12px;color:#0db8f4;">Notifications</div>';
-            html += '<div style="margin-bottom:12px;">';
+            // Drydock Notifications
+            html += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid #ddd;">';
+            html += '<div style="font-weight:600;font-size:13px;margin-bottom:8px;">Notifications</div>';
+            html += '<div style="display:flex;gap:16px;">';
             html += '<label style="display:flex;align-items:center;cursor:pointer;">';
-            html += '<input type="checkbox" id="dm-notifications"' + (settings.systemNotifications ? ' checked' : '') + ' style="width:18px;height:18px;margin-right:10px;accent-color:#0db8f4;">';
-            html += '<span>System Notifications (browser/desktop alerts)</span></label>';
+            html += '<input type="checkbox" id="dm-drydock-notify-ingame"' + (settings.drydockNotifyIngame ? ' checked' : '') + ' style="width:16px;height:16px;margin-right:6px;accent-color:#0db8f4;">';
+            html += '<span style="font-size:12px;">Ingame</span></label>';
+            html += '<label style="display:flex;align-items:center;cursor:pointer;">';
+            html += '<input type="checkbox" id="dm-drydock-notify-system"' + (settings.drydockNotifySystem ? ' checked' : '') + ' style="width:16px;height:16px;margin-right:6px;accent-color:#0db8f4;">';
+            html += '<span style="font-size:12px;">System</span></label>';
+            html += '</div>';
             html += '</div>';
             html += '</div>';
 
@@ -3377,6 +3605,8 @@
                     fuelIntelligentBelow: parseInt(document.getElementById('dm-fuel-intel-below').value, 10) || 500,
                     fuelIntelligentShipsEnabled: document.getElementById('dm-fuel-intel-ships-en').checked,
                     fuelIntelligentShips: parseInt(document.getElementById('dm-fuel-intel-ships').value, 10) || 5,
+                    fuelNotifyIngame: document.getElementById('dm-fuel-notify-ingame').checked,
+                    fuelNotifySystem: document.getElementById('dm-fuel-notify-system').checked,
                     co2Mode: co2Basic ? (co2Intel ? 'intelligent' : 'basic') : 'off',
                     co2PriceThreshold: parseInt(document.getElementById('dm-co2-threshold').value, 10) || 10,
                     co2MinCash: parseInt(document.getElementById('dm-co2-mincash').value, 10) || 1000000,
@@ -3386,7 +3616,11 @@
                     co2IntelligentShipsEnabled: document.getElementById('dm-co2-intel-ships-en').checked,
                     co2IntelligentShips: parseInt(document.getElementById('dm-co2-intel-ships').value, 10) || 5,
                     avoidNegativeCO2: document.getElementById('dm-avoid-neg-co2').checked,
+                    co2NotifyIngame: document.getElementById('dm-co2-notify-ingame').checked,
+                    co2NotifySystem: document.getElementById('dm-co2-notify-system').checked,
                     autoDepartEnabled: document.getElementById('dm-auto-depart').checked,
+                    departNotifyIngame: document.getElementById('dm-depart-notify-ingame').checked,
+                    departNotifySystem: document.getElementById('dm-depart-notify-system').checked,
                     smugglersEyeEnabled: document.getElementById('dm-smuggler-enabled').checked,
                     instant4Percent: document.getElementById('dm-instant4').checked,
                     gradual8Percent: document.getElementById('dm-gradual8').checked,
@@ -3394,12 +3628,16 @@
                     gradualIncreaseInterval: parseInt(document.getElementById('dm-gradual-interval').value, 10) || 25,
                     targetPercent: parseInt(document.getElementById('dm-target-pct').value, 10) || 8,
                     maxGuardsOnPirateRoutes: document.getElementById('dm-max-guards').checked,
+                    smugglersEyeNotifyIngame: document.getElementById('dm-smuggler-notify-ingame').checked,
+                    smugglersEyeNotifySystem: document.getElementById('dm-smuggler-notify-system').checked,
                     autoDrydockEnabled: document.getElementById('dm-drydock-enabled').checked,
                     autoDrydockThreshold: parseInt(document.getElementById('dm-drydock-threshold').value, 10) || 150,
                     autoDrydockType: document.getElementById('dm-drydock-type').value || 'major',
                     autoDrydockSpeed: document.getElementById('dm-drydock-speed').value || 'normal',
                     autoDrydockMinCash: parseInt(document.getElementById('dm-drydock-mincash').value, 10) || 500000,
-                    systemNotifications: document.getElementById('dm-notifications').checked
+                    drydockNotifyIngame: document.getElementById('dm-drydock-notify-ingame').checked,
+                    drydockNotifySystem: document.getElementById('dm-drydock-notify-system').checked,
+                    systemNotifications: false
                 };
 
                 saveSettings(newSettings);
@@ -3413,108 +3651,123 @@
     // ============================================
     var REBELSHIP_LOGO = '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><path d="M20 21c-1.39 0-2.78-.47-4-1.32-2.44 1.71-5.56 1.71-8 0C6.78 20.53 5.39 21 4 21H2v2h2c1.38 0 2.74-.35 4-.99 2.52 1.29 5.48 1.29 8 0 1.26.65 2.62.99 4 .99h2v-2h-2zM3.95 19H4c1.6 0 3.02-.88 4-2 .98 1.12 2.4 2 4 2s3.02-.88 4-2c.98 1.12 2.4 2 4 2h.05l1.89-6.68c.08-.26.06-.54-.06-.78s-.34-.42-.6-.5L20 10.62V6c0-1.1-.9-2-2-2h-3V1H9v3H6c-1.1 0-2 .9-2 2v4.62l-1.29.42c-.26.08-.48.26-.6.5s-.15.52-.06.78L3.95 19zM6 6h12v3.97L12 8 6 9.97V6z"/></svg>';
 
-    function getOrCreateRebelShipMenu() {
+    // Wait for messaging icon using MutationObserver
+    function waitForMessagingIcon(callback) {
+        var messagingIcon = document.querySelector('div.messaging.cursor-pointer') || document.querySelector('.messaging');
+        if (messagingIcon) { callback(messagingIcon); return; }
+        var observer = new MutationObserver(function(mutations, obs) {
+            var icon = document.querySelector('div.messaging.cursor-pointer') || document.querySelector('.messaging');
+            if (icon) { obs.disconnect(); callback(icon); }
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+        setTimeout(function() { observer.disconnect(); }, 5000);
+    }
+
+    function getOrCreateRebelShipMenu(callback) {
         var existingDropdown = document.getElementById('rebelship-dropdown');
-        if (existingDropdown) return existingDropdown;
+        if (existingDropdown) { if (callback) callback(existingDropdown); return existingDropdown; }
 
-        var menu = document.getElementById('rebelship-menu');
-        if (menu && existingDropdown) return existingDropdown;
-
-        if (window._rebelshipMenuCreating) return null;
+        if (window._rebelshipMenuCreating) { setTimeout(function() { getOrCreateRebelShipMenu(callback); }, 100); return null; }
         window._rebelshipMenuCreating = true;
 
         existingDropdown = document.getElementById('rebelship-dropdown');
-        if (existingDropdown) { window._rebelshipMenuCreating = false; return existingDropdown; }
+        if (existingDropdown) { window._rebelshipMenuCreating = false; if (callback) callback(existingDropdown); return existingDropdown; }
 
-        var messagingIcon = document.querySelector('div.messaging.cursor-pointer');
-        if (!messagingIcon) messagingIcon = document.querySelector('.messaging');
-        if (!messagingIcon) { window._rebelshipMenuCreating = false; return null; }
+        waitForMessagingIcon(function(messagingIcon) {
+            var container = document.createElement('div');
+            container.id = 'rebelship-menu';
+            container.style.cssText = 'position:relative;display:inline-block;vertical-align:middle;margin-right:4px !important;z-index:999999;';
 
-        var container = document.createElement('div');
-        container.id = 'rebelship-menu';
-        container.style.cssText = 'position:relative;display:inline-block;vertical-align:middle;margin-right:4px !important;z-index:999999;';
+            var btn = document.createElement('button');
+            btn.id = 'rebelship-menu-btn';
+            btn.innerHTML = REBELSHIP_LOGO;
+            btn.title = 'RebelShip Menu';
+            btn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:28px;height:28px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:white;border:none;border-radius:6px;cursor:pointer;box-shadow:0 2px 4px rgba(0,0,0,0.2);';
 
-        var btn = document.createElement('button');
-        btn.id = 'rebelship-menu-btn';
-        btn.innerHTML = REBELSHIP_LOGO;
-        btn.title = 'RebelShip Menu';
-        btn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:28px;height:28px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:white;border:none;border-radius:6px;cursor:pointer;box-shadow:0 2px 4px rgba(0,0,0,0.2);';
+            var dropdown = document.createElement('div');
+            dropdown.id = 'rebelship-dropdown';
+            dropdown.className = 'rebelship-dropdown';
+            dropdown.style.cssText = 'display:none;position:fixed;background:#1f2937;border:1px solid #374151;border-radius:4px;min-width:200px;z-index:999999;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
 
-        var dropdown = document.createElement('div');
-        dropdown.id = 'rebelship-dropdown';
-        dropdown.className = 'rebelship-dropdown';
-        dropdown.style.cssText = 'display:none;position:fixed;background:#1f2937;border:1px solid #374151;border-radius:4px;min-width:200px;z-index:999999;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
+            container.appendChild(btn);
+            document.body.appendChild(dropdown);
 
-        container.appendChild(btn);
-        document.body.appendChild(dropdown);
-        btn.addEventListener('click', function(e) {
-            e.stopPropagation();
-            if (dropdown.style.display === 'block') {
-                dropdown.style.display = 'none';
-            } else {
-                var rect = btn.getBoundingClientRect();
-                dropdown.style.top = (rect.bottom + 4) + 'px';
-                dropdown.style.right = (window.innerWidth - rect.right) + 'px';
-                dropdown.style.display = 'block';
+            btn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                if (dropdown.style.display === 'block') {
+                    dropdown.style.display = 'none';
+                } else {
+                    var rect = btn.getBoundingClientRect();
+                    dropdown.style.top = (rect.bottom + 4) + 'px';
+                    dropdown.style.right = (window.innerWidth - rect.right) + 'px';
+                    dropdown.style.display = 'block';
+                }
+            });
+
+            document.addEventListener('click', function(e) {
+                if (!container.contains(e.target) && !dropdown.contains(e.target)) {
+                    dropdown.style.display = 'none';
+                }
+            });
+
+            if (messagingIcon.parentNode) {
+                messagingIcon.parentNode.insertBefore(container, messagingIcon);
             }
+
+            window._rebelshipMenuCreating = false;
+            if (callback) callback(dropdown);
         });
-        document.addEventListener('click', function(e) { if (!container.contains(e.target) && !dropdown.contains(e.target)) dropdown.style.display = 'none'; });
-
-        if (messagingIcon.parentNode) messagingIcon.parentNode.insertBefore(container, messagingIcon);
-
-        window._rebelshipMenuCreating = false;
-        return dropdown;
+        return null;
     }
 
     function addMenuItem(label, onClick, scriptOrder) {
-        var dropdown = getOrCreateRebelShipMenu();
-        if (!dropdown) {
-            setTimeout(function() { addMenuItem(label, onClick, scriptOrder); }, 1000);
-            return null;
-        }
-
-        if (dropdown.querySelector('[data-rebelship-item="' + label + '"]')) {
-            return dropdown.querySelector('[data-rebelship-item="' + label + '"]');
-        }
-
-        var item = document.createElement('div');
-        item.dataset.rebelshipItem = label;
-        item.dataset.order = scriptOrder;
-        item.style.cssText = 'position:relative;';
-
-        var itemBtn = document.createElement('div');
-        itemBtn.style.cssText = 'padding:10px 12px;cursor:pointer;color:#fff;font-size:13px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #374151;';
-        itemBtn.innerHTML = '<span>' + label + '</span>';
-
-        itemBtn.addEventListener('mouseenter', function() { itemBtn.style.background = '#374151'; });
-        itemBtn.addEventListener('mouseleave', function() { itemBtn.style.background = 'transparent'; });
-
-        if (onClick) {
-            itemBtn.addEventListener('click', function() {
-                dropdown.style.display = 'none';
-                onClick();
-            });
-        }
-
-        item.appendChild(itemBtn);
-
-        // Insert in sorted order by scriptOrder
-        var items = dropdown.querySelectorAll('[data-rebelship-item]');
-        var insertBefore = null;
-        for (var i = 0; i < items.length; i++) {
-            var existingOrder = parseInt(items[i].dataset.order, 10);
-            if (scriptOrder < existingOrder) {
-                insertBefore = items[i];
-                break;
+        function doAddItem(dropdown) {
+            if (dropdown.querySelector('[data-rebelship-item="' + label + '"]')) {
+                return dropdown.querySelector('[data-rebelship-item="' + label + '"]');
             }
-        }
-        if (insertBefore) {
-            dropdown.insertBefore(item, insertBefore);
-        } else {
-            dropdown.appendChild(item);
+
+            var item = document.createElement('div');
+            item.dataset.rebelshipItem = label;
+            item.dataset.order = scriptOrder;
+            item.style.cssText = 'position:relative;';
+
+            var itemBtn = document.createElement('div');
+            itemBtn.style.cssText = 'padding:10px 12px;cursor:pointer;color:#fff;font-size:13px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #374151;';
+            itemBtn.innerHTML = '<span>' + label + '</span>';
+
+            itemBtn.addEventListener('mouseenter', function() { itemBtn.style.background = '#374151'; });
+            itemBtn.addEventListener('mouseleave', function() { itemBtn.style.background = 'transparent'; });
+
+            if (onClick) {
+                itemBtn.addEventListener('click', function() {
+                    dropdown.style.display = 'none';
+                    onClick();
+                });
+            }
+
+            item.appendChild(itemBtn);
+
+            var items = dropdown.querySelectorAll('[data-rebelship-item]');
+            var insertBefore = null;
+            for (var i = 0; i < items.length; i++) {
+                var existingOrder = parseInt(items[i].dataset.order, 10);
+                if (scriptOrder < existingOrder) {
+                    insertBefore = items[i];
+                    break;
+                }
+            }
+            if (insertBefore) {
+                dropdown.insertBefore(item, insertBefore);
+            } else {
+                dropdown.appendChild(item);
+            }
+            return item;
         }
 
-        return item;
+        var dropdown = document.getElementById('rebelship-dropdown');
+        if (dropdown) { return doAddItem(dropdown); }
+        getOrCreateRebelShipMenu(function(dd) { doAddItem(dd); });
+        return null;
     }
 
     // ============================================
@@ -3531,7 +3784,7 @@
 
         var vessels = await fetchVesselData();
         if (vessels && vessels.length > 0) {
-            handleVesselDataResponse({ data: { user_vessels: vessels } });
+            await handleVesselDataResponse({ data: { user_vessels: vessels } });
         }
 
         if (settings.autoDrydockEnabled) {
@@ -3565,6 +3818,9 @@
                 log('autoDepartVessels error: ' + e.message, 'error');
             }
         }
+
+        saveLastCheckTime();
+        log('Periodic check completed');
     }
 
     // ============================================
@@ -3617,7 +3873,7 @@
         }
 
         uiInitialized = true;
-        addMenuItem(SCRIPT_NAME, openSettingsModal, 9);
+        addMenuItem(SCRIPT_NAME, openSettingsModal, 20);
         log('Menu item added');
     }
 
@@ -3639,6 +3895,22 @@
                 } catch (e) {
                     log('initAutoPriceCache failed: ' + e.message, 'error');
                 }
+
+                // Check if we missed checks (Android background reload scenario)
+                var lastCheck = getLastCheckTime();
+                var timeSinceLastCheck = Date.now() - lastCheck;
+                var needsCatchup = lastCheck > 0 && timeSinceLastCheck > CATCHUP_THRESHOLD;
+
+                if (needsCatchup) {
+                    var missedMinutes = Math.floor(timeSinceLastCheck / 60000);
+                    log('CATCH-UP: ' + missedMinutes + ' minutes since last check - running immediate check');
+                } else if (lastCheck > 0) {
+                    var secsSince = Math.floor(timeSinceLastCheck / 1000);
+                    log('Last check was ' + secsSince + 's ago - normal startup');
+                } else {
+                    log('First run or no previous check recorded');
+                }
+
                 // ALWAYS start monitoring, even if cache init fails
                 startMonitoring();
                 periodicCheck();

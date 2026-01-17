@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Shipping Manager - Fix Alliance Edit Buttons for INTERIM CEO
+// @name         Shipping Manager - Game Bug-Fix: Alliance Edit Buttons for INTERIM CEO
 // @namespace    https://shippingmanager.cc/
-// @version      1.4
+// @version      1.5
 // @description  Adds missing edit buttons for alliance name/description for interim_ceo
 // @author       https://github.com/justonlyforyou/
 // @order        8

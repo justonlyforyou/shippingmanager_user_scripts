@@ -2,8 +2,8 @@
 // @name         Shipping Manager - Distance Filter for Route Planner
 // @namespace    http://tampermonkey.net/
 // @description  Filter ports by distance when creating new routes!
-// @version      8.2
-// @order        13
+// @version      8.3
+// @order        10
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
 // @grant        none
