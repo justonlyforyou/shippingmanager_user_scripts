@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         ShippingManager - Fuel / CO² Price Forecast Calendar
+// @name         ShippingManager - Fuel / CO2 Price Forecast Calendar (RebelShipMenu)
 // @namespace    http://tampermonkey.net/
-// @version      3.18
+// @version      3.27
 // @description  Embedded forecast calendar with page-flip navigation
 // @author       https://github.com/justonlyforyou/
 // @order        18
@@ -9,8 +9,9 @@
 // @grant        none
 // @run-at       document-end
 // @enabled      false
+// @RequireRebelShipMenu true
 // ==/UserScript==
-/* globals MutationObserver */
+/* globals addMenuItem */
 
 (function() {
     'use strict';
@@ -27,145 +28,16 @@
         const fontSize = Math.max(9, Math.min(14, Math.floor(rowHeight * 0.75)));
         const cellPadding = Math.max(0, Math.floor((rowHeight - fontSize) / 3));
 
-        let el = document.getElementById('forecast-dynamic-styles');
+        var el = document.getElementById('forecast-dynamic-styles');
         if (!el) { el = document.createElement('style'); el.id = 'forecast-dynamic-styles'; document.head.appendChild(el); }
-        el.textContent = `
-            .forecast-page-content h2 { font-size: 13px !important; margin: 2px 0 !important; line-height: 1.1 !important; color: #fff !important; }
-            .forecast-table { font-size: ${fontSize}px !important; line-height: 1.1 !important; }
-            .forecast-table th { font-size: ${Math.max(8, fontSize - 2)}px !important; padding: ${cellPadding}px 8px !important; }
-            .forecast-table td { padding: ${cellPadding}px 8px !important; }
-        `;
+        el.textContent = '\n            .forecast-page-content h2 { font-size: 13px !important; margin: 2px 0 !important; line-height: 1.1 !important; color: #fff !important; }\n            .forecast-table { font-size: ' + fontSize + 'px !important; line-height: 1.1 !important; }\n            .forecast-table th { font-size: ' + Math.max(8, fontSize - 2) + 'px !important; padding: ' + cellPadding + 'px 8px !important; }\n            .forecast-table td { padding: ' + cellPadding + 'px 8px !important; }\n        ';
     }
 
 
     // ============================================
     // FORECAST DATA URL
     // ============================================
-    const FORECAST_DATA_URL = 'https://shippingmanager-forecast.pages.dev/data/forecast.json';
-
-    // ============================================
-    // REBELSHIP MENU SYSTEM
-    // ============================================
-    const REBELSHIP_LOGO = '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><path d="M20 21c-1.39 0-2.78-.47-4-1.32-2.44 1.71-5.56 1.71-8 0C6.78 20.53 5.39 21 4 21H2v2h2c1.38 0 2.74-.35 4-.99 2.52 1.29 5.48 1.29 8 0 1.26.65 2.62.99 4 .99h2v-2h-2zM3.95 19H4c1.6 0 3.02-.88 4-2 .98 1.12 2.4 2 4 2s3.02-.88 4-2c.98 1.12 2.4 2 4 2h.05l1.89-6.68c.08-.26.06-.54-.06-.78s-.34-.42-.6-.5L20 10.62V6c0-1.1-.9-2-2-2h-3V1H9v3H6c-1.1 0-2 .9-2 2v4.62l-1.29.42c-.26.08-.48.26-.6.5s-.15.52-.06.78L3.95 19zM6 6h12v3.97L12 8 6 9.97V6z"/></svg>';
-
-    // Wait for messaging icon using MutationObserver
-    function waitForMessagingIcon(callback) {
-        var messagingIcon = document.querySelector('div.messaging.cursor-pointer') || document.querySelector('.messaging');
-        if (messagingIcon) { callback(messagingIcon); return; }
-        var observer = new MutationObserver(function(mutations, obs) {
-            var icon = document.querySelector('div.messaging.cursor-pointer') || document.querySelector('.messaging');
-            if (icon) { obs.disconnect(); callback(icon); }
-        });
-        observer.observe(document.body, { childList: true, subtree: true });
-        setTimeout(function() { observer.disconnect(); }, 5000);
-    }
-
-    function getOrCreateRebelShipMenu(callback) {
-        var existingDropdown = document.getElementById('rebelship-dropdown');
-        if (existingDropdown) { if (callback) callback(existingDropdown); return existingDropdown; }
-
-        if (window._rebelshipMenuCreating) { setTimeout(function() { getOrCreateRebelShipMenu(callback); }, 100); return null; }
-        window._rebelshipMenuCreating = true;
-
-        existingDropdown = document.getElementById('rebelship-dropdown');
-        if (existingDropdown) { window._rebelshipMenuCreating = false; if (callback) callback(existingDropdown); return existingDropdown; }
-
-        waitForMessagingIcon(function(messagingIcon) {
-            var container = document.createElement('div');
-            container.id = 'rebelship-menu';
-            container.style.cssText = 'position:relative;display:inline-block;vertical-align:middle;margin-right:4px !important;z-index:999999;';
-
-            var btn = document.createElement('button');
-            btn.id = 'rebelship-menu-btn';
-            btn.innerHTML = REBELSHIP_LOGO;
-            btn.title = 'RebelShip Menu';
-            btn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:28px;height:28px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:white;border:none;border-radius:6px;cursor:pointer;box-shadow:0 2px 4px rgba(0,0,0,0.2);';
-
-            var dropdown = document.createElement('div');
-            dropdown.id = 'rebelship-dropdown';
-            dropdown.className = 'rebelship-dropdown';
-            dropdown.style.cssText = 'display:none;position:fixed;background:#1f2937;border:1px solid #374151;border-radius:4px;min-width:200px;z-index:999999;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
-
-            container.appendChild(btn);
-            document.body.appendChild(dropdown);
-
-            btn.addEventListener('click', function(e) {
-                e.stopPropagation();
-                if (dropdown.style.display === 'block') {
-                    dropdown.style.display = 'none';
-                } else {
-                    var rect = btn.getBoundingClientRect();
-                    dropdown.style.top = (rect.bottom + 4) + 'px';
-                    dropdown.style.right = (window.innerWidth - rect.right) + 'px';
-                    dropdown.style.display = 'block';
-                }
-            });
-
-            document.addEventListener('click', function(e) {
-                if (!container.contains(e.target) && !dropdown.contains(e.target)) {
-                    dropdown.style.display = 'none';
-                }
-            });
-
-            if (messagingIcon.parentNode) {
-                messagingIcon.parentNode.insertBefore(container, messagingIcon);
-            }
-
-            window._rebelshipMenuCreating = false;
-            if (callback) callback(dropdown);
-        });
-        return null;
-    }
-
-    function addMenuItem(label, onClick, scriptOrder) {
-        function doAddItem(dropdown) {
-            if (dropdown.querySelector('[data-rebelship-item="' + label + '"]')) {
-                return dropdown.querySelector('[data-rebelship-item="' + label + '"]');
-            }
-
-            var item = document.createElement('div');
-            item.dataset.rebelshipItem = label;
-            item.dataset.order = scriptOrder;
-            item.style.cssText = 'position:relative;';
-
-            var itemBtn = document.createElement('div');
-            itemBtn.style.cssText = 'padding:10px 12px;cursor:pointer;color:#fff;font-size:13px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #374151;';
-            itemBtn.innerHTML = '<span>' + label + '</span>';
-
-            itemBtn.addEventListener('mouseenter', function() { itemBtn.style.background = '#374151'; });
-            itemBtn.addEventListener('mouseleave', function() { itemBtn.style.background = 'transparent'; });
-
-            if (onClick) {
-                itemBtn.addEventListener('click', function() {
-                    dropdown.style.display = 'none';
-                    onClick();
-                });
-            }
-
-            item.appendChild(itemBtn);
-
-            var items = dropdown.querySelectorAll('[data-rebelship-item]');
-            var insertBefore = null;
-            for (var i = 0; i < items.length; i++) {
-                var existingOrder = parseInt(items[i].dataset.order, 10);
-                if (scriptOrder < existingOrder) {
-                    insertBefore = items[i];
-                    break;
-                }
-            }
-            if (insertBefore) {
-                dropdown.insertBefore(item, insertBefore);
-            } else {
-                dropdown.appendChild(item);
-            }
-            return item;
-        }
-
-        var dropdown = document.getElementById('rebelship-dropdown');
-        if (dropdown) { return doAddItem(dropdown); }
-        getOrCreateRebelShipMenu(function(dd) { doAddItem(dd); });
-        return null;
-    }
+    var FORECAST_DATA_URL = 'https://shippingmanager-forecast.pages.dev/data/forecast.json';
 
     // ============================================
     // EMBEDDED PAGEFLIP LIBRARY (minified third-party)
@@ -175,138 +47,9 @@
     /* eslint-enable */
 
     // ============================================
-    // EMBEDDED CSS (nur fuer Forecast-Inhalt)
+    // EMBEDDED CSS (for forecast content only)
     // ============================================
-    const FORECAST_CSS = `
-        #forecast-book {
-            
-            height: 100%;
-            position: relative;
-            overflow: hidden;
-            background: #1e2235;
-        }
-        .forecast-page {
-            background: #1e2235;
-            border: none;
-            box-sizing: border-box;
-            position: relative;
-        }
-        .forecast-page:nth-child(odd) {
-            border-right: 1px solid rgba(255,255,255,0.1);
-        }
-        .forecast-page-content {
-            
-            height: 100%;
-            padding: 0;
-            box-sizing: border-box;
-            display: flex;
-            flex-direction: column;
-        }
-        .forecast-page-content h2 {
-            text-align: center;
-            font-size: 15px;
-            color: #fff;
-            margin: 0 0 8px 0;
-        }
-        .forecast-table {
-            width: auto;
-            margin: 0 auto;
-            
-            border-collapse: collapse;
-            font-size: 14px;
-        }
-        .forecast-table th {
-            background: rgba(255,255,255,0.05);
-            padding: 4px 12px;
-            color: #fff;
-            border-bottom: 1px solid rgba(255,255,255,0.1);
-            font-size: 12px;
-        }
-            background: rgba(255,255,255,0.05);
-            padding: 4px 12px;
-            color: #fff;
-            border-bottom: 1px solid rgba(255,255,255,0.1);
-            font-size: 13px;
-        }
-        .forecast-table td {
-            padding: 2px 12px;
-            text-align: center;
-            color: #fff;
-            border-bottom: 1px solid rgba(255,255,255,0.03);
-        }
-        .forecast-table td.time-cell {
-            color: #fff !important;
-            font-weight: 600;
-        }
-        .forecast-table tr.current-hour {
-            background: rgba(74, 222, 128, 0.15);
-            box-shadow: 0 0 8px rgba(74, 222, 128, 0.4);
-        }
-        .fuel-green { color: #4ade80 !important; font-weight: 600; }
-        .fuel-blue { color: #60a5fa !important; font-weight: 600; }
-        .fuel-orange { color: #fbbf24 !important; font-weight: 600; }
-        .fuel-red { color: #ef4444 !important; font-weight: 600; }
-        .co2-green { color: #4ade80 !important; font-weight: 600; }
-        .co2-blue { color: #60a5fa !important; font-weight: 600; }
-        .co2-orange { color: #fbbf24 !important; font-weight: 600; }
-        .co2-red { color: #ef4444 !important; font-weight: 600; }
-        /* Override game modal for forecast - full height */
-        #modal-container.forecast-mode #modal-content {
-            display: flex !important;
-            flex-direction: column !important;
-            height: 100% !important;
-            padding: 0 !important;
-            overflow: hidden !important;
-        }
-        #modal-container.forecast-mode #central-container {
-            flex: 1 !important;
-            display: flex !important;
-            padding: 0 !important;
-            margin: 0 !important;
-            overflow: hidden !important;
-            background: #1e2235 !important;
-        }
-        #modal-container.forecast-mode #forecast-book {
-            flex: 1;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            overflow: hidden;
-            box-sizing: border-box;
-            background: #1e2235 !important;
-        }
-        #modal-container.forecast-mode #bottom-controls,
-        #modal-container.forecast-mode #bottom-nav,
-        #modal-container.forecast-mode #top-nav {
-            display: none !important;
-        }
-        #modal-container.forecast-mode .stf__block {
-            margin: 0 auto !important;
-        }
-        #modal-container.forecast-mode .stf__parent {
-            background: #1e2235 !important;
-        }
-        #modal-container.forecast-mode .stf__wrapper {
-            background: #1e2235 !important;
-        }
-        /* Navigation buttons */
-        .page-nav {
-            text-align: center;
-            padding: 4px 0;
-        }
-        .page-arrow {
-            display: inline-block;
-            width: 32px;
-            height: 24px;
-            line-height: 24px;
-            background: rgba(255,255,255,0.1);
-            border: 1px solid rgba(255,255,255,0.3);
-            border-radius: 4px;
-            color: #fff;
-            font-size: 14px;
-            cursor: pointer;
-        }
-    `;
+    var FORECAST_CSS = '\n        .forecast-page {\n            width: 100%;\n            height: 100%;\n            background: #1e2235;\n            display: flex;\n            flex-direction: column;\n        }\n        .forecast-page-content {\n            flex: 1;\n            overflow: hidden;\n            padding: 0;\n            box-sizing: border-box;\n            display: flex;\n            flex-direction: column;\n        }\n        .forecast-page-content h2 {\n            text-align: center;\n            font-size: 15px;\n            color: #fff;\n            margin: 0 0 8px 0;\n        }\n        .forecast-table {\n            width: auto;\n            margin: 0 auto;\n            border-collapse: collapse;\n            font-size: 14px;\n        }\n        .forecast-table th {\n            background: rgba(255,255,255,0.05);\n            padding: 4px 12px;\n            color: #fff;\n            border-bottom: 1px solid rgba(255,255,255,0.1);\n            font-size: 12px;\n        }\n        .forecast-table td {\n            padding: 2px 12px;\n            text-align: center;\n            color: #fff;\n            border-bottom: 1px solid rgba(255,255,255,0.03);\n        }\n        .forecast-table td.time-cell {\n            color: #fff !important;\n            font-weight: 600;\n        }\n        .forecast-table tr.current-hour {\n            background: rgba(74, 222, 128, 0.15);\n            box-shadow: 0 0 8px rgba(74, 222, 128, 0.4);\n        }\n        .fuel-green { color: #4ade80 !important; font-weight: 600; }\n        .fuel-blue { color: #60a5fa !important; font-weight: 600; }\n        .fuel-orange { color: #fbbf24 !important; font-weight: 600; }\n        .fuel-red { color: #ef4444 !important; font-weight: 600; }\n        .co2-green { color: #4ade80 !important; font-weight: 600; }\n        .co2-blue { color: #60a5fa !important; font-weight: 600; }\n        .co2-orange { color: #fbbf24 !important; font-weight: 600; }\n        .co2-red { color: #ef4444 !important; font-weight: 600; }\n        /* PageFlip styling for our modal */\n        #forecast-book .stf__block { margin: 0 auto !important; }\n        #forecast-book .stf__parent { background: #1e2235 !important; }\n        #forecast-book .stf__wrapper { background: #1e2235 !important; }\n        /* Navigation buttons */\n        .page-nav {\n            text-align: center;\n            padding: 4px 0;\n        }\n        .page-arrow {\n            display: inline-block;\n            width: 32px;\n            height: 24px;\n            line-height: 24px;\n            background: rgba(255,255,255,0.1);\n            border: 1px solid rgba(255,255,255,0.3);\n            border-radius: 4px;\n            color: #fff;\n            font-size: 14px;\n            cursor: pointer;\n        }\n    ';
 
     // ============================================
     // TIMEZONE CONVERSION (from api-wrapper.js)
@@ -316,14 +59,14 @@
      * Get browser timezone abbreviation
      */
     function getBrowserTimezone() {
-        const now = new Date();
-        const offsetMinutes = -now.getTimezoneOffset();
-        const offsetHours = offsetMinutes / 60;
+        var now = new Date();
+        var offsetMinutes = -now.getTimezoneOffset();
+        var offsetHours = offsetMinutes / 60;
 
         // Determine if DST is active
-        const jan = new Date(now.getFullYear(), 0, 1);
-        const jul = new Date(now.getFullYear(), 6, 1);
-        const isDST = now.getTimezoneOffset() < Math.max(jan.getTimezoneOffset(), jul.getTimezoneOffset());
+        var jan = new Date(now.getFullYear(), 0, 1);
+        var jul = new Date(now.getFullYear(), 6, 1);
+        var isDST = now.getTimezoneOffset() < Math.max(jan.getTimezoneOffset(), jul.getTimezoneOffset());
 
         // For Central European timezone
         if (offsetHours === 1 && !isDST) return 'CET';
@@ -342,14 +85,14 @@
         if (offsetHours === -4 && isDST) return 'EDT';
 
         // Fallback: generic UTC offset
-        return `UTC${offsetHours >= 0 ? '+' : ''}${offsetHours}`;
+        return 'UTC' + (offsetHours >= 0 ? '+' : '') + offsetHours;
     }
 
     /**
      * Get UTC offset for timezone abbreviations
      */
     function getTimezoneOffsetHours(timezone) {
-        const timezoneOffsets = {
+        var timezoneOffsets = {
             // North America
             'PST': -8, 'PDT': -7,
             'MST': -7, 'MDT': -6,
@@ -368,14 +111,14 @@
             'GMT+2': 2
         };
 
-        const normalized = timezone.toUpperCase();
+        var normalized = timezone.toUpperCase();
 
         if (Object.prototype.hasOwnProperty.call(timezoneOffsets, normalized)) {
             return timezoneOffsets[normalized];
         }
 
         // Try parsing UTC+X format
-        const match = normalized.match(/^UTC([+-]?\d+(?:\.\d+)?)$/);
+        var match = normalized.match(/^UTC([+-]?\d+(?:\.\d+)?)$/);
         if (match) {
             return parseFloat(match[1]);
         }
@@ -388,11 +131,11 @@
      */
     function getPreviousDayData(forecastData, currentDay) {
         if (currentDay > 1) {
-            return forecastData.find(d => d.day === currentDay - 1);
+            return forecastData.find(function(d) { return d.day === currentDay - 1; });
         }
         // Day 1: wrap to day 31 (or last available day)
-        const lastDay = Math.max(...forecastData.map(d => d.day));
-        return forecastData.find(d => d.day === lastDay);
+        var lastDay = Math.max.apply(Math, forecastData.map(function(d) { return d.day; }));
+        return forecastData.find(function(d) { return d.day === lastDay; });
     }
 
     /**
@@ -403,10 +146,10 @@
      */
     function getNextDayData(forecastData, currentDay, daysInMonth) {
         if (currentDay < daysInMonth) {
-            return forecastData.find(d => d.day === currentDay + 1);
+            return forecastData.find(function(d) { return d.day === currentDay + 1; });
         }
         // Last day of month: wrap to day 1
-        return forecastData.find(d => d.day === 1);
+        return forecastData.find(function(d) { return d.day === 1; });
     }
 
     /**
@@ -414,18 +157,18 @@
      * Days <= current day are current month, days > current day are previous month
      */
     function getMonthForDay(dayNumber) {
-        const now = new Date();
-        const currentDay = now.getDate();
-        const currentMonth = now.getMonth(); // 0-indexed
-        const currentYear = now.getFullYear();
+        var now = new Date();
+        var currentDay = now.getDate();
+        var currentMonth = now.getMonth(); // 0-indexed
+        var currentYear = now.getFullYear();
 
         if (dayNumber <= currentDay) {
             // Current month
             return { month: currentMonth, year: currentYear };
         } else {
             // Previous month
-            const prevMonth = currentMonth === 0 ? 11 : currentMonth - 1;
-            const prevYear = currentMonth === 0 ? currentYear - 1 : currentYear;
+            var prevMonth = currentMonth === 0 ? 11 : currentMonth - 1;
+            var prevYear = currentMonth === 0 ? currentYear - 1 : currentYear;
             return { month: prevMonth, year: prevYear };
         }
     }
@@ -441,15 +184,15 @@
      * Convert CEST forecast data to target timezone
      */
     function convertCESTToTimezone(forecastData, targetTimezone) {
-        const sourceOffset = 2; // CEST is UTC+2
-        const targetOffset = getTimezoneOffsetHours(targetTimezone);
+        var sourceOffset = 2; // CEST is UTC+2
+        var targetOffset = getTimezoneOffsetHours(targetTimezone);
 
         if (targetOffset === null) {
             console.error('[Forecast] Invalid timezone:', targetTimezone);
             return { success: false, data: forecastData, hoursOffset: 0 };
         }
 
-        const hoursOffset = targetOffset - sourceOffset;
+        var hoursOffset = targetOffset - sourceOffset;
 
         // No conversion needed
         if (hoursOffset === 0) {
@@ -457,32 +200,32 @@
         }
 
         // Convert intervals (30-minute intervals, so hours * 2)
-        const intervalOffset = Math.round(hoursOffset * 2);
+        var intervalOffset = Math.round(hoursOffset * 2);
 
-        console.log(`[Forecast] Converting CEST to ${targetTimezone}: ${hoursOffset} hours (${intervalOffset} intervals)`);
+        console.log('[Forecast] Converting CEST to ' + targetTimezone + ': ' + hoursOffset + ' hours (' + intervalOffset + ' intervals)');
 
-        const convertedData = forecastData.map(dayData => {
+        var convertedData = forecastData.map(function(dayData) {
             if (!dayData.hourly_intervals || dayData.hourly_intervals.length === 0) {
                 return dayData;
             }
 
-            const currentIntervals = dayData.hourly_intervals;
-            const convertedIntervals = [];
+            var currentIntervals = dayData.hourly_intervals;
+            var convertedIntervals = [];
 
             // Determine which month this day belongs to
-            const { month, year } = getMonthForDay(dayData.day);
-            const daysInMonthCount = getDaysInMonth(month, year);
+            var monthInfo = getMonthForDay(dayData.day);
+            var daysInMonthCount = getDaysInMonth(monthInfo.month, monthInfo.year);
 
-            const prevDayData = getPreviousDayData(forecastData, dayData.day);
-            const nextDayData = getNextDayData(forecastData, dayData.day, daysInMonthCount);
+            var prevDayData = getPreviousDayData(forecastData, dayData.day);
+            var nextDayData = getNextDayData(forecastData, dayData.day, daysInMonthCount);
 
-            for (let i = 0; i < 48; i++) {
+            for (var i = 0; i < 48; i++) {
                 if (!currentIntervals[i]) {
                     continue;
                 }
 
-                const sourceIntervalIndex = i - intervalOffset;
-                let sourceInterval;
+                var sourceIntervalIndex = i - intervalOffset;
+                var sourceInterval;
 
                 if (sourceIntervalIndex >= 0 && sourceIntervalIndex < 48) {
                     sourceInterval = currentIntervals[sourceIntervalIndex];
@@ -494,7 +237,7 @@
                     if (!prevDayData || !prevDayData.hourly_intervals) {
                         sourceInterval = currentIntervals[0];
                     } else {
-                        const wrappedIndex = 48 + sourceIntervalIndex;
+                        var wrappedIndex = 48 + sourceIntervalIndex;
                         sourceInterval = prevDayData.hourly_intervals[wrappedIndex];
                         if (!sourceInterval) {
                             sourceInterval = currentIntervals[0];
@@ -505,8 +248,8 @@
                     if (!nextDayData || !nextDayData.hourly_intervals) {
                         sourceInterval = currentIntervals[currentIntervals.length - 1];
                     } else {
-                        const wrappedIndex = sourceIntervalIndex - 48;
-                        sourceInterval = nextDayData.hourly_intervals[wrappedIndex];
+                        var wrappedIdx = sourceIntervalIndex - 48;
+                        sourceInterval = nextDayData.hourly_intervals[wrappedIdx];
                         if (!sourceInterval) {
                             sourceInterval = currentIntervals[currentIntervals.length - 1];
                         }
@@ -537,9 +280,9 @@
     // ============================================
     // FORECAST CALENDAR LOGIC
     // ============================================
-    let pageFlip = null;
-    let daysData = [];
-    let browserTimezone = null;
+    var pageFlip = null;
+    var daysData = [];
+    var browserTimezone = null;
 
     function getFuelClass(price) {
         if (price > 750) return 'fuel-red';
@@ -558,39 +301,41 @@
     }
 
     function createTableHTML(intervals, dayNumber, month, year) {
-        let html = '<table class="forecast-table">';
+        var html = '<table class="forecast-table">';
         html += '<thead><tr><th>Time</th><th>Fuel $/t</th><th>CO2 $/t</th></tr></thead>';
         html += '<tbody>';
 
-        const now = new Date();
-        const currentDay = now.getDate();
-        const currentMo = now.getMonth() + 1;
-        const currentYr = now.getFullYear();
-        const currentHour = now.getHours();
-        const currentMin = now.getMinutes();
+        var now = new Date();
+        var currentDay = now.getDate();
+        var currentMo = now.getMonth() + 1;
+        var currentYr = now.getFullYear();
+        var currentHour = now.getHours();
+        var currentMin = now.getMinutes();
 
-        for (let i = 0; i < 24; i++) {
-            const interval = intervals[i];
+        for (var i = 0; i < 24; i++) {
+            var interval = intervals[i];
             if (!interval) {
                 html += '<tr><td>&nbsp;</td><td></td><td></td></tr>';
                 continue;
             }
 
-            const time = interval.start_time.substring(0, 5);
-            const [intHour, intMin] = interval.start_time.split(':').map(Number);
+            var time = interval.start_time.substring(0, 5);
+            var timeParts = interval.start_time.split(':');
+            var intHour = parseInt(timeParts[0], 10);
+            var intMin = parseInt(timeParts[1], 10);
 
-            const isCurrentHour = dayNumber === currentDay && month === currentMo && year === currentYr &&
+            var isCurrentHour = dayNumber === currentDay && month === currentMo && year === currentYr &&
                 intHour === currentHour && intMin <= currentMin && currentMin < (intMin + 30);
 
-            const fuelClass = getFuelClass(interval.fuel_price_per_ton);
-            const co2Class = getCo2Class(interval.co2_price_per_ton);
-            const currentClass = isCurrentHour ? ' current-hour' : '';
+            var fuelClass = getFuelClass(interval.fuel_price_per_ton);
+            var co2Class = getCo2Class(interval.co2_price_per_ton);
+            var currentClass = isCurrentHour ? ' current-hour' : '';
 
-            html += `<tr class="${currentClass}">
-                <td class="time-cell">${time}</td>
-                <td class="${fuelClass}">${interval.fuel_price_per_ton}</td>
-                <td class="${co2Class}">${interval.co2_price_per_ton}</td>
-            </tr>`;
+            html += '<tr class="' + currentClass + '">' +
+                '<td class="time-cell">' + time + '</td>' +
+                '<td class="' + fuelClass + '">' + interval.fuel_price_per_ton + '</td>' +
+                '<td class="' + co2Class + '">' + interval.co2_price_per_ton + '</td>' +
+            '</tr>';
         }
 
         html += '</tbody></table>';
@@ -609,21 +354,21 @@
     }
 
     function renderBook() {
-        const bookElement = document.getElementById('forecast-book');
+        var bookElement = document.getElementById('forecast-book');
         if (!bookElement) return;
 
         destroyPageFlip();
         bookElement.innerHTML = '';
 
-        const now = new Date();
+        var now = new Date();
 
         // Calculate page size based on available container space
-        let containerWidth = bookElement.clientWidth - 5;
-        let containerHeight = bookElement.clientHeight;
+        var containerWidth = bookElement.clientWidth - 5;
+        var containerHeight = bookElement.clientHeight;
 
-        // Fallback: if book element has no size, get from modal-container
+        // Fallback: if book element has no size, get from forecast-modal-container
         if (containerWidth < 100 || containerHeight < 100) {
-            const modalContainer = document.getElementById('modal-container');
+            var modalContainer = document.getElementById('forecast-modal-container');
             if (modalContainer) {
                 containerWidth = modalContainer.clientWidth - 5;
                 containerHeight = modalContainer.clientHeight - 31; // minus header
@@ -634,8 +379,6 @@
             }
         }
 
-        console.log('[Forecast] Container size:', containerWidth, 'x', containerHeight);
-
         // Still no valid size? Abort
         if (containerWidth < 100 || containerHeight < 100) {
             console.error('[Forecast] Invalid container size');
@@ -643,63 +386,63 @@
         }
 
         // Each page is half the width (for 2-page spread)
-        const pageWidth = Math.floor(containerWidth / 2);
-        const pageHeight = containerHeight - 30;
+        var pageWidth = Math.floor(containerWidth / 2);
+        var pageHeight = containerHeight - 30;
         applyDynamicStyles(pageHeight);
 
         // Data is a 31-day cycle that maps to calendar days
         // Start from today and go forward, wrapping day numbers 1-31
 
         // Sort data by day number and create a map for quick lookup
-        const dayDataMap = {};
-        daysData.forEach(d => { dayDataMap[d.day] = d; });
-        
-        // Build pages starting from today, going forward 31 days
-        let displayDate = new Date(now);
-        
-        for (let i = 0; i < 31; i++) {
-            const calendarDay = displayDate.getDate();
-            const calendarMonth = displayDate.getMonth() + 1;
-            const calendarYear = displayDate.getFullYear();
-            
-            // Get data for this day number (1-31 cycle)
-            const dayData = dayDataMap[calendarDay];
-            
-            const formattedDate = `${String(calendarDay).padStart(2, '0')}/${String(calendarMonth).padStart(2, '0')}/${calendarYear}`;
+        var dayDataMap = {};
+        daysData.forEach(function(d) { dayDataMap[d.day] = d; });
 
-            const appendPage = (suffix, content, isLeftPage) => {
-                const page = document.createElement('div');
+        // Build pages starting from today, going forward 31 days
+        var displayDate = new Date(now);
+
+        for (var idx = 0; idx < 31; idx++) {
+            var calendarDay = displayDate.getDate();
+            var calendarMonth = displayDate.getMonth() + 1;
+            var calendarYear = displayDate.getFullYear();
+
+            // Get data for this day number (1-31 cycle)
+            var dayData = dayDataMap[calendarDay];
+
+            var formattedDate = String(calendarDay).padStart(2, '0') + '/' + String(calendarMonth).padStart(2, '0') + '/' + calendarYear;
+
+            var appendPage = function(suffix, content, isLeftPage) {
+                var page = document.createElement('div');
                 page.className = 'forecast-page';
-                const arrow = isLeftPage ? '<div class="page-nav"><span class="page-arrow page-arrow-left">&#9664;</span></div>' : '<div class="page-nav"><span class="page-arrow page-arrow-right">&#9654;</span></div>';
-                page.innerHTML = `<div class="forecast-page-content"><h2>${formattedDate} ${suffix} ${browserTimezone}</h2>${content}${arrow}</div>`;
+                var arrow = isLeftPage ? '<div class="page-nav"><span class="page-arrow page-arrow-left">&#9664;</span></div>' : '<div class="page-nav"><span class="page-arrow page-arrow-right">&#9654;</span></div>';
+                page.innerHTML = '<div class="forecast-page-content"><h2>' + formattedDate + ' ' + suffix + ' ' + browserTimezone + '</h2>' + content + arrow + '</div>';
                 bookElement.appendChild(page);
             };
 
             if (!dayData || !dayData.hourly_intervals || dayData.hourly_intervals.length === 0) {
                 appendPage('', '<p style="text-align:center;color:#888;">No data</p>', true);
-                const empty = document.createElement('div');
+                var empty = document.createElement('div');
                 empty.className = 'forecast-page';
                 bookElement.appendChild(empty);
             } else {
-                const firstHalf = dayData.hourly_intervals.slice(0, 24);
-                const secondHalf = dayData.hourly_intervals.slice(24, 48);
+                var firstHalf = dayData.hourly_intervals.slice(0, 24);
+                var secondHalf = dayData.hourly_intervals.slice(24, 48);
 
                 appendPage('AM -', createTableHTML(firstHalf, calendarDay, calendarMonth, calendarYear), true);
                 appendPage('PM -', createTableHTML(secondHalf, calendarDay, calendarMonth, calendarYear), false);
             }
-            
+
             // Move to next day
             displayDate.setDate(displayDate.getDate() + 1);
         }
 
-        const PageFlipConstructor = window.St && window.St.PageFlip;
+        var PageFlipConstructor = window.St && window.St.PageFlip;
         if (!PageFlipConstructor) {
             console.error('[Forecast] PageFlip not available');
             return;
         }
 
         // Always start at page 0 (today)
-        const startPage = 0;
+        var startPage = 0;
 
         pageFlip = new PageFlipConstructor(bookElement, {
             width: pageWidth,
@@ -722,41 +465,41 @@
 
         pageFlip.loadFromHTML(document.querySelectorAll('.forecast-page'));
 
-        
+
     }
 
-    async function loadForecastData() {
-        try {
-            const response = await fetch(FORECAST_DATA_URL);
-            const rawData = await response.json();
+    function loadForecastData() {
+        fetch(FORECAST_DATA_URL)
+            .then(function(response) { return response.json(); })
+            .then(function(rawData) {
+                // Get browser timezone and convert data
+                browserTimezone = getBrowserTimezone();
+                var conversionResult = convertCESTToTimezone(rawData, browserTimezone);
 
-            // Get browser timezone and convert data
-            browserTimezone = getBrowserTimezone();
-            const conversionResult = convertCESTToTimezone(rawData, browserTimezone);
+                if (conversionResult.success) {
+                    daysData = conversionResult.data;
+                    console.log('[Forecast] Data converted from CEST to ' + browserTimezone + ' (offset: ' + conversionResult.hoursOffset + 'h)');
+                } else {
+                    daysData = rawData;
+                    browserTimezone = 'CEST';
+                    console.log('[Forecast] Using original CEST data (conversion failed)');
+                }
 
-            if (conversionResult.success) {
-                daysData = conversionResult.data;
-                console.log(`[Forecast] Data converted from CEST to ${browserTimezone} (offset: ${conversionResult.hoursOffset}h)`);
-            } else {
-                daysData = rawData;
-                browserTimezone = 'CEST';
-                console.log('[Forecast] Using original CEST data (conversion failed)');
-            }
-
-            renderBook();
-        } catch (error) {
-            console.error('[Forecast] Error loading data:', error);
-            document.getElementById('forecast-book').innerHTML = '<p style="color:#ef4444;text-align:center;padding:40px;">Failed to load forecast data</p>';
-        }
+                renderBook();
+            })
+            .catch(function(error) {
+                console.error('[Forecast] Error loading data:', error);
+                document.getElementById('forecast-book').innerHTML = '<p style="color:#ef4444;text-align:center;padding:40px;">Failed to load forecast data</p>';
+            });
     }
 
     // Get Pinia modalStore from Vue app
     function getModalStore() {
         try {
-            const appEl = document.querySelector('#app');
+            var appEl = document.querySelector('#app');
             if (!appEl || !appEl.__vue_app__) return null;
-            const app = appEl.__vue_app__;
-            const pinia = app._context.provides.pinia || app.config.globalProperties.$pinia;
+            var app = appEl.__vue_app__;
+            var pinia = app._context.provides.pinia || app.config.globalProperties.$pinia;
             if (!pinia || !pinia._s) return null;
             return pinia._s.get('modal');
         } catch (e) {
@@ -765,101 +508,218 @@
         }
     }
 
-    let titleObserver = null;
+    var isForecastModalOpen = false;
+    var modalListenerAttached = false;
+
+    // Inject game-identical modal CSS (1:1 copy from app.css, but with dark background for forecast)
+    function injectForecastModalStyles() {
+        if (document.getElementById('forecast-modal-styles')) return;
+
+        var style = document.createElement('style');
+        style.id = 'forecast-modal-styles';
+        style.textContent = [
+            // Animations (exact copy from game)
+            '@keyframes fc-fade-in{0%{opacity:0}to{opacity:1}}',
+            '@keyframes fc-fade-out{0%{opacity:1}to{opacity:0}}',
+            '@keyframes fc-drop-down{0%{transform:translateY(-10px)}to{transform:translateY(0)}}',
+            '@keyframes fc-push-up{0%{transform:translateY(0)}to{transform:translateY(-10px)}}',
+
+            // Modal wrapper (exact copy from game #modal-wrapper)
+            '#forecast-modal-wrapper{align-items:flex-start;display:flex;height:100vh;justify-content:center;left:0;overflow:hidden;position:absolute;top:0;width:100vw;z-index:9999}',
+
+            // Modal background (exact copy from game)
+            '#forecast-modal-wrapper #forecast-modal-background{animation:fc-fade-in .15s linear forwards;background-color:rgba(0,0,0,.5);height:100%;left:0;opacity:0;position:absolute;top:0;width:100%}',
+            '#forecast-modal-wrapper.hide #forecast-modal-background{animation:fc-fade-out .15s linear forwards}',
+
+            // Modal content wrapper (exact copy from game)
+            '#forecast-modal-wrapper #forecast-modal-content-wrapper{animation:fc-drop-down .15s linear forwards,fc-fade-in .15s linear forwards;height:100%;max-width:700px;opacity:0;position:relative;width:1140px;z-index:9001}',
+            '#forecast-modal-wrapper.hide #forecast-modal-content-wrapper{animation:fc-push-up .15s linear forwards,fc-fade-out .15s linear forwards}',
+
+            // Media queries for content wrapper (exact copy from game)
+            '@media screen and (min-width:1200px){#forecast-modal-wrapper #forecast-modal-content-wrapper{max-width:460px}}',
+            '@media screen and (min-width:992px) and (max-width:1199px){#forecast-modal-wrapper #forecast-modal-content-wrapper{max-width:460px}}',
+            '@media screen and (min-width:769px) and (max-width:991px){#forecast-modal-wrapper #forecast-modal-content-wrapper{max-width:460px}}',
+            '@media screen and (max-width:768px){#forecast-modal-wrapper #forecast-modal-content-wrapper{max-width:100%}}',
+
+            // Modal container (exact copy from game)
+            '#forecast-modal-wrapper #forecast-modal-container{background-color:#1e2235;height:100vh;overflow:hidden;position:absolute;width:100%}',
+
+            // Modal header (exact copy from game)
+            '#forecast-modal-container .modal-header{align-items:center;background:#626b90;border-radius:0;color:#fff;display:flex;height:31px;justify-content:space-between;text-align:left;width:100%;border:0!important;padding:0 .5rem!important}',
+
+            // Header title (exact copy from game)
+            '#forecast-modal-container .header-title{font-weight:700;text-transform:uppercase;width:90%}',
+
+            // Header icon (exact copy from game)
+            '#forecast-modal-container .header-icon{cursor:pointer;height:1.2rem;margin:0 .5rem}',
+            '#forecast-modal-container .header-icon.closeModal{height:19px;width:19px}',
+
+            // Modal content (exact copy from game)
+            '#forecast-modal-container #forecast-modal-content{height:calc(100% - 31px);max-width:inherit;overflow:hidden;display:flex;flex-direction:column}',
+
+            // Central container - DARK BACKGROUND for forecast readability
+            '#forecast-modal-container #forecast-central-container{background-color:#1e2235;margin:0;overflow:hidden;width:100%;flex:1;padding:0}',
+
+            // Hide class
+            '#forecast-modal-wrapper.hide{pointer-events:none}'
+        ].join('');
+        document.head.appendChild(style);
+    }
+
+    function closeForecastModal() {
+        if (!isForecastModalOpen) return;
+
+        console.log('[Forecast] Closing forecast modal');
+        isForecastModalOpen = false;
+
+        // Clean up pageflip
+        destroyPageFlip();
+
+        // Hide our modal
+        var modalWrapper = document.getElementById('forecast-modal-wrapper');
+        if (modalWrapper) {
+            modalWrapper.classList.add('hide');
+        }
+    }
+
+    function setupModalWatcher() {
+        if (modalListenerAttached) return;
+        modalListenerAttached = true;
+
+        // Listen for RebelShip menu clicks to close our modal
+        window.addEventListener('rebelship-menu-click', function() {
+            if (isForecastModalOpen) {
+                console.log('[Forecast] RebelShip menu clicked, closing modal');
+                closeForecastModal();
+            }
+        });
+    }
 
     function openForecast() {
-        const modalStore = getModalStore();
-        if (!modalStore) {
-            console.error('[Forecast] modalStore not found');
-            return;
+        // Close any open game modal first
+        var modalStore = getModalStore();
+        if (modalStore && modalStore.closeAll) {
+            modalStore.closeAll();
         }
 
-        // Clean up any previous instance
-        destroyPageFlip();
-        if (titleObserver) {
-            titleObserver.disconnect();
-            titleObserver = null;
-        }
+        injectForecastModalStyles();
 
-        // Open routeResearch modal (loads faster as it can be opened empty)
-        modalStore.open('routeResearch');
-
-        // Wait for modal to render, then replace content
-        setTimeout(() => {
-            // Change title and remove controls in modalStore (reactive)
-            if (modalStore.modalSettings) {
-                modalStore.modalSettings.title = 'Bunker Forecast';
-                modalStore.modalSettings.navigation = []; // Remove bottom nav
-                modalStore.modalSettings.controls = [];   // Remove control buttons
-            }
-
-            const modalContainer = document.getElementById('modal-container');
-            const centralContainer = document.getElementById('central-container');
-
-            if (modalContainer) {
-                // Add forecast-mode class for CSS overrides
-                modalContainer.classList.add('forecast-mode');
-
-                // Find and update title - try multiple selectors for desktop/mobile compatibility
-                const titleSelectors = [
-                    '#modal-container .modal-title',
-                    '#modal-container #modal-title',
-                    '#modal-container [class*="title"]',
-                    '#modal-container h2',
-                    '#modal-container h3',
-                    '.modal-title',
-                    '#modal-title'
-                ];
-
-                let titleElement = null;
-                for (const sel of titleSelectors) {
-                    const el = document.querySelector(sel);
-                    if (el && el.textContent && el.textContent.trim().length > 0) {
-                        titleElement = el;
-                        break;
-                    }
-                }
-
-                if (titleElement) {
-                    titleElement.textContent = 'Bunker Forecast';
-                    titleObserver = new MutationObserver(() => {
-                        if (titleElement.textContent !== 'Bunker Forecast') {
-                            titleElement.textContent = 'Bunker Forecast';
-                        }
-                    });
-                    titleObserver.observe(titleElement, { childList: true, characterData: true, subtree: true });
-                }
-            }
-
-            if (centralContainer) {
-                // Create forecast-book container
-                centralContainer.innerHTML = '<div id="forecast-book"></div>';
-
-                // Wait for CSS to apply, then render
-                setTimeout(() => {
+        var existing = document.getElementById('forecast-modal-wrapper');
+        if (existing) {
+            // Check if content container still exists
+            var contentCheck = existing.querySelector('#forecast-book');
+            if (contentCheck) {
+                existing.classList.remove('hide');
+                isForecastModalOpen = true;
+                // Re-render book in case data changed
+                setTimeout(function() {
                     if (daysData.length === 0) {
                         loadForecastData();
                     } else {
                         renderBook();
                     }
-                }, 200);
+                }, 100);
+                return;
             }
-        }, 150);
+            // Content missing, remove old wrapper and rebuild
+            existing.remove();
+        }
+
+        // Get header height for positioning (same as game modal)
+        var headerEl = document.querySelector('header');
+        var headerHeight = headerEl ? headerEl.offsetHeight : 89;
+
+        // Create game-identical modal structure
+        var modalWrapper = document.createElement('div');
+        modalWrapper.id = 'forecast-modal-wrapper';
+
+        var modalBackground = document.createElement('div');
+        modalBackground.id = 'forecast-modal-background';
+        modalBackground.onclick = function() { closeForecastModal(); };
+
+        var modalContentWrapper = document.createElement('div');
+        modalContentWrapper.id = 'forecast-modal-content-wrapper';
+
+        var modalContainer = document.createElement('div');
+        modalContainer.id = 'forecast-modal-container';
+        modalContainer.className = 'font-lato';
+        modalContainer.style.top = headerHeight + 'px';
+        modalContainer.style.height = 'calc(100vh - ' + headerHeight + 'px)';
+        modalContainer.style.maxHeight = 'calc(100vh - ' + headerHeight + 'px)';
+
+        // Modal header
+        var modalHeader = document.createElement('div');
+        modalHeader.className = 'modal-header';
+
+        var headerTitle = document.createElement('span');
+        headerTitle.className = 'header-title';
+        headerTitle.textContent = 'Bunker Forecast';
+
+        var closeIcon = document.createElement('img');
+        closeIcon.className = 'header-icon closeModal';
+        closeIcon.src = '/images/icons/close_icon_new.svg';
+        closeIcon.onclick = function() { closeForecastModal(); };
+        closeIcon.onerror = function() {
+            this.style.display = 'none';
+            var fallback = document.createElement('span');
+            fallback.textContent = 'X';
+            fallback.style.cssText = 'cursor:pointer;font-weight:bold;padding:0 .5rem;color:#fff;';
+            fallback.onclick = function() { closeForecastModal(); };
+            this.parentNode.appendChild(fallback);
+        };
+
+        modalHeader.appendChild(headerTitle);
+        modalHeader.appendChild(closeIcon);
+
+        // Modal content
+        var modalContent = document.createElement('div');
+        modalContent.id = 'forecast-modal-content';
+
+        var centralContainer = document.createElement('div');
+        centralContainer.id = 'forecast-central-container';
+
+        // Create forecast-book container
+        var forecastBook = document.createElement('div');
+        forecastBook.id = 'forecast-book';
+        forecastBook.style.cssText = 'width:100%;height:100%;display:flex;align-items:center;justify-content:center;';
+        centralContainer.appendChild(forecastBook);
+
+        modalContent.appendChild(centralContainer);
+        modalContainer.appendChild(modalHeader);
+        modalContainer.appendChild(modalContent);
+        modalContentWrapper.appendChild(modalContainer);
+        modalWrapper.appendChild(modalBackground);
+        modalWrapper.appendChild(modalContentWrapper);
+        document.body.appendChild(modalWrapper);
+
+        isForecastModalOpen = true;
+
+        // Wait for CSS to apply, then render
+        setTimeout(function() {
+            if (daysData.length === 0) {
+                loadForecastData();
+            } else {
+                renderBook();
+            }
+        }, 200);
     }
 
     function init() {
         // Inject CSS
-        const style = document.createElement('style');
+        var style = document.createElement('style');
         style.textContent = FORECAST_CSS;
         document.head.appendChild(style);
 
+        // Setup modal watcher (same pattern as alliance-search)
+        setupModalWatcher();
+
+        // Use global addMenuItem from RebelShipMenu
         addMenuItem('Bunker Forecast', openForecast, 18);
-        console.log('[Forecast] Menu item added');
     }
 
     // Wait for page to be ready (delay to ensure game UI is loaded)
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => setTimeout(init, 2000));
+        document.addEventListener('DOMContentLoaded', function() { setTimeout(init, 2000); });
     } else {
         setTimeout(init, 2000);
     }

@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name        Shipping Manager - Admin View
+// @name        ShippingManager - Admin View
 // @description Enable admin/moderator UI elements (client-side only - just for look and feel). HAS NO ADMIN FUNCTIONS IN BACKEND!
-// @version     8.6
+// @version     8.7
 // @author      https://github.com/justonlyforyou/
 // @order       998
 // @match       https://shippingmanager.cc/*
@@ -13,169 +13,107 @@
 (function() {
     'use strict';
 
-    console.log('[AdminView] loaded');
-
-    // Inject into page context
     const script = document.createElement('script');
     script.textContent = `
 (function() {
-    if (window.__ADMIN_VIEW_85__) return;
-    window.__ADMIN_VIEW_85__ = true;
+    if (window.__ADMIN_VIEW_87__) return;
+    window.__ADMIN_VIEW_87__ = true;
 
-    console.log('[AdminView] Initializing...');
-
-    // ===== PATCH JSON.parse (works for admin_login) =====
-    const origParse = JSON.parse;
+    var origParse = JSON.parse;
     JSON.parse = function(text) {
-        const result = origParse.apply(this, arguments);
-
-        // Debug: Log any result with 'forum' in keys
-        if (result && typeof result === 'object') {
-            const keys = Object.keys(result);
-            if (keys.some(k => k.toLowerCase().includes('forum'))) {
-                console.log('[AdminView] JSON.parse found forum-related:', keys);
-            }
-            if (result.data && typeof result.data === 'object') {
-                const dataKeys = Object.keys(result.data);
-                if (dataKeys.some(k => k.toLowerCase().includes('forum'))) {
-                    console.log('[AdminView] JSON.parse found forum in data:', dataKeys);
-                }
-            }
-        }
-
-        // Patch admin_login for red header
+        var result = origParse.apply(this, arguments);
         if (result?.admin_login !== undefined) {
             result.admin_login = true;
         }
         if (result?.data?.admin_login !== undefined) {
             result.data.admin_login = true;
         }
-
-        // Patch forum_user role
         if (result?.data && 'forum_user' in result.data) {
-            console.log('[AdminView] JSON.parse: forum_user value:', result.data.forum_user);
             if (result.data.forum_user) {
-                console.log('[AdminView] JSON.parse: role was:', result.data.forum_user.role);
                 result.data.forum_user.role = 'admin';
-                console.log('[AdminView] JSON.parse: Set role = admin');
             } else {
-                // forum_user is null - create it
                 result.data.forum_user = { role: 'admin', id: 1 };
-                console.log('[AdminView] JSON.parse: Created forum_user with admin role');
             }
         }
         if (result?.forum_user) {
-            console.log('[AdminView] JSON.parse: Found top-level forum_user');
             result.forum_user.role = 'admin';
         }
-
         return result;
     };
-    console.log('[AdminView] JSON.parse patched');
 
-    // ===== PATCH fetch for forum API calls =====
-    const originalFetch = window.fetch;
+    var originalFetch = window.fetch;
     window.fetch = async function(...args) {
-        const url = args[0]?.url || args[0] || '';
-        const response = await originalFetch.apply(this, args);
-
-        // Check if this is a forum API call
+        var url = args[0]?.url || args[0] || '';
+        var response = await originalFetch.apply(this, args);
         if (typeof url === 'string' && url.includes('forum')) {
-            console.log('[AdminView] Forum API call detected:', url);
-
-            // Clone response and patch json method
-            const origJson = response.json.bind(response);
+            var origJson = response.json.bind(response);
             response.json = async function() {
-                const data = await origJson();
-                console.log('[AdminView] Forum response keys:', data ? Object.keys(data) : 'null');
-                if (data?.data) {
-                    console.log('[AdminView] Forum response.data keys:', Object.keys(data.data));
-                }
-
+                var data = await origJson();
                 if (data?.data?.forum_user) {
-                    console.log('[AdminView] fetch.json: Found forum_user, role was:', data.data.forum_user.role);
                     data.data.forum_user.role = 'admin';
-                    console.log('[AdminView] fetch.json: Set forum_user.role = admin');
                 }
-
                 return data;
             };
         }
-
         return response;
     };
-    console.log('[AdminView] fetch patched');
 
-    // ===== HELPER: Get Vue App =====
     function getVueApp() {
-        const appEl = document.querySelector('#app');
+        var appEl = document.querySelector('#app');
         return appEl?.__vue_app__;
     }
 
-    // ===== HELPER: Get Pinia =====
     function getPinia() {
-        const app = getVueApp();
+        var app = getVueApp();
         if (!app) return null;
         return app._context?.provides?.pinia || app.config?.globalProperties?.$pinia;
     }
 
-    // ===== PATCH PINIA STORES =====
     function patchPiniaStores() {
-        const pinia = getPinia();
+        var pinia = getPinia();
         if (!pinia) return false;
-
-        const userStore = pinia._s.get('user');
+        var userStore = pinia._s.get('user');
         if (userStore?.user) {
             userStore.user.is_admin = true;
         }
-
         return true;
     }
 
-    // ===== FIND FORUM COMPONENT =====
-    // The forum is in a Teleport/Modal, so we need to search ALL component instances
-    function getAllComponentInstances(instance, results = []) {
+    function getAllComponentInstances(instance, results) {
+        results = results || [];
         if (!instance) return results;
-
         results.push(instance);
-
-        // Check subTree for child components
         if (instance.subTree) {
             walkVnode(instance.subTree, results);
         }
-
         return results;
     }
 
     function walkVnode(vnode, results) {
         if (!vnode) return;
-
         if (vnode.component) {
             getAllComponentInstances(vnode.component, results);
         }
-
         if (Array.isArray(vnode.children)) {
-            for (const child of vnode.children) {
-                walkVnode(child, results);
+            for (var i = 0; i < vnode.children.length; i++) {
+                walkVnode(vnode.children[i], results);
             }
         }
-
         if (vnode.dynamicChildren) {
-            for (const child of vnode.dynamicChildren) {
-                walkVnode(child, results);
+            for (var j = 0; j < vnode.dynamicChildren.length; j++) {
+                walkVnode(vnode.dynamicChildren[j], results);
             }
         }
     }
 
     function findForumComponent() {
-        // Method 1: Search DOM for Vue internal properties
-        const forumContainer = document.querySelector('.forumContainer');
+        var forumContainer = document.querySelector('.forumContainer');
         if (forumContainer) {
-            // Check all properties on the element
-            for (const key of Object.keys(forumContainer)) {
+            var keys = Object.keys(forumContainer);
+            for (var i = 0; i < keys.length; i++) {
+                var key = keys[i];
                 if (key.startsWith('__vue')) {
-                    const val = forumContainer[key];
-                    console.log('[AdminView] Found on forumContainer:', key, val);
+                    var val = forumContainer[key];
                     if (val?.ctx && 'forumUser' in val.ctx) {
                         return val;
                     }
@@ -184,32 +122,26 @@
                     }
                 }
             }
-
-            // Check parent elements
-            let el = forumContainer;
+            var el = forumContainer;
             while (el && el !== document.body) {
-                for (const key of Object.keys(el)) {
-                    if (key.startsWith('__vue') && el[key]?.ctx) {
-                        const ctx = el[key].ctx;
-                        if ('forumUser' in ctx) {
-                            console.log('[AdminView] Found forum via parent:', el.className);
-                            return el[key];
+                var elKeys = Object.keys(el);
+                for (var j = 0; j < elKeys.length; j++) {
+                    var k = elKeys[j];
+                    if (k.startsWith('__vue') && el[k]?.ctx) {
+                        if ('forumUser' in el[k].ctx) {
+                            return el[k];
                         }
                     }
                 }
                 el = el.parentElement;
             }
         }
-
-        // Method 2: Walk component tree
-        const app = getVueApp();
+        var app = getVueApp();
         if (!app?._instance) return null;
-
-        const allInstances = getAllComponentInstances(app._instance);
-        console.log('[AdminView] Total component instances:', allInstances.length);
-
-        for (const instance of allInstances) {
-            const ctx = instance.ctx || instance.proxy;
+        var allInstances = getAllComponentInstances(app._instance);
+        for (var n = 0; n < allInstances.length; n++) {
+            var instance = allInstances[n];
+            var ctx = instance.ctx || instance.proxy;
             if (ctx && 'forumUser' in ctx) {
                 return instance;
             }
@@ -217,71 +149,41 @@
                 return instance;
             }
         }
-
-        // Method 3: Check modal content for vnode
-        const modalContent = document.querySelector('#central-container');
-        if (modalContent) {
-            for (const key of Object.keys(modalContent)) {
-                if (key.startsWith('__')) {
-                    console.log('[AdminView] Modal content key:', key, modalContent[key]);
-                }
-            }
-        }
-
         return null;
     }
 
     function patchForumComponent() {
-        const forumComp = findForumComponent();
-        if (!forumComp) {
-            // Don't spam console
-            return false;
-        }
-
-        console.log('[AdminView] Found forum component!');
-        const ctx = forumComp.ctx || forumComp.proxy;
-        const data = forumComp.data;
-
-        // Try ctx first
+        var forumComp = findForumComponent();
+        if (!forumComp) return false;
+        var ctx = forumComp.ctx || forumComp.proxy;
+        var data = forumComp.data;
         if (ctx?.forumUser) {
-            console.log('[AdminView] Current forumUser (ctx):', ctx.forumUser);
             ctx.forumUser.role = 'admin';
-            console.log('[AdminView] Set forumUser.role = admin via ctx');
         }
-
-        // Also try data
         if (data?.forumUser) {
-            console.log('[AdminView] Current forumUser (data):', data.forumUser);
             data.forumUser.role = 'admin';
-            console.log('[AdminView] Set forumUser.role = admin via data');
         }
-
-        // If forumUser doesn't exist, create it
         if (!ctx?.forumUser && !data?.forumUser) {
             if (ctx) {
                 ctx.forumUser = { role: 'admin', id: 1 };
-                console.log('[AdminView] Created forumUser with admin role');
             }
         }
-
-        // Force update
         if (forumComp.proxy?.$forceUpdate) {
             forumComp.proxy.$forceUpdate();
         }
         if (forumComp.update) {
             forumComp.update();
         }
-
         return true;
     }
 
-    // ===== MUTATION OBSERVER =====
-    const observer = new MutationObserver((mutations) => {
-        for (const mutation of mutations) {
-            for (const node of mutation.addedNodes) {
+    var observer = new MutationObserver(function(mutations) {
+        for (var m = 0; m < mutations.length; m++) {
+            var addedNodes = mutations[m].addedNodes;
+            for (var n = 0; n < addedNodes.length; n++) {
+                var node = addedNodes[n];
                 if (node.nodeType !== 1) continue;
-
-                let className = '';
+                var className = '';
                 if (node.className) {
                     if (typeof node.className === 'string') {
                         className = node.className;
@@ -289,14 +191,11 @@
                         className = node.className.baseVal;
                     }
                 }
-
                 if (className.includes('forum') ||
                     className.includes('Forum') ||
                     className.includes('modal') ||
                     node.id === 'modal-container' ||
                     node.querySelector?.('.forumContainer')) {
-
-                    console.log('[AdminView] Forum element detected');
                     setTimeout(patchForumComponent, 100);
                     setTimeout(patchForumComponent, 500);
                     setTimeout(patchForumComponent, 1500);
@@ -304,52 +203,17 @@
             }
         }
     });
-
     observer.observe(document.body, { childList: true, subtree: true });
 
-    // ===== CONSOLE API =====
     window.adminView = {
         patch: patchForumComponent,
         patchStores: patchPiniaStores,
         getApp: getVueApp,
-        getPinia: getPinia,
-        status: () => {
-            console.log('=== AdminView Status ===');
-            const app = getVueApp();
-            console.log('Vue App:', app ? 'Found' : 'Not found');
-
-            const pinia = getPinia();
-            if (pinia) {
-                console.log('Pinia stores:', Array.from(pinia._s.keys()));
-            }
-
-            const forumComp = findForumComponent();
-            if (forumComp) {
-                const ctx = forumComp.ctx || forumComp.proxy;
-                console.log('Forum component: Found');
-                console.log('forumUser:', ctx?.forumUser);
-                console.log('isForumAdmin:', ctx?.isForumAdmin);
-                console.log('isForumModerator:', ctx?.isForumModerator);
-            } else {
-                console.log('Forum component: Not found (open Community first)');
-            }
-
-            // Also show DOM inspection
-            const fc = document.querySelector('.forumContainer');
-            if (fc) {
-                console.log('forumContainer element keys:', Object.keys(fc).filter(k => k.startsWith('__')));
-            }
-        }
+        getPinia: getPinia
     };
 
-    console.log('[AdminView] Ready!');
-    console.log('[AdminView] Use adminView.status() to check state');
-
-    // Initial store patch
     setTimeout(patchPiniaStores, 2000);
-
 })();
 `;
-
     document.head.appendChild(script);
 })();

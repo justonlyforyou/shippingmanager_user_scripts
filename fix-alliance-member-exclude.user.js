@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Shipping Manager - Fix Alliance Member Exclude
+// @name         ShippingManager - Fix Alliance Member Exclude
 // @namespace    https://shippingmanager.cc/
-// @version      1.5
+// @version      1.6
 // @description  Fixes broken exclude buttons for CEO and adds missing ones for management members
 // @author       https://github.com/justonlyforyou/
 // @order        7
@@ -111,7 +111,6 @@
         });
 
         const data = await response.json();
-        console.log('[Exclude Fix] Response:', data);
 
         if (data.error === 'ceo_inactivity_period_not_reached') {
             const msg = Language?.text('Errors/ceo_inactivity_period_not_reached') || 'CEO inactivity period not reached (14 days required)';
@@ -166,8 +165,6 @@
             const ceo = getCEO();
             if (!ceo) continue;
 
-            console.log('[Exclude Fix] Found CEO exclude button');
-
             // Hide broken button
             btn.style.display = 'none';
             btn.dataset.smfixCeoFixed = 'true';
@@ -211,7 +208,6 @@
             });
 
             btn.parentNode.insertBefore(newBtn, btn.nextSibling);
-            console.log('[Exclude Fix] Replaced CEO exclude button');
         }
     }
 
@@ -296,8 +292,6 @@
 
                     const excludeBtn = createMemberExcludeButton(member);
                     btnContainer.appendChild(excludeBtn);
-
-                    console.log('[Exclude Fix] Added member exclude button for:', member.company_name);
                     break;
                 }
             }
@@ -320,6 +314,4 @@
     }
 
     setInterval(runFixes, 500);
-
-    console.log('[Exclude Fix] loaded');
 })();

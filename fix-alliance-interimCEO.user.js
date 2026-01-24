@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Shipping Manager - Game Bug-Fix: Alliance Edit Buttons for INTERIM CEO
+// @name         ShippingManager - Game Bug-Fix: Alliance Edit Buttons for INTERIM CEO
 // @namespace    https://shippingmanager.cc/
-// @version      1.5
+// @version      1.6
 // @description  Adds missing edit buttons for alliance name/description for interim_ceo
 // @author       https://github.com/justonlyforyou/
 // @order        8
@@ -65,7 +65,6 @@
         }
         // Only log role once when it changes
         if (lastLoggedRole !== myMember.role) {
-            console.log('[Alliance Edit Fix] Role:', myMember.role);
             lastLoggedRole = myMember.role;
         }
         // Only add buttons for interim_ceo
@@ -88,7 +87,6 @@
             return;
         }
 
-        console.log('[Alliance Edit Fix] Updating name to:', newName);
 
         const response = await fetch('/api/alliance/update-alliance-data', {
             method: 'POST',
@@ -97,7 +95,6 @@
         });
 
         const data = await response.json();
-        console.log('[Alliance Edit Fix] Response:', data);
 
         if (data.error) {
             toast ? toast.error(data.error) : alert(data.error);
@@ -162,7 +159,6 @@
         });
 
         const data = await response.json();
-        console.log('[Alliance Edit Fix] Response:', data);
 
         if (data.error) {
             toast ? toast.error(data.error) : alert(data.error);
@@ -256,8 +252,6 @@
             console.log('[Alliance Edit Fix] No alliance data');
             return;
         }
-        console.log('[Alliance Edit Fix] Alliance name:', allianceStore.alliance.name);
-        console.log('[Alliance Edit Fix] Alliance description:', allianceStore.alliance.description?.substring(0, 30));
 
         // Find all divs and look for ones containing our alliance name as direct text
         const allDivs = document.querySelectorAll('div');
@@ -280,7 +274,6 @@
 
                 const editBtn = createEditButton('name');
                 div.appendChild(editBtn);
-                console.log('[Alliance Edit Fix] Added name edit button to:', div);
                 foundName = true;
             }
 
@@ -292,7 +285,6 @@
 
                     const editBtn = createEditButton('description');
                     div.appendChild(editBtn);
-                    console.log('[Alliance Edit Fix] Added description edit button to:', div);
                     foundDesc = true;
                 }
             }
@@ -341,7 +333,6 @@
                     const editBtn = createEditButton('name');
                     div.appendChild(editBtn);
                     div.dataset.smfixProcessed = 'true';
-                    console.log('[Alliance Edit Fix] Added name edit button to modal');
                 }
             }
 
@@ -353,7 +344,6 @@
                     const editBtn = createEditButton('description');
                     div.appendChild(editBtn);
                     div.dataset.smfixProcessed = 'true';
-                    console.log('[Alliance Edit Fix] Added description edit button to modal');
                 }
             }
         }
@@ -369,6 +359,4 @@
     }
 
     setInterval(runFix, 500);
-
-    console.log('[Alliance Edit Fix] loaded');
 })();

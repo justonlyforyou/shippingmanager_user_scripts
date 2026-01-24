@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name        Shipping Manager - Depart All Loop Button
+// @name        ShippingManager - Depart All Loop Button
 // @description Clicks Depart All button repeatedly until all vessels departed
 // @author      https://github.com/justonlyforyou/
-// @version     2.5
+// @version     2.6
 // @order       13
 // @match       https://shippingmanager.cc/*
 // @grant       none
@@ -86,8 +86,6 @@
         running = true;
         updateButtonState();
 
-        console.log('[Loop] Start');
-
         while (running) {
             const count = await getVesselsAtPort();
             console.log('[Loop] Vessels at port:', count);
@@ -103,7 +101,6 @@
                 break;
             }
 
-            console.log('[Loop] Clicking Depart All...');
             departBtn.click();
 
             // Wait for response
@@ -118,7 +115,6 @@
 
         running = false;
         updateButtonState();
-        console.log('[Loop] Done');
     }
 
     function stop() {

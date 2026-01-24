@@ -11,14 +11,17 @@ A collection of user scripts for [Shipping Manager](https://shippingmanager.cc/)
 3. [Detailed Documentation](#detailed-documentation)
    - [Rebelship Header Optimizer](#rebelship-header-optimizeruserjs---header-optimizer)
    - [Depart Manager](#departmanageruserjs---depart-manager)
-   - [Yard Foreman (Auto Repair)](#yard-foremanuserjs---auto-repair)
-   - [Auto Happy Staff](#auto_happy_stuffuserjs---auto-happy-staff)
-   - [Co-Op Tickets Display](#coop-tickets-displayuserjs---auto-co-op)
-   - [Reputation Display](#reputation-displayuserjs---auto-reputation)
+   - [Auto Repair](#auto-repairuserjs---auto-repair)
+   - [Auto Happy Staff](#auto-happy-stuffuserjs---auto-happy-staff)
+   - [Auto CO-OP](#auto-coop-tickets-displayuserjs---auto-co-op)
+   - [Auto Reputation](#auto-marketing-reputation-displayuserjs---auto-reputation)
+   - [Auto Drydock](#auto-drydockuserjs---auto-drydock)
+   - [Smuggler's Eye](#smugglers-eyeuserjs---smugglers-eye)
    - [Fleet Manager](#fleet-manageruserjs---mass-moorresume)
    - [Vessel Shopping Cart](#vessel-cartuserjs---vessel-shopping-cart)
    - [Bunker Price Display](#bunker-price-displayuserjs---bunker-prices)
    - [Forecast Calendar](#forecast-calendaruserjs---forecast-calendar)
+   - [Demand Summary](#demand-summaryuserjs---demand-summary)
    - [Distance Filter](#enable-distance-filteruserjs---distance-filter)
    - [Map Unlock](#map-unlockuserjs---premium-features)
    - [Fast Delivery](#fast-deliveryuserjs---fast-delivery)
@@ -28,32 +31,42 @@ A collection of user scripts for [Shipping Manager](https://shippingmanager.cc/)
    - [Export Scripts](#export-scripts)
    - [Bug Fix Scripts](#bug-fix-scripts)
    - [Admin View](#admin-viewuserjs---admin-view)
-4. [Technical Details](#technical-details)
-5. [Background Execution (Android)](#background-execution-android)
+4. [Developer Guide](#developer-guide)
+5. [Background Execution](#background-execution)
 
 ---
 
 ## Installation
 
-### Recommended: RebelShip Browser
+### Required: RebelShip Browser
 
-The easiest way is using **RebelShip Browser** with pre-installed scripts:
+These scripts **require RebelShip Browser** and do not work with Tampermonkey or other userscript managers.
 
-- **Desktop**: [RebelShip Browser](https://github.com/justonlyforyou/RebelShipBrowser)
-- **Mobile**: [RebelShip Browser Mobile](https://github.com/AstroNik/RebelShipBrowser_Mobile)
+**Why?** The scripts depend on:
+- **RebelShip Menu System** - Central menu for all script settings (in browser menu)
+- **RebelShipBridge API** - Encrypted SQLCipher database for persistent storage
+- **Background Job Support** - Native integration for scripts that run periodically
 
-These browsers are optimized for the scripts, especially for background tasks.
+**Download:**
 
-### Manual Installation (Browser Extensions)
+| Platform | Link |
+|----------|------|
+| Windows | [RebelShip Browser](https://github.com/justonlyforyou/RebelShipBrowser) |
+| Android | [RebelShip Browser Mobile](https://github.com/AstroNik/RebelShipBrowser_Mobile) |
 
-> **Note**: Chrome no longer supports userscript managers (Manifest V3). Use Firefox or a Chromium browser with Manifest V2 support.
+Scripts are pre-installed and automatically updated with the browser.
 
-1. Install a userscript manager extension:
-   - [Tampermonkey](https://www.tampermonkey.net/) (Firefox, Edge, Safari)
-   - [Violentmonkey](https://violentmonkey.github.io/) (Firefox, Edge)
-   - [Greasemonkey](https://www.greasespot.net/) (Firefox)
+### Why Not Tampermonkey?
 
-2. Click on a `.user.js` file and then "Raw" to install
+Previous versions of these scripts worked with Tampermonkey, but the current architecture requires:
+
+1. **SQLCipher Database** - Scripts store settings and data in an encrypted SQLite database via `RebelShipBridge.storage`. This API is only available in RebelShip Browser.
+
+2. **RebelShip Menu** - The `addMenuItem()` function and menu system are provided by the browser, not by a userscript.
+
+3. **Background Execution** - Scripts like Auto-Depart, Auto-Repair need to run when the browser tab is not active. RebelShip Browser handles this natively.
+
+4. **Cross-Script Communication** - Scripts share data (e.g., pending route settings) through a common database that Tampermonkey cannot provide.
 
 ---
 
@@ -61,32 +74,34 @@ These browsers are optimized for the scripts, especially for background tasks.
 
 | Script | Version | Description |
 |--------|---------|-------------|
-| rebelship-header-optimizer.user.js | 3.47 | **REQUIRED** - Handles all header UI elements, mobile layout optimization |
-| departmanager.user.js | 2.47 | Unified: Auto-Bunker, Auto-Depart, Smuggler's Eye, Drydock Protection, Route Settings |
-| yard-foreman.user.js | 2.11 | Auto-repair at wear threshold |
-| auto_happy_stuff.user.js | 1.19 | Auto salary adjustment for crew/management morale |
-| coop-tickets-display.user.js | 5.15 | Co-Op display in header, Auto-COOP sending |
-| reputation-display.user.js | 5.12 | Reputation in header, auto campaign renewal |
-| fleet-manager.user.js | 4.2 | Mass Moor/Resume with checkboxes |
-| vessel-cart.user.js | 4.14 | Shopping cart for vessel purchase/build |
-| bunker-price-display.user.js | 3.18 | Fuel/CO2 prices and fill level in header |
-| forecast-calendar.user.js | 3.10 | Page-flip calendar with price forecasts |
-| enable-distance-filter.user.js | 8.1 | Filter ports by distance |
-| map-unlock.user.js | 1.3 | Premium Map Themes, Tanker Ops, Metropolis, Zoom |
-| fast-delivery.user.js | 1.6 | Fast vessel delivery via drydock bug |
-| depart-all-loop.user.js | 2.4 | Clicks Depart All until all departed |
-| alliance-chat-notification.user.js | 2.6 | Red dot for unread alliance messages |
-| alliance-search.user.js | 3.7 | Search all open alliances |
-| demand-summary.user.js | 4.11 | Port demand with capacity overview |
-| harbor-improvements.user.js | 2.5 | Details button repositioning in harbor menu |
-| at-port-refresh.user.js | 1.2 | Auto-refresh At Port list every 30 sec |
-| buy-vip-vessel.user.js | 2.4 | Buy VIP vessels |
-| export-vessels-csv.user.js | 1.9 | Export fleet as CSV |
-| export-messages.user.js | 1.9 | Export messages as CSV/JSON |
-| save-vessel-history.user.js | 3.1 | Save vessel history as CSV |
-| fix-alliance-member-exclude.user.js | 1.4 | Fix exclude buttons for CEO |
-| fix-alliance-edit-buttons.user.js | 1.3 | Add edit buttons for Interim CEO |
-| admin-view.user.js | 8.5 | Shows Admin UI (visual only, no permissions) |
+| rebelship-header-optimizer.user.js | 3.51 | Header UI optimization, mobile layout, resize handling |
+| departmanager.user.js | 3.25 | Auto-Bunker, Auto-Depart, Route Settings, Min Utilization |
+| auto-repair.user.js | 2.36 | Auto-repair at wear threshold |
+| auto-happy-stuff.user.js | 1.36 | Auto salary adjustment for crew/management morale |
+| auto-coop-tickets-display.user.js | 5.35 | Co-Op display in header, Auto-COOP sending |
+| auto-marketing-reputation-display.user.js | 5.26 | Reputation in header, auto campaign renewal |
+| auto-drydock.user.js | 1.1 | Auto-drydock at hours threshold, drydock bug prevention |
+| smugglers-eye.user.js | 1.1 | Price optimization: 4% markup, gradual increase, max guards |
+| fleet-manager.user.js | 4.15 | Mass Moor/Resume with checkboxes |
+| vessel-cart.user.js | 4.22 | Shopping cart for vessel purchase/build |
+| bunker-price-display.user.js | 3.20 | Fuel/CO2 prices and fill level in header |
+| forecast-calendar.user.js | 3.27 | Page-flip calendar with price forecasts |
+| demand-summary.user.js | 4.43 | Port demand with capacity overview |
+| enable-distance-filter.user.js | 9.18 | Filter ports by distance |
+| map-unlock.user.js | 1.10 | Premium Map Themes, Tanker Ops, Metropolis, Zoom |
+| fast-delivery.user.js | 1.9 | Fast vessel delivery via drydock bug |
+| depart-all-loop.user.js | 2.6 | Clicks Depart All until all departed |
+| alliance-chat-notification.user.js | 2.14 | Red dot for unread alliance messages |
+| alliance-search.user.js | 3.46 | Search all open alliances |
+| harbor-improvements.user.js | 2.7 | Details button repositioning in harbor menu |
+| at-port-refresh.user.js | 1.4 | Auto-refresh At Port list every 30 sec |
+| buy-vip-vessel.user.js | 2.24 | Buy VIP vessels |
+| export-vessels-csv.user.js | 1.19 | Export fleet as CSV |
+| export-messages.user.js | 1.24 | Export messages as CSV/JSON |
+| export-vessel-history.user.js | 3.5 | Save vessel history as CSV |
+| fix-alliance-member-exclude.user.js | 1.6 | Fix exclude buttons for CEO |
+| fix-alliance-interimCEO.user.js | 1.6 | Add edit buttons for Interim CEO |
+| admin-view.user.js | 8.7 | Shows Admin UI (visual only, no permissions) |
 
 ---
 
@@ -96,600 +111,432 @@ These browsers are optimized for the scripts, especially for background tasks.
 
 ### rebelship-header-optimizer.user.js - Header Optimizer
 
-**Version:** 3.47 | **Order:** 1 (loads first)
+**Version:** 3.51 | **Order:** 1 (loads first)
 
-**IMPORTANT:** This script must be installed and enabled for all other RebelShip scripts to work properly. It manages the header layout and coordinates UI elements between scripts.
-
-#### Purpose
-
-Handles all header UI element positioning and creates an optimized mobile layout. This is the foundation script that other scripts depend on.
+**IMPORTANT:** This script should be installed for proper header layout on all devices. It optimizes the header UI for both desktop and mobile views.
 
 #### Features
 
-##### Desktop Mode
-- Creates custom VIP Points display (icon on top, value below)
-- Creates custom Cash display next to stock info
-- Subscribes to Pinia store for real-time value updates
-
-##### Mobile Mode (< 768px)
-- **Top Row:** XP Level + Company Name (centered)
-- **Bottom Row:** VIP Points + Cash (centered)
-- **Left Side:** 3-line Stock Display (value, change, percent with trend arrow)
-- **Right Side:** Cart Button + RebelShip Menu
-
-##### Stock Display (Mobile)
-| Line | Content |
-|------|---------|
-| 1 | Current stock value (e.g., $4717.80) |
-| 2 | Change amount (e.g., $14.85) |
-| 3 | Percent change + trend arrow (e.g., +0.31% with SVG) |
-
-**Color Coding:**
-- Green: Stock trending up
-- Red: Stock trending down
-- White: Neutral/unchanged
-
-##### Header Resize Event
-
-When the window is resized, the script:
-1. Removes all userscript header elements
-2. Dispatches `rebelship-header-resize` event
-3. Other scripts listen to this event and reinitialize their displays
-
-This ensures all header elements are properly repositioned after resize.
-
-#### Technical Details
-
-- Uses MutationObserver to keep cloned elements (XP, Stock) in sync with originals
-- Subscribes to Pinia user store for live Cash/VIP updates
-- Coordinates Cart and RebelShip Menu positioning on mobile
+- Custom VIP Points and Cash display
+- Mobile-optimized layout (< 768px)
+- Stock display with trend indicators
+- Header resize handling for all scripts
 
 ---
 
 ### departmanager.user.js - Depart Manager
 
-**Version:** 2.47 | **Background Job:** Yes
+**Version:** 3.25 | **Background Job:** Yes
 
-The main automation script combining several older scripts, providing comprehensive departure and route management.
+The main automation script for departure and route management.
 
 #### Accessing Settings
 
-Click the **ship icon** (RebelShip Menu) in the header, then select **"Depart Manager"**.
+Open **RebelShip Menu** > **"Depart Manager"**
 
-#### Features and Settings
+#### Features
 
 ##### 1. Auto Bunker Refill (Fuel & CO2)
-
-Automatically purchases Fuel and CO2 based on price thresholds. Fuel and CO2 have separate independent settings.
-
-**Modes Explained:**
 
 | Mode | Behavior |
 |------|----------|
 | **Off** | No automatic purchasing |
 | **Basic** | Fills bunker to 100% when price <= Basic Threshold |
-| **Intelligent** | Extends Basic with additional logic for higher prices |
-
-**How Modes Work Together:**
-
-```
-Price <= Basic Threshold?
-    YES -> Fill bunker to 100% (applies to both Basic AND Intelligent)
-    NO -> Is Intelligent enabled?
-        NO -> Don't buy anything
-        YES -> Price <= Intelligent Max Price?
-            NO -> Don't buy anything
-            YES -> Additional conditions met? (Bunker below X, Ships at port)
-                NO -> Don't buy anything
-                YES -> Buy only shortfall (what's needed for departures)
-```
-
-**Basic Mode Settings:**
-
-| Setting | Description | Default |
-|---------|-------------|---------|
-| Basic Threshold | Price at which bunker gets filled to 100% | Fuel: $500, CO2: $10 |
-| Min Cash | Minimum cash to always keep | $1,000,000 |
-
-**Intelligent Mode Settings** (in addition to Basic):
-
-| Setting | Description | Default |
-|---------|-------------|---------|
-| Intelligent Max Price | Maximum price for shortfall purchases | Fuel: $600, CO2: $12 |
-| Only if bunker below X tons | Only buy when bunker is below this value | Disabled |
-| Only if X ships at port | Only buy when at least X ships are at port | Disabled |
-
-**Example Fuel:**
-- Basic Threshold: $500
-- Intelligent Max Price: $600
-- Current Price: $550
-
-Result: Basic doesn't fill (550 > 500). Intelligent buys only the shortfall for pending departures (550 <= 600).
-
-**Depart-Loop Behavior:**
-
-The script works in a loop: Buy -> Depart -> Buy -> Depart...
-
-1. **Before each departure:** If bunker insufficient for the vessel:
-   - Basic/Intelligent: Buys shortfall if price is within allowed range
-2. **After all departures (Final Fill):**
-   - If price <= Basic Threshold: Fills bunker to 100%
-   - If price > Basic Threshold: No automatic refill
-
-**Avoid Negative CO2** (Intelligent Mode only):
-
-| Setting | Description |
-|---------|-------------|
-| Avoid Negative CO2 | Maintains 100t CO2 buffer after departures |
-
-When enabled and CO2 falls below 100t after departures:
-- If price <= Intelligent Max Price: Refills to 100t (not 100%!)
-- Important for Vessel Utilization as negative CO2 affects the Green Marketing Campaign bonus
+| **Intelligent** | Extends Basic with shortfall-only purchases at higher prices |
 
 ##### 2. Auto-Depart
 
 Automatically departs vessels when conditions are met.
+- Sorts vessels by fuel requirement (highest first)
+- Checks fuel/CO2 availability before each departure
+- Buys shortfall if within price thresholds
 
-| Setting | Description | Default |
-|---------|-------------|---------|
-| Auto-Depart | Enables automatic departures | Off |
+##### 3. Minimum Utilization Warning
 
-**Which Vessels Are Considered:**
-- Status = "port" (at port)
-- Not moored (is_parked = false)
-- Has an assigned route (route_destination exists)
+Alerts when vessel utilization drops below threshold.
 
-**Departure Order:**
+##### 4. Route Settings Tab
 
-Vessels are sorted by fuel requirement (highest first). This ensures large vessels depart first while there's still enough fuel.
+Adds a **Settings** tab to the Routes modal for editing ALL vessels (including enroute).
 
-**Process Per Vessel:**
-
-```
-1. Calculate required Fuel and CO2 for the route
-2. Check: Is there enough Fuel in bunker?
-   NO -> Attempt to buy Fuel:
-         - If Fuel Mode != off AND price within allowed range:
-           Buy shortfall + 100t buffer
-         - Check again: Enough Fuel?
-           NO -> Vessel is skipped (message in log)
-           YES -> Continue to step 3
-   YES -> Continue to step 3
-3. Check: Is there enough CO2 in bunker?
-   NO -> Attempt to buy CO2 (same logic as Fuel)
-4. Depart vessel
-5. 300ms pause before next vessel
-```
-
-**What Happens With Insufficient Bunker:**
-
-| Situation | Behavior |
-|-----------|----------|
-| Fuel Mode = off | Vessel is skipped if bunker insufficient |
-| Fuel Mode = basic, Price > Threshold | Vessel is skipped |
-| Fuel Mode = basic, Price <= Threshold | Buys shortfall, then departs |
-| Fuel Mode = intelligent, Price > Intel Max | Vessel is skipped |
-| Fuel Mode = intelligent, Price <= Intel Max | Buys shortfall, then departs |
-
-**After All Departures:**
-
-1. **Avoid Negative CO2** (if enabled): Refills CO2 to 100t buffer
-2. **Final Fill** (if price <= Basic Threshold): Fills bunker to 100%
-
-**Manual vs Automatic Mode:**
-
-- **Manual** (button click): Shows error messages and skipped vessels as notifications
-- **Automatic** (background): Only logs to console, no disruptive popups
-
-##### 3. Smuggler's Eye
-
-Automatic price optimization system.
-
-| Setting | Description | Default |
-|---------|-------------|---------|
-| Smuggler's Eye enabled | Enables the feature | Off |
-| Instant 4% Markup | Sets prices to 4% above auto-price when creating routes | On |
-| Gradual Increase | Slowly increases prices to target | On |
-| Step Size | Increase per step | 1% |
-| Interval | Time between increases | 25 hours |
-| Target Percent | Maximum price target | 8% |
-| Max Guards on Pirate Routes | Sets guards to 10 on routes with hijacking risk > 0% | On |
-
-**How It Works:**
-- For enroute vessels: Changes are saved as "pending" and applied at next departure
-- For port vessels: Changes are applied immediately via API
-
-##### 4. Drydock Bug Prevention
-
-Fixes the game bug where route settings (speed, guards, cargo prices) are lost when a vessel is sent to drydock.
-
-**How It Works:**
-1. Intercepts drydock requests via Fetch API
-2. Saves all route settings before drydock starts
-3. Tracks vessel status through drydock lifecycle
-4. Automatically restores settings when vessel returns to port
-
-##### 5. Route Settings Tab
-
-Adds a **Settings** tab to the Routes modal allowing editing for **ALL vessels** (including enroute).
-
-**Columns in Settings Tab:**
 | Column | Meaning |
 |--------|---------|
 | Status | P=Port, E=Enroute, A=Anchored, MP=Moored Port, ME=Moored Enroute |
-| Route | Origin and destination |
-| Vessel | Vessel name |
-| Speed | Speed (editable) |
-| Prices | Cargo prices (editable) |
-| Guards | Number of guards (editable) |
-| Risk | Hijacking risk in % |
-| Pending | Pending values (shown in purple) |
+| Pending | Values saved for next departure (purple) |
 
-##### 6. UI Features
+##### 5. UI Features
 
-- **Auto-Expand Advanced**: Automatically expands "Advanced" sections in route modals
-- **Price Difference Badges**: Shows % difference from auto-price next to cargo prices
-  - Green = above auto-price
-  - Red = below auto-price
-
-##### 7. System Notifications
-
-| Setting | Description | Default |
-|---------|-------------|---------|
-| System Notifications | Push notifications for actions | Off |
+- Auto-Expand Advanced sections
+- Price Difference Badges (green = above auto-price, red = below)
 
 ---
 
-### yard-foreman.user.js - Auto Repair
+### auto-repair.user.js - Auto Repair
 
-**Version:** 2.11 | **Background Job:** Yes
+**Version:** 2.36 | **Background Job:** Yes
 
-Automatically repairs vessels when their wear reaches a threshold.
-
-#### Accessing Settings
-
-RebelShip Menu > **"Auto Repair"**
+Automatically repairs vessels when wear reaches threshold.
 
 #### Settings
 
 | Setting | Description | Default |
 |---------|-------------|---------|
 | Enabled | Enables auto-repair | Off |
-| Wear Threshold | Repair when wear >= X% (1-99) | 50% |
+| Wear Threshold | Repair when wear >= X% | 5% |
 | Min Cash After Repair | Keep at least this amount | 0 |
-| System Notifications | Push notifications | Off |
+
+---
+
+### auto-happy-stuff.user.js - Auto Happy Staff
+
+**Version:** 1.36 | **Background Job:** Yes
+
+Automatically adjusts salaries to keep crew and management morale at target levels.
+
+---
+
+### auto-coop-tickets-display.user.js - Auto CO-OP
+
+**Version:** 5.35 | **Background Job:** Yes
+
+Shows Co-Op tickets in header and automatically sends COOP vessels.
+
+---
+
+### auto-marketing-reputation-display.user.js - Auto Reputation
+
+**Version:** 5.26
+
+Shows reputation in header and auto-renews expired marketing campaigns.
+
+---
+
+### auto-drydock.user.js - Auto Drydock
+
+**Version:** 1.1 | **Background Job:** Yes
+
+Automatically sends vessels to drydock when antifouling hours drop below threshold. Also prevents the drydock bug by saving and restoring route settings.
+
+#### Accessing Settings
+
+RebelShip Menu > **"Auto Drydock"**
+
+#### Features
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| Enabled | Enables auto-drydock | Off |
+| Hours Threshold | Send to drydock when hours_until_check <= X | 200 |
+| Action Mode | Drydock or Moor (mutually exclusive) | Drydock |
+| Drydock Speed | Minimum (cheaper) or Maximum (faster) | Minimum |
+| Maintenance Type | Major (100%) or Minor (60% antifouling) | Major |
+| Min Cash Balance | Keep at least this amount after drydock | 1,000,000 |
 
 #### How It Works
 
 Every 15 minutes:
 1. Fetches all vessels via API
-2. Filters vessels with wear >= threshold (excludes vessels in maintenance/sailing)
-3. Gets repair costs
-4. Checks if enough cash is available (after Min Cash deduction)
-5. Executes bulk repair
+2. Filters vessels with hours_until_check <= threshold
+3. For **Drydock Mode**: Checks cash, saves route settings, sends to drydock
+4. For **Moor Mode**: Parks the vessel (or marks for mooring on arrival)
+
+**Drydock Bug Prevention:** Always active - saves route settings (speed, guards, prices) before drydock and restores them automatically after drydock completes.
 
 ---
 
-### auto_happy_stuff.user.js - Auto Happy Staff
+### smugglers-eye.user.js - Smuggler's Eye
 
-**Version:** 1.19 | **Background Job:** Yes
+**Version:** 1.1 | **Background Job:** Yes
 
-Automatically adjusts salaries to keep crew and management morale at target levels.
+Automatic price optimization system for cargo routes.
 
 #### Accessing Settings
 
-RebelShip Menu > **"Auto Happy Staff"**
+RebelShip Menu > **"Smuggler's Eye"**
 
-#### Settings
-
-| Setting | Description | Default |
-|---------|-------------|---------|
-| Enabled | Enables auto-adjustment | Off |
-| Target Crew Morale | Target morale for crew | Configurable |
-| Target Management Morale | Target morale for management | Configurable |
-| System Notifications | Push notifications | Off |
-
-#### Affected Positions
-
-**Crew:** Captain, First Officer, Boatswain, Technical Officer
-**Management:** CFO, COO, CMO, CTO
-
----
-
-### coop-tickets-display.user.js - Auto Co-Op
-
-**Version:** 5.15 | **Background Job:** Yes
-
-Shows Co-Op tickets in header and automatically sends COOP vessels to alliance members.
-
-#### Header Display
-
-Next to other header elements, a 2-line display appears:
-- Line 1: "CO-OP"
-- Line 2: available/maximum
-
-Click opens the Alliance Co-Op tab.
-
-#### Accessing Settings
-
-Click on the Co-Op display in the header.
-
-#### Settings
+#### Features
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| Auto-Send Enabled | Automatically sends COOP vessels | Off |
-| System Notifications | Push notifications | Off |
+| Enable Smuggler's Eye | Main toggle | Off |
+| 4% Instant Markup | Sets prices to 4% above auto-price | On |
+| Gradual Increase | Slowly increases prices over time | Off |
+| Step Size | Increase per step | 1% |
+| Interval | Time between increases | 25 hours |
+| Target Percent | Maximum price target | 8% |
+| Max Guards on Pirate Routes | Sets guards to 10 on risky routes | On |
 
-#### Auto-COOP Logic
+#### How It Works
 
-Sends COOP vessels to members who:
-- Have at least one vessel
-- Have low fuel (< 10t)
-- Allow COOP in their settings
-
----
-
-### reputation-display.user.js - Auto Reputation
-
-**Version:** 5.12
-
-Shows reputation in header and automatically renews expired marketing campaigns.
-
-#### Header Display
-
-Shows the current reputation value in the game header.
-
-#### Accessing Settings
-
-Click on the reputation display in the header.
-
-#### Settings
-
-| Setting | Description | Default |
-|---------|-------------|---------|
-| Auto Renewal Enabled | Renews expired campaigns | Off |
-| Min Cash | Minimum cash to keep | 0 |
-| System Notifications | Push notifications | Off |
+- For enroute vessels: Changes saved as "pending" and applied at next departure
+- For port vessels: Changes applied immediately via API
 
 ---
 
-### fleet-manager.user.js - Mass Moor/Resume
+### fleet-manager.user.js - Fleet Manager
 
-**Version:** 4.2
+**Version:** 4.15
 
-Adds checkboxes to vessel lists for mass mooring and resuming.
+Mass moor and resume vessels with checkbox selection.
 
-#### Where to Find
+#### Features
 
-Checkboxes appear in vessel lists:
-- At Port Tab
-- At Sea Tab
-- Anchored Tab
-
-#### Controls
-
-| Element | Function |
-|---------|----------|
-| Checkbox | Select individual vessel |
-| All Button | Select all vessels |
-| None Button | Deselect all |
-| Moor Button | Moor all selected vessels |
-| Resume Button | Resume all selected moored vessels |
+- Adds checkboxes to vessel lists in **At Port**, **Anchored**, and **At Sea** tabs
+- **All** / **None** buttons for quick selection
+- **Moor** button: Parks selected vessels (only works for vessels in port)
+- **Resume** button: Resumes selected moored vessels
+- Automatically filters: Moor only works on non-moored vessels, Resume only on moored vessels
+- Shows toast notifications for success/failure
 
 ---
 
 ### vessel-cart.user.js - Vessel Shopping Cart
 
-**Version:** 4.14
+**Version:** 4.22
 
-Shopping cart functionality for vessel purchase and building.
+Shopping cart for bulk vessel purchases and builds.
 
-#### Where to Find
+#### Features
 
-- **Cart Button**: In header next to RebelShip Menu (shows item count)
-- **Add to Cart Button**: Appears next to Order button in vessel/build modals
-
-#### Functions
-
-| Function | Description |
-|----------|-------------|
-| Add to Cart | Adds vessel/configuration to cart |
-| Cart Badge | Shows total item count in header |
-| Build Support | Saves complete build configuration (engine, capacity, propeller, etc.) |
-| Per-Ship Customization | Configure name and shipyard for each vessel individually |
-| +/- Buttons | Adjust quantities |
-| Bulk Checkout | Purchases/builds all items sequentially |
+- Add vessels to cart from the marketplace or shipyard
+- Adjust quantity per vessel type
+- Bulk purchase/build all cart items at once
+- Cart persists across sessions (saved in RebelShipBridge storage)
+- Shows total cost before purchase
+- Cart button appears in header on mobile
 
 ---
 
 ### bunker-price-display.user.js - Bunker Prices
 
-**Version:** 3.18
+**Version:** 3.20
 
 Shows current fuel and CO2 prices with fill levels in header.
 
-#### Header Display
+#### Features
 
-Replaces standard bunker display with 3-line format:
-
-**Fuel Block:**
-- Line 1: "Fuel"
-- Line 2: Fill level in %
-- Line 3: Current price
-
-**CO2 Block:**
-- Line 1: "CO2"
-- Line 2: Fill level in %
-- Line 3: Current price
-
-#### Color Coding
-
-**Fuel Prices:**
-| Price | Color |
-|-------|-------|
-| > 750 | Red |
-| 650-750 | Orange |
-| 500-650 | Blue |
-| < 500 | Green |
-
-**CO2 Prices:**
-| Price | Color |
-|-------|-------|
-| >= 20 | Red |
-| 15-20 | Orange |
-| 10-15 | Blue |
-| < 10 | Green |
-
-**Fill Level:**
-- <= 30%: Red
-- > 30%: Green
+- Replaces original fuel/CO2 icons with 3-line display:
+  - Line 1: Label (Fuel / CO2)
+  - Line 2: Fill level % (color-coded: red < 30%, green >= 30%)
+  - Line 3: Current price per ton
+- Price colors: Green (cheap) → Blue → Orange → Red (expensive)
+- Updates automatically at :00:45 and :30:45 (after game price changes)
+- Subscribes to Pinia store for instant fill level updates
 
 ---
 
 ### forecast-calendar.user.js - Forecast Calendar
 
-**Version:** 3.10
+**Version:** 3.27
 
-Visual page-flip calendar with cargo demand forecasts.
+Visual page-flip calendar with fuel and CO2 price forecasts.
 
-#### Access
-
-RebelShip Menu > **"Forecast Calendar"**
+**Access:** RebelShip Menu > **"Bunker Forecast"**
 
 #### Features
 
-| Feature | Description |
-|---------|-------------|
-| Page-Flip Animation | Realistic book navigation |
-| 24-Hour Forecast | Shows Fuel/CO2 prices for each 30-min interval |
-| Color Coding | Green/Blue/Orange/Red based on price quality |
-| Current Hour Highlight | Green highlight on current time slot |
-| Timezone Conversion | Converts CEST forecast data to local timezone |
+- Interactive page-flip calendar (swipe or click arrows)
+- Shows 24-hour price forecast per day
+- Highlights current hour row
+- Color-coded prices (green = cheap, red = expensive)
+- Converts UTC times to your local timezone
+- Data fetched from external forecast API
 
-#### Color Coding (same as Bunker Price Display)
+---
+
+### demand-summary.user.js - Demand Summary
+
+**Version:** 4.43
+
+Shows port demand with capacity overview.
+
+**Access:** RebelShip Menu > **"Demand Summary"**
+
+#### Features
+
+- Lists all ports with current cargo demand
+- Shows your fleet capacity allocated to each port
+- Highlights undersupplied and oversupplied routes
+- Sortable columns
+- Quick navigation to port details
 
 ---
 
 ### enable-distance-filter.user.js - Distance Filter
 
-**Version:** 8.1
+**Version:** 9.18
 
 Filters destination ports by distance when creating new routes.
 
-#### Where to Find
+#### Features
 
-In the **Create Route Popup** a dropdown for distance filtering appears.
-
-#### Available Ranges
-
-| Filter | Distance |
-|--------|----------|
-| All | All ports |
-| < 1000 nm | Under 1000 nautical miles |
-| 1k-3k nm | 1000-3000 nautical miles |
-| 3k-6k nm | 3000-6000 nautical miles |
-| 6k-10k nm | 6000-10000 nautical miles |
-| > 10k nm | Over 10000 nautical miles |
+- Adds distance filter dropdown to route creation modal
+- Filter options: All, < 500nm, < 1000nm, < 2000nm, etc.
+- Helps find efficient short-distance routes
+- Works with all cargo types
 
 ---
 
 ### map-unlock.user.js - Premium Features
 
-**Version:** 1.3
+**Version:** 1.10
 
-Unlocks premium features for all players.
+Unlocks premium map features without VIP subscription.
 
 #### Unlocked Features
 
-- Premium Map Themes
-- Tanker Operations
-- Metropolis Mode
-- Extended Zoom
+- Map Themes (different visual styles)
+- Tanker Operations view
+- Metropolis overlay
+- Extended zoom levels
+
+**Note:** Visual only - does not grant actual VIP benefits.
 
 ---
 
 ### fast-delivery.user.js - Fast Delivery
 
-**Version:** 1.6
+**Version:** 1.9
 
 Uses a game bug to reduce vessel delivery time from days to 60 minutes.
 
 #### How It Works
 
-When a vessel is built, it has a delivery time of several days. If the pending vessel is immediately sent to drydock (Minor Maintenance), the delivery time is replaced by drydock duration (60 min at minimum speed).
+1. When a vessel is being built/delivered, sends it to drydock
+2. The drydock journey resets the delivery timer
+3. Vessel arrives at drydock location in ~60 minutes instead of days
 
-#### Usage
-
-The script automatically adds a "Fast Delivery" button to pending vessels.
+**Note:** Exploits a known game bug. Use at your own discretion.
 
 ---
 
 ### depart-all-loop.user.js - Depart All Loop
 
-**Version:** 2.4
+**Version:** 2.6
 
-Repeatedly clicks the "Depart All" button until all vessels have departed.
+Repeatedly clicks "Depart All" until all vessels have departed.
 
-#### Usage
+#### Features
 
-Adds a "Loop Depart" button next to the normal "Depart All".
+- Adds "Loop" button next to "Depart All"
+- Keeps clicking Depart All every few seconds
+- Stops when all vessels have departed or manually cancelled
+- Useful when waiting for fuel purchases to complete
 
 ---
 
 ### alliance-chat-notification.user.js - Chat Notification
 
-**Version:** 2.6
+**Version:** 2.14
 
-Shows a red dot on the Alliance button when there are unread messages.
+Shows a red notification dot when there are unread alliance messages.
 
-#### Display
+#### Features
 
-A small red dot appears on the Alliance button in the game header.
+- Red dot appears on Alliance button in header
+- Checks for new messages periodically
+- Clears when you open the alliance chat
+- Works on both desktop and mobile
 
 ---
 
 ### alliance-search.user.js - Alliance Search
 
-**Version:** 3.7
+**Version:** 3.46
 
-Allows searching through all open alliances.
+Search and browse all open alliances.
 
-#### Access
-
-RebelShip Menu > **"Alliance Search"**
+**Access:** RebelShip Menu > **"Alliance Search"**
 
 #### Features
 
-- Search all open alliances by name
-- Shows alliance details
-- Results are cached for faster searches
+- Fetches all open alliances from API
+- Search by alliance name
+- Filter by member count, requirements, etc.
+- View alliance details before joining
+- Quick join button
+
+---
+
+### harbor-improvements.user.js - Harbor Improvements
+
+**Version:** 2.7
+
+Fixes UI issues in the harbor/port menu.
+
+#### Features
+
+- Repositions the "Details" button to prevent overlap
+- Improves button accessibility on smaller screens
+
+---
+
+### at-port-refresh.user.js - Auto Port Refresh
+
+**Version:** 1.4
+
+Automatically refreshes the "At Port" vessel list.
+
+#### Features
+
+- Refreshes the At Port list every 30 seconds
+- Keeps vessel status up-to-date without manual refresh
+- Useful when waiting for vessels to arrive
+
+---
+
+### buy-vip-vessel.user.js - VIP Vessel Shop
+
+**Version:** 2.24
+
+Access to VIP-exclusive vessels.
+
+**Access:** RebelShip Menu > **"VIP Vessel Shop"**
+
+#### Features
+
+- Browse VIP-exclusive vessel models
+- View specifications and prices
+- Purchase VIP vessels directly
 
 ---
 
 ### Export Scripts
 
-#### export-vessels-csv.user.js - Fleet Export
+#### export-vessels-csv.user.js
 
-**Version:** 1.9
+**Version:** 1.19
 
-Exports all vessels with details as CSV.
+Export your entire fleet as a CSV file.
 
 **Access:** RebelShip Menu > **"Export Vessels"**
 
-#### export-messages.user.js - Messages Export
+- Includes vessel name, type, capacity, current route, status, wear, etc.
+- CSV format for easy import into Excel or Google Sheets
 
-**Version:** 1.9
+#### export-messages.user.js
 
-Exports all messenger conversations as CSV or JSON.
+**Version:** 1.24
+
+Export your messages as CSV or JSON.
 
 **Access:** RebelShip Menu > **"Export Messages"**
 
-#### save-vessel-history.user.js - Vessel History
+- Export inbox, sent, or all messages
+- Choose between CSV and JSON format
+- Includes sender, subject, date, and content
 
-**Version:** 3.1
+#### export-vessel-history.user.js
 
-Detects vessel history API calls and offers CSV download.
+**Version:** 3.5
+
+Save vessel voyage history as CSV.
+
+**Access:** Via vessel detail modal
+
+- Records voyage data: routes, cargo, earnings
+- Export historical performance data
+- Useful for profit analysis
 
 ---
 
@@ -697,105 +544,529 @@ Detects vessel history API calls and offers CSV download.
 
 #### fix-alliance-member-exclude.user.js
 
-**Version:** 1.4
+**Version:** 1.6
 
-Fixes broken exclude buttons for CEO and adds missing ones for management members.
+Fixes the exclude/kick buttons in alliance member management.
 
-#### fix-alliance-edit-buttons.user.js
+- Buttons were not working for CEO role
+- This script restores functionality
 
-**Version:** 1.3
+#### fix-alliance-interimCEO.user.js
 
-Adds missing edit buttons for alliance name/description for interim_ceo.
+**Version:** 1.6
+
+Adds missing edit buttons for Interim CEO role.
+
+- Game bug: Interim CEOs couldn't edit alliance settings
+- This script adds the missing UI buttons
 
 ---
 
 ### admin-view.user.js - Admin View
 
-**Version:** 8.5
+**Version:** 8.7
 
-Shows Admin/Moderator UI elements.
+Shows Admin/Moderator UI elements for testing purposes.
 
-**IMPORTANT:** This is VISUAL ONLY! The script does NOT grant any admin permissions or functions. It only shows what the admin interface looks like.
+**VISUAL ONLY** - does NOT grant any actual permissions or abilities.
+
+#### Features
+
+- Shows admin menu items
+- Displays moderator tools in UI
+- Useful for UI development/testing only
 
 ---
 
-## Technical Details
+## Developer Guide
+
+This section explains how to create your own scripts that integrate with the RebelShip Menu system.
+
+### Script Header Template
+
+```javascript
+// ==UserScript==
+// @name         ShippingManager - My Script
+// @namespace    https://rebelship.org/
+// @version      1.0
+// @description  Description of your script
+// @author       Your Name
+// @order        30
+// @match        https://shippingmanager.cc/*
+// @grant        none
+// @run-at       document-end
+// @enabled      false
+// @background-job-required true
+// @RequireRebelShipMenu true
+// ==/UserScript==
+/* globals addMenuItem */
+```
+
+#### The `/* globals */` Comment
+
+The `/* globals ... */` comment tells your code editor (ESLint) which variables are provided by the RebelShip Browser, so it won't show "undefined variable" warnings.
+
+**Available globals you can declare:**
+
+| Global | When to use |
+|--------|-------------|
+| `addMenuItem` | When using `@RequireRebelShipMenu true` |
+| `addSubMenu` | When using submenus with `@RequireRebelShipMenu true` |
+| `MutationObserver` | When observing DOM changes (standard browser API) |
+| `CustomEvent` | When dispatching custom events (standard browser API) |
+
+**Example with multiple globals:**
+```javascript
+/* globals addMenuItem, addSubMenu, MutationObserver */
+```
+
+#### Header Fields Explained
+
+**Standard Userscript Fields:**
+
+| Field | Description |
+|-------|-------------|
+| `@name` | Script name displayed in manager. Convention: `ShippingManager - [Name]` |
+| `@namespace` | Unique identifier namespace (e.g., `http://tampermonkey.net/`) |
+| `@version` | Version number (e.g., `1.0`, `2.34`) |
+| `@description` | Short description of what the script does |
+| `@author` | Author name or GitHub URL |
+| `@match` | URL pattern where script runs. Always `https://shippingmanager.cc/*` |
+| `@grant` | Permissions needed. Use `none` for RebelShip scripts |
+| `@run-at` | When to inject. Use `document-end` (after DOM ready) |
+
+**RebelShip-specific Fields:**
+
+| Field | Description |
+|-------|-------------|
+| `@order` | Menu position (lower = higher in menu). Range: 1-999. Use 20-30 for custom scripts |
+| `@enabled` | Initial state when first loaded (`true` or `false`) |
+| `@background-job-required` | Set to `true` if script needs background execution on mobile |
+| `@RequireRebelShipMenu` | Set to `true` to use `addMenuItem()` / `addSubMenu()` APIs |
+
+### Available Global APIs
+
+The RebelShip Browser provides these global APIs for userscripts:
+
+| Global | Description |
+|--------|-------------|
+| `addMenuItem(label, callback, order)` | Add item to RebelShip Menu |
+| `addSubMenu(parentLabel, items)` | Add a submenu with multiple items |
+| `window.RebelShipBridge.storage` | IndexedDB storage API (get/set/delete) |
+| `window.RebelShipNotify.notify(message)` | Send system notification (mobile) |
+| `window.rebelshipBackgroundJobs` | Array to register background jobs |
+
+### Adding a Menu Item
+
+```javascript
+/* globals addMenuItem */
+
+// addMenuItem(label, callback, order)
+addMenuItem('My Script', openSettingsModal, 30);
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `label` | Text shown in the menu |
+| `callback` | Function called when clicked |
+| `order` | Position in menu (same as @order header) |
+
+### Adding a Submenu
+
+```javascript
+/* globals addSubMenu */
+
+// addSubMenu(parentLabel, items)
+addSubMenu('Export Data', [
+    { label: 'Export as CSV', callback: exportCSV },
+    { label: 'Export as JSON', callback: exportJSON }
+]);
+```
+
+### Sending Notifications (Mobile)
+
+```javascript
+// Check if available, then send notification
+if (typeof window.RebelShipNotify !== 'undefined' && window.RebelShipNotify.notify) {
+    try {
+        window.RebelShipNotify.notify('MyScript: Task completed!');
+    } catch (e) {
+        console.error('Notification failed:', e);
+    }
+}
+```
+
+### Using RebelShipBridge Storage
+
+RebelShipBridge provides IndexedDB-based storage that persists across sessions and syncs with mobile apps.
+
+```javascript
+var SCRIPT_NAME = 'MyScript';
+var STORE_NAME = 'data';
+
+// Read from storage
+async function dbGet(key) {
+    try {
+        var result = await window.RebelShipBridge.storage.get(SCRIPT_NAME, STORE_NAME, key);
+        if (result) {
+            return JSON.parse(result);
+        }
+        return null;
+    } catch (e) {
+        console.error('[MyScript] dbGet error:', e);
+        return null;
+    }
+}
+
+// Write to storage
+async function dbSet(key, value) {
+    try {
+        await window.RebelShipBridge.storage.set(SCRIPT_NAME, STORE_NAME, key, JSON.stringify(value));
+        return true;
+    } catch (e) {
+        console.error('[MyScript] dbSet error:', e);
+        return false;
+    }
+}
+
+// Usage
+var settings = await dbGet('settings');
+await dbSet('settings', { enabled: true, threshold: 50 });
+```
+
+#### Storage Namespacing
+
+Each script should use its own namespace:
+- `SCRIPT_NAME` = unique identifier (e.g., 'AutoRepair', 'SmugglersEye')
+- `STORE_NAME` = usually 'data'
+- `key` = data key within the namespace (e.g., 'settings', 'cache')
+
+#### Shared Storage Pattern
+
+Some scripts need to share data. Example: Smuggler's Eye writes pending route settings that DepartManager reads.
+
+```javascript
+// Writing to another script's storage (shared data)
+async function dbGetShared() {
+    try {
+        var result = await window.RebelShipBridge.storage.get('DepartManager', 'data', 'storage');
+        if (result) { return JSON.parse(result); }
+        return null;
+    } catch (e) { return null; }
+}
+
+async function dbSetShared(data) {
+    try {
+        await window.RebelShipBridge.storage.set('DepartManager', 'data', 'storage', JSON.stringify(data));
+        return true;
+    } catch (e) { return false; }
+}
+
+// Save pending route settings for a vessel
+async function savePendingRouteSettings(vesselId, data) {
+    var storage = await dbGetShared();
+    if (!storage) {
+        storage = { settings: {}, pendingRouteSettings: {} };
+    }
+    if (!storage.pendingRouteSettings) {
+        storage.pendingRouteSettings = {};
+    }
+    storage.pendingRouteSettings[vesselId] = {
+        name: data.name,
+        speed: data.speed,
+        guards: data.guards,
+        prices: data.prices,
+        savedAt: Date.now()
+    };
+    await dbSetShared(storage);
+}
+```
+
+### Registering Background Jobs
+
+Background jobs allow scripts to run periodically even when the app is in the background (mobile).
+
+**Step 1:** Add the header field:
+```javascript
+// @background-job-required true
+```
+
+**Step 2:** Create a run function and register the job:
+```javascript
+// Create the run function
+window.rebelshipRunMyScript = async function() {
+    console.log('[MyScript] Background job running');
+
+    // Do your background work here
+    await checkAndProcess();
+
+    return { success: true, message: 'Completed' };
+};
+
+// Register with background job system
+if (!window.rebelshipBackgroundJobs) {
+    window.rebelshipBackgroundJobs = [];
+}
+window.rebelshipBackgroundJobs.push({
+    name: 'MyScript',
+    interval: 15 * 60 * 1000, // Run every 15 minutes
+    run: async function() {
+        return await window.rebelshipRunMyScript();
+    }
+});
+```
+
+| Property | Description |
+|----------|-------------|
+| `name` | Unique identifier for the job |
+| `interval` | Time between runs in milliseconds |
+| `run` | Async function that performs the work |
+
+### Creating a Settings Modal
+
+Use the game-style modal pattern for consistent UI:
+
+```javascript
+function openSettingsModal() {
+    // Create modal wrapper
+    var wrapper = document.createElement('div');
+    wrapper.id = 'myscript-modal-wrapper';
+    wrapper.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;z-index:100001;display:flex;align-items:center;justify-content:center;';
+
+    // Background overlay
+    var bg = document.createElement('div');
+    bg.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);';
+    bg.addEventListener('click', closeModal);
+    wrapper.appendChild(bg);
+
+    // Content wrapper (for animation)
+    var contentWrapper = document.createElement('div');
+    contentWrapper.style.cssText = 'position:relative;z-index:1;animation:myscript-fade-in 0.2s ease-out;';
+    wrapper.appendChild(contentWrapper);
+
+    // Main container
+    var container = document.createElement('div');
+    container.style.cssText = 'background:#c6cbdb;border-radius:12px;overflow:hidden;width:400px;max-width:95vw;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 4px 20px rgba(0,0,0,0.3);';
+    contentWrapper.appendChild(container);
+
+    // Header
+    var header = document.createElement('div');
+    header.style.cssText = 'background:#626b90;color:#fff;padding:16px 20px;display:flex;justify-content:space-between;align-items:center;';
+    header.innerHTML = '<span style="font-size:18px;font-weight:700;">My Script Settings</span>';
+
+    var closeBtn = document.createElement('button');
+    closeBtn.innerHTML = 'X';
+    closeBtn.style.cssText = 'background:none;border:none;color:#fff;font-size:20px;cursor:pointer;padding:0;width:30px;height:30px;';
+    closeBtn.addEventListener('click', closeModal);
+    header.appendChild(closeBtn);
+    container.appendChild(header);
+
+    // Content area
+    var content = document.createElement('div');
+    content.style.cssText = 'flex:1;overflow-y:auto;padding:0;';
+    container.appendChild(content);
+
+    // Central container (main settings area)
+    var centralContainer = document.createElement('div');
+    centralContainer.style.cssText = 'background:#e9effd;margin:16px;border-radius:8px;padding:20px;';
+    content.appendChild(centralContainer);
+
+    // Add your settings HTML here
+    centralContainer.innerHTML = buildSettingsHTML();
+
+    // Add CSS animation
+    var style = document.createElement('style');
+    style.textContent = '@keyframes myscript-fade-in { from { opacity:0; transform:scale(0.95); } to { opacity:1; transform:scale(1); } }';
+    wrapper.appendChild(style);
+
+    document.body.appendChild(wrapper);
+    attachEventListeners();
+}
+
+function closeModal() {
+    var wrapper = document.getElementById('myscript-modal-wrapper');
+    if (wrapper) wrapper.remove();
+}
+```
+
+### Input Styling (Game-Style)
+
+```html
+<!-- Checkbox -->
+<label style="display:flex;align-items:center;cursor:pointer;">
+    <input type="checkbox" id="my-checkbox"
+           style="width:20px;height:20px;margin-right:12px;accent-color:#0db8f4;cursor:pointer;">
+    <span style="font-weight:600;">Setting Label</span>
+</label>
+
+<!-- Number Input -->
+<input type="number" id="my-number" min="1" max="100" value="50"
+       class="redesign"
+       style="width:100%;height:2rem;padding:0 0.5rem;background:#ebe9ea;border:0;border-radius:7px;color:#01125d;font-size:14px;font-family:Lato,sans-serif;text-align:center;box-sizing:border-box;">
+
+<!-- Select Dropdown -->
+<select id="my-select" class="redesign"
+        style="width:100%;height:2rem;padding:0 0.5rem;background:#ebe9ea;border:0;border-radius:7px;color:#01125d;font-size:14px;font-family:Lato,sans-serif;text-align:center;box-sizing:border-box;cursor:pointer;">
+    <option value="option1">Option 1</option>
+    <option value="option2">Option 2</option>
+</select>
+
+<!-- Save Button -->
+<button id="my-save"
+        style="padding:10px 24px;background:linear-gradient(180deg,#46ff33,#129c00);border:0;border-radius:6px;color:#fff;cursor:pointer;font-size:16px;font-weight:500;font-family:Lato,sans-serif;">
+    Save
+</button>
+
+<!-- Run Now Button -->
+<button id="my-run"
+        style="padding:10px 24px;background:linear-gradient(180deg,#3b82f6,#1d4ed8);border:0;border-radius:6px;color:#fff;cursor:pointer;font-size:14px;font-weight:500;font-family:Lato,sans-serif;">
+    Run Now
+</button>
+```
+
+### Disabling Sub-Options
+
+When a main toggle is off, disable related sub-options:
+
+```javascript
+// In HTML template
+var disabledAttr = settings.enabled ? '' : ' disabled';
+var wrapperStyle = settings.enabled ? '' : 'opacity:0.5;pointer-events:none;';
+
+html += '<div id="options-wrapper" style="' + wrapperStyle + '">';
+html += '<input type="checkbox" id="sub-option"' + disabledAttr + '>';
+html += '</div>';
+
+// Event listener for main toggle
+document.getElementById('main-toggle').addEventListener('change', function() {
+    var wrapper = document.getElementById('options-wrapper');
+    var inputs = wrapper.querySelectorAll('input');
+    if (this.checked) {
+        wrapper.style.opacity = '';
+        wrapper.style.pointerEvents = '';
+        inputs.forEach(function(inp) { inp.disabled = false; });
+    } else {
+        wrapper.style.opacity = '0.5';
+        wrapper.style.pointerEvents = 'none';
+        inputs.forEach(function(inp) { inp.disabled = true; });
+    }
+});
+```
+
+### Background Job Pattern
+
+For scripts that run periodically:
+
+```javascript
+var CHECK_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
+var monitorInterval = null;
+
+function startMonitoring() {
+    if (monitorInterval) return;
+    monitorInterval = setInterval(runCheck, CHECK_INTERVAL_MS);
+    console.log('[MyScript] Monitoring started');
+}
+
+function stopMonitoring() {
+    if (monitorInterval) {
+        clearInterval(monitorInterval);
+        monitorInterval = null;
+    }
+    console.log('[MyScript] Monitoring stopped');
+}
+
+async function runCheck() {
+    if (!settings.enabled) return;
+    // Your periodic logic here
+}
+
+// Expose for Android background service
+window.rebelshipRunMyScript = async function() {
+    if (!settings.enabled) {
+        return { skipped: true, reason: 'disabled' };
+    }
+    await runCheck();
+    return { success: true };
+};
+```
 
 ### Pinia Store Access
 
-Scripts access game state via Vue's Pinia stores:
+Access game state via Vue's Pinia stores:
 
 ```javascript
 function getPinia() {
-    const appEl = document.querySelector('#app');
+    var appEl = document.querySelector('#app');
     if (!appEl || !appEl.__vue_app__) return null;
-    const app = appEl.__vue_app__;
+    var app = appEl.__vue_app__;
     return app._context.provides.pinia || app.config.globalProperties.$pinia;
 }
 
 function getStore(name) {
-    const pinia = getPinia();
+    var pinia = getPinia();
     if (!pinia || !pinia._s) return null;
     return pinia._s.get(name);
 }
 
 // Available stores: 'user', 'vessel', 'modal', 'toast', 'game', 'port', etc.
+var userStore = getStore('user');
+var cash = userStore.user.cash;
 ```
 
 ### Fetch Interceptor Pattern
 
-Scripts that intercept API calls:
+Intercept API calls to hook into game events:
 
 ```javascript
-const originalFetch = window.fetch;
+var originalFetch = window.fetch;
 
 window.fetch = async function() {
-    const url = arguments[0];
+    var url = arguments[0];
+    var options = arguments[1];
 
     // Pre-request hook
-    if (url.includes('/some/endpoint')) {
-        // Before request
+    if (url.includes('/api/vessel/depart')) {
+        await beforeDepart(options);
     }
 
-    const response = await originalFetch.apply(this, arguments);
+    var response = await originalFetch.apply(this, arguments);
 
     // Post-response hook
-    if (url.includes('/some/endpoint')) {
-        const clone = response.clone();
-        const data = await clone.json();
-        // Process response
+    if (url.includes('/api/vessel/data')) {
+        var clone = response.clone();
+        var data = await clone.json();
+        handleVesselData(data);
     }
 
     return response;
 };
 ```
 
-### RebelShip Menu System
-
-Scripts share a common menu system. The menu appears before the messaging icon in the header.
-
 ---
 
-## Background Execution (Android)
+## Background Execution
 
-The following scripts support background execution on Android via RebelShip Browser Mobile:
+Scripts with `@background-job-required true` support background execution:
 
 | Script | Background Function |
 |--------|---------------------|
-| departmanager.user.js | Auto-Bunker purchase, Auto-Depart, Smuggler's Eye |
-| yard-foreman.user.js | Auto-Repair |
-| auto_happy_stuff.user.js | Auto salary adjustment |
-| coop-tickets-display.user.js | Auto-COOP sending |
+| departmanager.user.js | Auto-Bunker, Auto-Depart |
+| auto-repair.user.js | Auto-Repair |
+| auto-happy-stuff.user.js | Auto salary adjustment |
+| auto-coop-tickets-display.user.js | Auto-COOP sending |
+| auto-drydock.user.js | Auto-Drydock/Moor |
+| smugglers-eye.user.js | Price optimization |
 
-These scripts have `@background-job-required true` in their header and sync their settings with the Android app via `RebelShipBridge`.
+These scripts sync settings with RebelShip Browser via `RebelShipBridge`.
 
 ---
 
 ## Compatibility
 
 - Tested with Shipping Manager as of January 2026
-- Works with Tampermonkey, Violentmonkey and Greasemonkey
-- Mobile support via GeckoView-based browsers
+- **Requires RebelShip Browser** (Windows or Android)
+- Does NOT work with Tampermonkey, Violentmonkey or Greasemonkey
+- Scripts depend on RebelShipBridge API and SQLCipher database
 
 ## Disclaimer
 

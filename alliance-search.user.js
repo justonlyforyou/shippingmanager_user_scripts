@@ -1,30 +1,90 @@
 // ==UserScript==
-// @name        Shipping Manager - Open Alliance Search
-// @description Search all open alliances 
-// @version     3.13
+// @name        ShippingManager - Open Alliance Search
+// @description Search all open alliances
+// @version     3.46
 // @author      https://github.com/justonlyforyou/
 // @order       9
 // @match       https://shippingmanager.cc/*
+// @grant       none
 // @run-at      document-end
+// @RequireRebelShipMenu true
 // @enabled     false
 // ==/UserScript==
-/* globals Event */
+/* globals Event, addMenuItem */
 
 (function() {
     'use strict';
 
-    var STORAGE_KEY = 'rebelship_alliances';
-    var STORAGE_META_KEY = 'rebelship_alliances_meta';
-    var STORAGE_PROGRESS_KEY = 'rebelship_alliances_progress';
+    var SCRIPT_NAME = 'AllianceSearch';
+    var STORE_NAME = 'data';
+
+    var STORAGE_KEY = 'alliances';
+    var STORAGE_META_KEY = 'meta';
+    var STORAGE_PROGRESS_KEY = 'progress';
     var isDownloading = false;
     var isIndexReady = false;
     var PAGE_SIZE = 10;
     var currentResults = [];
     var displayedCount = 0;
     var isLoadingMore = false;
+    var isAllianceSearchModalOpen = false;
+    var modalListenerAttached = false;
 
-    // RebelShip Menu Logo SVG
-    var REBELSHIP_LOGO = '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><path d="M20 21c-1.39 0-2.78-.47-4-1.32-2.44 1.71-5.56 1.71-8 0C6.78 20.53 5.39 21 4 21H2v2h2c1.38 0 2.74-.35 4-.99 2.52 1.29 5.48 1.29 8 0 1.26.65 2.62.99 4 .99h2v-2h-2zM3.95 19H4c1.6 0 3.02-.88 4-2 .98 1.12 2.4 2 4 2s3.02-.88 4-2c.98 1.12 2.4 2 4 2h.05l1.89-6.68c.08-.26.06-.54-.06-.78s-.34-.42-.6-.5L20 10.62V6c0-1.1-.9-2-2-2h-3V1H9v3H6c-1.1 0-2 .9-2 2v4.62l-1.29.42c-.26.08-.48.26-.6.5s-.15.52-.06.78L3.95 19zM6 6h12v3.97L12 8 6 9.97V6z"/></svg>';
+    // ==================== Global Modal Registry ====================
+    // Shared registry so userscripts don't interfere with each other's modals
+    if (!window.RebelShipModalRegistry) {
+        window.RebelShipModalRegistry = {
+            activeScript: null,
+            register: function(scriptName) {
+                this.activeScript = scriptName;
+            },
+            unregister: function(scriptName) {
+                if (this.activeScript === scriptName) {
+                    this.activeScript = null;
+                }
+            },
+            isOurs: function(scriptName) {
+                return this.activeScript === scriptName;
+            }
+        };
+    }
+
+    // ==================== RebelShipBridge Storage ====================
+
+    async function dbGet(key) {
+        try {
+            var result = await window.RebelShipBridge.storage.get(SCRIPT_NAME, STORE_NAME, key);
+            if (result) {
+                return JSON.parse(result);
+            }
+            return null;
+        } catch (e) {
+            console.error('[AllianceSearch] dbGet error:', e);
+            return null;
+        }
+    }
+
+    async function dbSet(key, value) {
+        try {
+            await window.RebelShipBridge.storage.set(SCRIPT_NAME, STORE_NAME, key, JSON.stringify(value));
+            return true;
+        } catch (e) {
+            console.error('[AllianceSearch] dbSet error:', e);
+            return false;
+        }
+    }
+
+    async function dbDelete(key) {
+        try {
+            await window.RebelShipBridge.storage.delete(SCRIPT_NAME, STORE_NAME, key);
+            return true;
+        } catch (e) {
+            console.error('[AllianceSearch] dbDelete error:', e);
+            return false;
+        }
+    }
+
+    // ==================== Storage Functions ====================
 
     // Format numbers with thousand separators
     function formatNumber(num) {
@@ -41,8 +101,7 @@
             if (!pinia || !pinia._s) return null;
             return {
                 modalStore: pinia._s.get('modal'),
-                allianceStore: pinia._s.get('alliance'),
-                userStore: pinia._s.get('user')
+                allianceStore: pinia._s.get('alliance')
             };
         } catch (e) {
             console.error('[AllianceSearch] Failed to get stores:', e);
@@ -58,23 +117,15 @@
             return;
         }
 
-        console.log('[AllianceSearch] Opening alliance:', allianceId);
-
-        // The alliance store uses Vue refs, so we need to set the ID properly
-        // The game code does: n.value.id = t where n is the alliance ref
         if (stores.allianceStore) {
-            // Try different ways to set the ID based on how Vue/Pinia exposes it
             if (stores.allianceStore.alliance && typeof stores.allianceStore.alliance === 'object') {
-                // If it's a ref with .value
                 if (stores.allianceStore.alliance.value !== undefined) {
                     stores.allianceStore.alliance.value.id = allianceId;
                 } else {
-                    // Direct property access (unwrapped ref in Pinia)
                     stores.allianceStore.alliance.id = allianceId;
                 }
             }
 
-            // Also try using $patch if available (Pinia method)
             if (typeof stores.allianceStore.$patch === 'function') {
                 stores.allianceStore.$patch(function(state) {
                     if (state.alliance) {
@@ -84,72 +135,76 @@
             }
         }
 
-        // Small delay to let store update
         await new Promise(function(r) { setTimeout(r, 100); });
 
-        // Open the alliance overview modal - it will fetch fresh data
         stores.modalStore.open('allianceOverview');
     }
 
-    // Get stored alliances
-    function getStoredAlliances() {
+    // Get stored alliances (async)
+    async function getStoredAlliances() {
         try {
-            var data = localStorage.getItem(STORAGE_KEY);
-            return data ? JSON.parse(data) : [];
+            var data = await dbGet(STORAGE_KEY);
+            return data ? data : [];
         } catch (e) {
             console.error('[AllianceSearch] Failed to load alliances:', e);
             return [];
         }
     }
 
-    // Get storage metadata
-    function getStorageMeta() {
+    // Get storage metadata (async)
+    async function getStorageMeta() {
         try {
-            var data = localStorage.getItem(STORAGE_META_KEY);
-            return data ? JSON.parse(data) : null;
-        } catch {
+            var data = await dbGet(STORAGE_META_KEY);
+            return data ? data : null;
+        } catch (e) {
+            console.error('[AllianceSearch] Failed to get meta:', e);
             return null;
         }
     }
 
-    // Get download progress (for resume after F5)
-    function getDownloadProgress() {
+    // Get download progress (async)
+    async function getDownloadProgress() {
         try {
-            var data = localStorage.getItem(STORAGE_PROGRESS_KEY);
-            return data ? JSON.parse(data) : null;
-        } catch {
+            var data = await dbGet(STORAGE_PROGRESS_KEY);
+            return data ? data : null;
+        } catch (e) {
+            console.error('[AllianceSearch] Failed to get progress:', e);
             return null;
         }
     }
 
-    // Save download progress
-    function saveDownloadProgress(offset, alliances) {
+    // Save download progress (async)
+    async function saveDownloadProgress(offset, alliances) {
         try {
-            localStorage.setItem(STORAGE_PROGRESS_KEY, JSON.stringify({
+            await dbSet(STORAGE_PROGRESS_KEY, {
                 offset: offset,
                 alliances: alliances,
                 timestamp: Date.now()
-            }));
+            });
         } catch (e) {
             console.error('[AllianceSearch] Failed to save progress:', e);
         }
     }
 
-    // Clear download progress
-    function clearDownloadProgress() {
-        localStorage.removeItem(STORAGE_PROGRESS_KEY);
+    // Clear download progress (async)
+    async function clearDownloadProgress() {
+        try {
+            await dbDelete(STORAGE_PROGRESS_KEY);
+        } catch (e) {
+            console.error('[AllianceSearch] Failed to clear progress:', e);
+        }
     }
 
-    // Save alliances to localStorage
-    function saveAlliances(alliances) {
+    // Save alliances to storage (async)
+    async function saveAlliances(alliances) {
         try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(alliances));
-            localStorage.setItem(STORAGE_META_KEY, JSON.stringify({
+            await dbSet(STORAGE_KEY, alliances);
+            await dbSet(STORAGE_META_KEY, {
                 count: alliances.length,
                 timestamp: Date.now(),
                 date: new Date().toLocaleString()
-            }));
-            clearDownloadProgress();
+            });
+            await clearDownloadProgress();
             return true;
         } catch (e) {
             console.error('[AllianceSearch] Failed to save alliances:', e);
@@ -157,54 +212,46 @@
         }
     }
 
-    // Check if index is ready
-    function checkIndexReady() {
-        var meta = getStorageMeta();
-        var progress = getDownloadProgress();
+    // Check if index is ready (async)
+    async function checkIndexReady() {
+        var meta = await getStorageMeta();
+        var progress = await getDownloadProgress();
 
-        // Index is ready if we have data and no incomplete download
         isIndexReady = meta && meta.count > 0 && !progress;
         return isIndexReady;
     }
 
-    // Update dialog UI based on state
-    function updateDialogState() {
-        // Re-check index state
-        checkIndexReady();
+    // Update dialog UI based on state (async)
+    async function updateDialogState() {
+        await checkIndexReady();
 
         var searchContainer = document.getElementById('alliance-search-container');
         var indexingContainer = document.getElementById('alliance-indexing-container');
         var statusLine = document.getElementById('alliance-search-status');
 
-        // No UI elements found yet
         if (!searchContainer || !indexingContainer) {
-            console.log('[AllianceSearch] UI elements not found, state:', isIndexReady ? 'ready' : 'indexing');
             return;
         }
 
-        console.log('[AllianceSearch] Updating state - isIndexReady:', isIndexReady, 'isDownloading:', isDownloading);
 
         if (isIndexReady && !isDownloading) {
             searchContainer.style.display = 'flex';
             indexingContainer.style.display = 'none';
-            var meta = getStorageMeta();
+            var meta = await getStorageMeta();
             if (meta && statusLine) {
                 statusLine.textContent = meta.count + ' alliances indexed (' + meta.date + ')';
             }
-            // Trigger initial results display and resize
             var searchInput = document.getElementById('alliance-search-input');
             if (searchInput) {
                 searchInput.dispatchEvent(new Event('input'));
             }
-            // Recalculate height after content is visible
-            setTimeout(resizeResultsContainer, 150);
         } else {
             searchContainer.style.display = 'none';
             indexingContainer.style.display = 'block';
         }
     }
 
-    // Fetch all alliances from API (with resume support)
+    // Fetch all alliances from API (async)
     async function fetchAllAlliances(forceRestart) {
         if (isDownloading) {
             console.log('[AllianceSearch] Download already in progress');
@@ -215,7 +262,7 @@
         isIndexReady = false;
         updateDialogState();
 
-        var progress = forceRestart ? null : getDownloadProgress();
+        var progress = forceRestart ? null : await getDownloadProgress();
         var allAlliances = progress ? progress.alliances : [];
         var offset = progress ? progress.offset : 0;
         var limit = 50;
@@ -254,7 +301,6 @@
                     break;
                 }
 
-                // Store alliance data with stats
                 alliances.forEach(function(a) {
                     allAlliances.push({
                         id: a.id,
@@ -271,34 +317,27 @@
                     });
                 });
 
-                // Update UI
                 updateIndexingStatus(allAlliances.length, page);
-
-                console.log('[AllianceSearch] Page', page, '- Got', alliances.length, 'alliances (total:', allAlliances.length, ')');
 
                 offset += limit;
                 page++;
 
-                // Save progress every 10 pages for resume capability
                 if (page % 10 === 0) {
-                    saveDownloadProgress(offset, allAlliances);
+                    await saveDownloadProgress(offset, allAlliances);
                 }
 
-                // Small delay to avoid rate limiting
                 await new Promise(function(r) { setTimeout(r, 200); });
             }
 
-            // Save final result
-            if (saveAlliances(allAlliances)) {
-                console.log('[AllianceSearch] Saved', allAlliances.length, 'alliances to localStorage');
+            if (await saveAlliances(allAlliances)) {
+                console.log('[AllianceSearch] Saved', allAlliances.length, 'alliances to storage');
             }
 
             isIndexReady = true;
 
         } catch (e) {
             console.error('[AllianceSearch] Download error:', e);
-            // Save progress so we can resume
-            saveDownloadProgress(offset, allAlliances);
+            await saveDownloadProgress(offset, allAlliances);
             updateIndexingStatus(-1, 0, e.message);
         } finally {
             isDownloading = false;
@@ -322,11 +361,10 @@
         }
     }
 
-    // Filter and search alliances
-    function filterAlliances(query, minMembers, minContribution, minDepartures) {
-        var alliances = getStoredAlliances();
+    // Filter and search alliances (async)
+    async function filterAlliances(query, minMembers, minContribution, minDepartures) {
+        var alliances = await getStoredAlliances();
 
-        // Apply filters
         var filtered = alliances.filter(function(a) {
             if (minMembers > 0 && (a.members || 0) < minMembers) return false;
             if (minContribution > 0 && (a.contribution_24h || 0) < minContribution) return false;
@@ -334,7 +372,6 @@
             return true;
         });
 
-        // Apply search query if provided
         if (query && query.length >= 2) {
             var queryLower = query.toLowerCase();
             filtered = filtered.filter(function(a) {
@@ -342,7 +379,6 @@
             });
         }
 
-        // Sort alphabetically by name
         filtered.sort(function(a, b) {
             return a.name.localeCompare(b.name);
         });
@@ -350,355 +386,192 @@
         return filtered;
     }
 
-    // Wait for messaging icon using MutationObserver
-    function waitForMessagingIcon(callback) {
-        var messagingIcon = document.querySelector('div.messaging.cursor-pointer');
-        if (!messagingIcon) messagingIcon = document.querySelector('.messaging');
-
-        if (messagingIcon) {
-            callback(messagingIcon);
-            return;
-        }
-
-        var observer = new MutationObserver(function(mutations, obs) {
-            var icon = document.querySelector('div.messaging.cursor-pointer');
-            if (!icon) icon = document.querySelector('.messaging');
-            if (icon) {
-                obs.disconnect();
-                callback(icon);
-            }
-        });
-
-        observer.observe(document.body, { childList: true, subtree: true });
-
-        // Timeout fallback after 5 seconds
-        setTimeout(function() {
-            observer.disconnect();
-        }, 5000);
+    // Open alliance search dialog (custom overlay, not game modal)
+    function openAllianceSearchModal() {
+        console.log('[AllianceSearch] Opening custom dialog');
+        isAllianceSearchModalOpen = true;
+        window.RebelShipModalRegistry.register(SCRIPT_NAME);
+        showDialog();
     }
 
-    // Get or create RebelShip menu (same position for mobile and desktop)
-    function getOrCreateRebelShipMenu(callback) {
-        // Check if dropdown already exists (it's in document.body now)
-        var existingDropdown = document.getElementById('rebelship-dropdown');
-        if (existingDropdown) {
-            if (callback) callback(existingDropdown);
-            return existingDropdown;
-        }
+    // Close alliance search dialog
+    function closeAllianceSearchModal() {
+        if (!isAllianceSearchModalOpen) return;
 
-        var menu = document.getElementById('rebelship-menu');
-        if (menu) {
-            existingDropdown = document.getElementById('rebelship-dropdown');
-            if (existingDropdown) {
-                if (callback) callback(existingDropdown);
-                return existingDropdown;
+        console.log('[AllianceSearch] Closing dialog');
+        isAllianceSearchModalOpen = false;
+        window.RebelShipModalRegistry.unregister(SCRIPT_NAME);
+
+        var modalWrapper = document.getElementById('rebelship-modal-wrapper');
+        if (modalWrapper) {
+            modalWrapper.classList.add('hide');
+        }
+    }
+
+
+    // Setup listener for menu clicks
+    function setupNavigationWatcher() {
+        if (modalListenerAttached) return;
+        modalListenerAttached = true;
+
+        // Listen for RebelShip menu clicks to close our dialog
+        window.addEventListener('rebelship-menu-click', function() {
+            if (isAllianceSearchModalOpen) {
+                console.log('[AllianceSearch] RebelShip menu clicked, closing dialog');
+                closeAllianceSearchModal();
             }
+        });
+    }
+
+    // Inject game-identical modal CSS (1:1 copy from app.css)
+    function injectModalStyles() {
+        if (document.getElementById('rebelship-modal-styles')) return;
+
+        var style = document.createElement('style');
+        style.id = 'rebelship-modal-styles';
+        style.textContent = [
+            // Animations (exact copy from game)
+            '@keyframes rs-fade-in{0%{opacity:0}to{opacity:1}}',
+            '@keyframes rs-fade-out{0%{opacity:1}to{opacity:0}}',
+            '@keyframes rs-drop-down{0%{transform:translateY(-10px)}to{transform:translateY(0)}}',
+            '@keyframes rs-push-up{0%{transform:translateY(0)}to{transform:translateY(-10px)}}',
+
+            // Modal wrapper (exact copy from game #modal-wrapper) - align-items:flex-start to position from top
+            '#rebelship-modal-wrapper{align-items:flex-start;display:flex;height:100vh;justify-content:center;left:0;overflow:hidden;position:absolute;top:0;width:100vw;z-index:9999}',
+
+            // Modal background (exact copy from game #modal-wrapper #modal-background)
+            '#rebelship-modal-wrapper #rebelship-modal-background{animation:rs-fade-in .15s linear forwards;background-color:rgba(0,0,0,.5);height:100%;left:0;opacity:0;position:absolute;top:0;width:100%}',
+            '#rebelship-modal-wrapper.hide #rebelship-modal-background{animation:rs-fade-out .15s linear forwards}',
+
+            // Modal content wrapper (exact copy from game #modal-wrapper #modal-content-wrapper)
+            '#rebelship-modal-wrapper #rebelship-modal-content-wrapper{animation:rs-drop-down .15s linear forwards,rs-fade-in .15s linear forwards;height:100%;max-width:700px;opacity:0;position:relative;width:1140px;z-index:9001}',
+            '#rebelship-modal-wrapper.hide #rebelship-modal-content-wrapper{animation:rs-push-up .15s linear forwards,rs-fade-out .15s linear forwards}',
+
+            // Media queries for content wrapper (exact copy from game)
+            '@media screen and (min-width:1200px){#rebelship-modal-wrapper #rebelship-modal-content-wrapper{max-width:460px}}',
+            '@media screen and (min-width:992px) and (max-width:1199px){#rebelship-modal-wrapper #rebelship-modal-content-wrapper{max-width:460px}}',
+            '@media screen and (min-width:769px) and (max-width:991px){#rebelship-modal-wrapper #rebelship-modal-content-wrapper{max-width:460px}}',
+            '@media screen and (max-width:768px){#rebelship-modal-wrapper #rebelship-modal-content-wrapper{max-width:100%}}',
+
+            // Modal container (exact copy from game #modal-wrapper #modal-container)
+            '#rebelship-modal-wrapper #rebelship-modal-container{background-color:#fff;height:100vh;overflow:hidden;position:absolute;width:100%}',
+
+            // Modal header (exact copy from game #modal-container .modal-header)
+            '#rebelship-modal-container .modal-header{align-items:center;background:#626b90;border-radius:0;color:#fff;display:flex;height:31px;justify-content:space-between;text-align:left;width:100%;border:0!important;padding:0 .5rem!important}',
+
+            // Header title (exact copy from game #modal-container .header-title)
+            '#rebelship-modal-container .header-title{font-weight:700;text-transform:uppercase;width:90%}',
+
+            // Header icon (exact copy from game #modal-container .header-icon)
+            '#rebelship-modal-container .header-icon{cursor:pointer;height:1.2rem;margin:0 .5rem}',
+            '#rebelship-modal-container .header-icon.closeModal{height:19px;width:19px}',
+
+            // Modal content (exact copy from game #modal-container #modal-content)
+            '#rebelship-modal-container #rebelship-modal-content{height:calc(100% - 31px);max-width:inherit;overflow:hidden;display:flex;flex-direction:column}',
+
+            // Central container (exact copy from game #modal-container #central-container) - with padding
+            '#rebelship-modal-container #rebelship-central-container{background-color:#e9effd;margin:0;overflow-x:hidden;overflow-y:auto;width:100%;flex:1;padding:10px 15px}',
+
+            // Hide class
+            '#rebelship-modal-wrapper.hide{pointer-events:none}',
+
+            // Spin animation for loading
+            '@keyframes spin{to{transform:rotate(360deg)}}'
+        ].join('');
+        document.head.appendChild(style);
+    }
+
+    // Show the alliance search dialog (game-style modal - 1:1 copy)
+    function showDialog() {
+        // Close any open game modal first
+        var stores = getStores();
+        if (stores && stores.modalStore && stores.modalStore.closeAll) {
+            stores.modalStore.closeAll();
         }
 
-        if (window._rebelshipMenuCreating) {
-            // Wait for menu creation to complete
-            setTimeout(function() { getOrCreateRebelShipMenu(callback); }, 100);
-            return null;
-        }
-        window._rebelshipMenuCreating = true;
+        injectModalStyles();
 
-        existingDropdown = document.getElementById('rebelship-dropdown');
-        if (existingDropdown) {
-            window._rebelshipMenuCreating = false;
-            if (callback) callback(existingDropdown);
-            return existingDropdown;
-        }
-
-        // Use MutationObserver to wait for messaging icon
-        waitForMessagingIcon(function(messagingIcon) {
-            // Double-check dropdown wasn't created while waiting
-            var dropdown = document.getElementById('rebelship-dropdown');
-            if (dropdown) {
-                window._rebelshipMenuCreating = false;
-                if (callback) callback(dropdown);
+        var existing = document.getElementById('rebelship-modal-wrapper');
+        if (existing) {
+            // Check if content still exists
+            var contentCheck = existing.querySelector('#alliance-search-wrapper');
+            if (contentCheck) {
+                existing.classList.remove('hide');
+                isAllianceSearchModalOpen = true;
+                window.RebelShipModalRegistry.register(SCRIPT_NAME);
+                updateDialogState();
                 return;
             }
-
-            var container = document.createElement('div');
-            container.id = 'rebelship-menu';
-            container.style.cssText = 'position:relative;display:inline-block;vertical-align:middle;margin-right:4px !important;z-index:999999;';
-
-            var btn = document.createElement('button');
-            btn.id = 'rebelship-menu-btn';
-            btn.innerHTML = REBELSHIP_LOGO;
-            btn.title = 'RebelShip Menu';
-            btn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:28px;height:28px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:white;border:none;border-radius:6px;cursor:pointer;box-shadow:0 2px 4px rgba(0,0,0,0.2);';
-
-            dropdown = document.createElement('div');
-            dropdown.id = 'rebelship-dropdown';
-            dropdown.className = 'rebelship-dropdown';
-            dropdown.style.cssText = 'display:none;position:fixed;background:#1f2937;border:1px solid #374151;border-radius:4px;min-width:200px;z-index:999999;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
-
-            container.appendChild(btn);
-            document.body.appendChild(dropdown);
-            btn.addEventListener('click', function(e) { e.stopPropagation(); if (dropdown.style.display === 'block') { dropdown.style.display = 'none'; } else { var rect = btn.getBoundingClientRect(); dropdown.style.top = (rect.bottom + 4) + 'px'; dropdown.style.right = (window.innerWidth - rect.right) + 'px'; dropdown.style.display = 'block'; } });
-            document.addEventListener('click', function(e) { if (!container.contains(e.target) && !dropdown.contains(e.target)) dropdown.style.display = 'none'; });
-
-            if (messagingIcon.parentNode) messagingIcon.parentNode.insertBefore(container, messagingIcon);
-
-            window._rebelshipMenuCreating = false;
-            console.log('[RebelShip] Menu created successfully');
-            if (callback) callback(dropdown);
-        });
-
-        return null;
-    }
-
-    // Add menu item
-    function addMenuItem(label, onClick, scriptOrder) {
-        function doAddItem(dropdown) {
-            if (dropdown.querySelector('[data-rebelship-item="' + label + '"]')) {
-                return dropdown.querySelector('[data-rebelship-item="' + label + '"]');
-            }
-
-            var item = document.createElement('div');
-            item.dataset.rebelshipItem = label;
-            item.dataset.order = scriptOrder;
-            item.style.cssText = 'position:relative;';
-
-            var itemBtn = document.createElement('div');
-            itemBtn.style.cssText = 'padding:10px 12px;cursor:pointer;color:#fff;font-size:13px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #374151;';
-            itemBtn.innerHTML = '<span>' + label + '</span>';
-
-            itemBtn.addEventListener('mouseenter', function() { itemBtn.style.background = '#374151'; });
-            itemBtn.addEventListener('mouseleave', function() { itemBtn.style.background = 'transparent'; });
-
-            if (onClick) {
-                itemBtn.addEventListener('click', onClick);
-            }
-
-            item.appendChild(itemBtn);
-
-            // Insert in sorted order by scriptOrder
-            var items = dropdown.querySelectorAll('[data-rebelship-item]');
-            var insertBefore = null;
-            for (var i = 0; i < items.length; i++) {
-                var existingOrder = parseInt(items[i].dataset.order, 10);
-                if (scriptOrder < existingOrder) {
-                    insertBefore = items[i];
-                    break;
-                }
-            }
-            if (insertBefore) {
-                dropdown.insertBefore(item, insertBefore);
-            } else {
-                dropdown.appendChild(item);
-            }
-
-            return item;
+            // Content missing, remove old wrapper and rebuild
+            existing.remove();
         }
 
-        var dropdown = document.getElementById('rebelship-dropdown');
-        if (dropdown) {
-            return doAddItem(dropdown);
-        }
+        // Get header height for positioning (same as game modal)
+        var headerEl = document.querySelector('header');
+        var headerHeight = headerEl ? headerEl.offsetHeight : 89;
 
-        // Use callback-based approach
-        getOrCreateRebelShipMenu(function(dd) {
-            doAddItem(dd);
-        });
-        return null;
-    }
+        // Create game-identical modal structure
+        // Structure: #modal-wrapper > #modal-background + #modal-content-wrapper > #modal-container > .modal-header + #modal-content > #central-container
 
-    var injectRetryCount = 0;
-    var MAX_INJECT_RETRIES = 20;
+        var modalWrapper = document.createElement('div');
+        modalWrapper.id = 'rebelship-modal-wrapper';
 
-    // Open the routeResearch modal and inject alliance search content
-    function openAllianceSearchModal() {
-        var stores = getStores();
-        if (!stores) {
-            console.error('[AllianceSearch] Cannot open modal - stores not available');
-            setTimeout(openAllianceSearchModal, 1000);
-            return;
-        }
+        var modalBackground = document.createElement('div');
+        modalBackground.id = 'rebelship-modal-background';
+        modalBackground.onclick = function() { closeAllianceSearchModal(); };
 
-        // Reset retry counter
-        injectRetryCount = 0;
+        var modalContentWrapper = document.createElement('div');
+        modalContentWrapper.id = 'rebelship-modal-content-wrapper';
 
-        // Open the routeResearch modal
-        stores.modalStore.open('routeResearch');
+        var modalContainer = document.createElement('div');
+        modalContainer.id = 'rebelship-modal-container';
+        modalContainer.className = 'font-lato';
+        // Inline styles for positioning (same as game applies dynamically)
+        modalContainer.style.top = headerHeight + 'px';
+        modalContainer.style.height = 'calc(100vh - ' + headerHeight + 'px)';
+        modalContainer.style.maxHeight = 'calc(100vh - ' + headerHeight + 'px)';
 
-        // Wait for modal to render, then inject our content
-        setTimeout(function() {
-            injectSearchContent();
-        }, 300);
-    }
+        // Modal header (exact structure as game)
+        var modalHeader = document.createElement('div');
+        modalHeader.className = 'modal-header';
 
-    // Inject alliance search content into the modal
-    function injectSearchContent() {
-        injectRetryCount++;
+        var headerTitle = document.createElement('span');
+        headerTitle.className = 'header-title';
+        headerTitle.textContent = 'Alliance Search';
 
-        // Find any modal content area - try multiple selectors
-        var modalContent = null;
-        var selectors = [
-            '#modal-content',
-            '#modal-content-wrapper',
-            '.modal-content',
-            '.modal-body',
-            '.content-wrapper',
-            '#modal-wrapper .content',
-            '[class*="modal"] [class*="content"]',
-            '#modal-wrapper > div > div'
-        ];
+        var closeIcon = document.createElement('img');
+        closeIcon.className = 'header-icon closeModal';
+        closeIcon.src = '/images/icons/close_icon_new.svg';
+        closeIcon.onclick = function() { closeAllianceSearchModal(); };
+        closeIcon.onerror = function() {
+            this.style.display = 'none';
+            var fallback = document.createElement('span');
+            fallback.textContent = 'X';
+            fallback.style.cssText = 'cursor:pointer;font-weight:bold;padding:0 .5rem;';
+            fallback.onclick = function() { closeAllianceSearchModal(); };
+            this.parentNode.appendChild(fallback);
+        };
 
-        for (var i = 0; i < selectors.length; i++) {
-            var el = document.querySelector(selectors[i]);
-            if (el) {
-                modalContent = el;
-                console.log('[AllianceSearch] Found modal with selector:', selectors[i]);
-                break;
-            }
-        }
+        modalHeader.appendChild(headerTitle);
+        modalHeader.appendChild(closeIcon);
 
-        if (!modalContent) {
-            if (injectRetryCount < MAX_INJECT_RETRIES) {
-                setTimeout(injectSearchContent, 200);
-            } else {
-                console.error('[AllianceSearch] Could not find modal content after', MAX_INJECT_RETRIES, 'retries');
-                // Fallback: create our own overlay dialog
-                createFallbackDialog();
-            }
-            return;
-        }
+        // Modal content (exact structure as game)
+        var modalContent = document.createElement('div');
+        modalContent.id = 'rebelship-modal-content';
 
-        // Check if already injected
-        if (document.getElementById('alliance-search-wrapper')) {
-            updateDialogState();
-            return;
-        }
+        var centralContainer = document.createElement('div');
+        centralContainer.id = 'rebelship-central-container';
 
-        console.log('[AllianceSearch] Injecting into:', modalContent);
-
-        // Clear existing content and inject ours
-        modalContent.innerHTML = '';
-
-        // Build and inject search content
-        var wrapper = buildSearchContent();
-        wrapper.style.cssText = 'padding:10px;display:flex;flex-direction:column;height:100%;box-sizing:border-box;';
-        modalContent.style.cssText = (modalContent.style.cssText || '') + 'display:flex;flex-direction:column;height:100%;';
-        modalContent.appendChild(wrapper);
-
-        // Change modal title via store
-        var stores = getStores();
-        if (stores && stores.modalStore && stores.modalStore.modalSettings) {
-            stores.modalStore.modalSettings.title = 'Alliance Search';
-            console.log('[AllianceSearch] Title set via modalStore');
-        }
-
-        // Also try DOM as fallback
-        setTimeout(function() {
-            var titleEl = document.querySelector('.title span');
-            if (titleEl && titleEl.textContent !== 'Alliance Search') {
-                titleEl.textContent = 'Alliance Search';
-            }
-        }, 100);
-
-        // Set initial state
-        updateDialogState();
-
-        // Focus search input
-        var searchInput = document.getElementById('alliance-search-input');
-        if (searchInput) {
-            searchInput.focus();
-        }
-
-        // Dynamically calculate results container height
-        setTimeout(resizeResultsContainer, 100);
-    }
-
-    // Resize results container to fill available modal space
-    function resizeResultsContainer() {
-        var resultsContainer = document.getElementById('alliance-search-results');
-        var searchContainer = document.getElementById('alliance-search-container');
-        if (!resultsContainer || !searchContainer) return;
-
-        // Find the modal wrapper (game uses #modal-wrapper)
-        var modalWrapper = document.getElementById('modal-wrapper');
-        if (!modalWrapper) {
-            console.log('[AllianceSearch] Modal wrapper not found, using viewport');
-            // Fallback: use viewport height
-            resultsContainer.style.maxHeight = 'calc(70vh - 180px)';
-            return;
-        }
-
-        // Get the inner content area of the modal
-        var modalInner = modalWrapper.querySelector('.content') ||
-                         modalWrapper.querySelector('[class*="content"]') ||
-                         modalWrapper;
-
-        var modalRect = modalInner.getBoundingClientRect();
-
-        // Calculate space used by other elements (status, search row, filter row)
-        var usedHeight = 0;
-        Array.from(searchContainer.children).forEach(function(child) {
-            if (child.id !== 'alliance-search-results') {
-                usedHeight += child.offsetHeight + 10;
-            }
-        });
-
-        // Calculate available height (modal height - used space - padding)
-        var availableHeight = modalRect.height - usedHeight - 60;
-
-        if (availableHeight > 100) {
-            resultsContainer.style.maxHeight = availableHeight + 'px';
-            console.log('[AllianceSearch] Set results height to', availableHeight + 'px');
-        } else {
-            // Fallback
-            resultsContainer.style.maxHeight = 'calc(70vh - 180px)';
-            console.log('[AllianceSearch] Using fallback height');
-        }
-    }
-
-    // Fallback dialog if modal injection fails
-    function createFallbackDialog() {
-        var existing = document.getElementById('alliance-search-dialog');
-        if (existing) {
-            existing.style.display = 'flex';
-            updateDialogState();
-            return;
-        }
-
-        var overlay = document.createElement('div');
-        overlay.id = 'alliance-search-dialog';
-        overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);display:flex;justify-content:space-between;align-items:center;z-index:100000;';
-
-        var dialog = document.createElement('div');
-        dialog.style.cssText = 'background:#1f2937;border-radius:8px;padding:20px;width:90%;max-width:500px;max-height:80vh;overflow:hidden;display:flex;flex-direction:column;';
-
-        // Header
-        var header = document.createElement('div');
-        header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;';
-
-        var title = document.createElement('h2');
-        title.textContent = 'Alliance Search';
-        title.style.cssText = 'color:#fff;margin:0;font-size:18px;';
-
-        var closeBtn = document.createElement('button');
-        closeBtn.innerHTML = '&times;';
-        closeBtn.style.cssText = 'background:none;border:none;color:#fff;font-size:24px;cursor:pointer;padding:0;line-height:1;';
-        closeBtn.onclick = function() { overlay.style.display = 'none'; };
-
-        header.appendChild(title);
-        header.appendChild(closeBtn);
-
-        // Build content
         var content = buildSearchContent();
+        centralContainer.appendChild(content);
 
-        dialog.appendChild(header);
-        dialog.appendChild(content);
-        overlay.appendChild(dialog);
-        document.body.appendChild(overlay);
-
-        overlay.addEventListener('click', function(e) {
-            if (e.target === overlay) {
-                overlay.style.display = 'none';
-            }
-        });
+        modalContent.appendChild(centralContainer);
+        modalContainer.appendChild(modalHeader);
+        modalContainer.appendChild(modalContent);
+        modalContentWrapper.appendChild(modalContainer);
+        modalWrapper.appendChild(modalBackground);
+        modalWrapper.appendChild(modalContentWrapper);
+        document.body.appendChild(modalWrapper);
 
         updateDialogState();
     }
@@ -707,17 +580,9 @@
     function buildSearchContent() {
         var wrapper = document.createElement('div');
         wrapper.id = 'alliance-search-wrapper';
-        wrapper.style.cssText = 'display:flex;flex-direction:column;flex:1;overflow:hidden;min-height:0;height:100%;';
+        wrapper.dataset.rebelshipModal = 'alliance-search';
+        wrapper.style.cssText = 'display:flex;flex-direction:column;height:100%;min-height:0;';
 
-        // Add spinner style if not exists
-        if (!document.getElementById('alliance-search-style')) {
-            var style = document.createElement('style');
-            style.id = 'alliance-search-style';
-            style.textContent = '@keyframes spin { to { transform: rotate(360deg); } }';
-            document.head.appendChild(style);
-        }
-
-        // Indexing container
         var indexingContainer = document.createElement('div');
         indexingContainer.id = 'alliance-indexing-container';
         indexingContainer.style.cssText = 'text-align:center;padding:40px 20px;';
@@ -733,10 +598,9 @@
         indexingContainer.appendChild(spinner);
         indexingContainer.appendChild(indexingText);
 
-        // Search container
         var searchContainer = document.createElement('div');
         searchContainer.id = 'alliance-search-container';
-        searchContainer.style.cssText = 'display:none;flex-direction:column;flex:1;overflow:hidden;min-height:0;';
+        searchContainer.style.cssText = 'display:none;flex-direction:column;flex:1;min-height:0;';
 
         var statusLine = document.createElement('div');
         statusLine.id = 'alliance-search-status';
@@ -759,7 +623,6 @@
         searchRow.appendChild(searchInput);
         searchRow.appendChild(refreshBtn);
 
-        // Filter row
         var filterRow = document.createElement('div');
         filterRow.style.cssText = 'display:flex;gap:8px;margin-bottom:15px;flex-wrap:wrap;';
 
@@ -808,32 +671,28 @@
         wrapper.appendChild(indexingContainer);
         wrapper.appendChild(searchContainer);
 
-        // Function to perform search with filters
-        function doSearch() {
+        // Function to perform search with filters (async)
+        async function doSearch() {
             var query = searchInput.value;
             var minMembers = parseInt(minMembersInput.value) || 0;
             var minContrib = parseInt(minContribInput.value) || 0;
             var minDep = parseInt(minDeparturesInput.value) || 0;
 
-            currentResults = filterAlliances(query, minMembers, minContrib, minDep);
+            currentResults = await filterAlliances(query, minMembers, minContrib, minDep);
             displayedCount = 0;
 
-            // Update result count
             resultCount.textContent = currentResults.length + ' results';
 
-            // Clear and render first page
             resultsContainer.innerHTML = '';
             loadMoreResults(resultsContainer);
         }
 
-        // Event handlers
         var searchTimeout = null;
         searchInput.addEventListener('input', function() {
             clearTimeout(searchTimeout);
             searchTimeout = setTimeout(doSearch, 300);
         });
 
-        // Filter change handlers
         minMembersInput.addEventListener('input', function() {
             clearTimeout(searchTimeout);
             searchTimeout = setTimeout(doSearch, 300);
@@ -847,27 +706,20 @@
             searchTimeout = setTimeout(doSearch, 300);
         });
 
-        // Lazy loading scroll handler
         resultsContainer.addEventListener('scroll', function() {
             var scrollTop = resultsContainer.scrollTop;
             var scrollHeight = resultsContainer.scrollHeight;
             var clientHeight = resultsContainer.clientHeight;
 
-            console.log('[AllianceSearch] Scroll event - top:', scrollTop, 'height:', scrollHeight, 'client:', clientHeight);
-
             if (isLoadingMore) return;
             if (displayedCount >= currentResults.length) return;
 
-            // Load more when near bottom (within 50px)
             if (scrollTop + clientHeight >= scrollHeight - 50) {
-                console.log('[AllianceSearch] Loading more... displayed:', displayedCount, 'total:', currentResults.length);
                 loadMoreResults(resultsContainer);
             }
         });
 
-        // Also add wheel event as backup for scroll detection
         resultsContainer.addEventListener('wheel', function(e) {
-            // Check if at bottom when scrolling down
             if (e.deltaY > 0) {
                 var scrollTop = resultsContainer.scrollTop;
                 var scrollHeight = resultsContainer.scrollHeight;
@@ -875,7 +727,6 @@
 
                 if (scrollTop + clientHeight >= scrollHeight - 50) {
                     if (!isLoadingMore && displayedCount < currentResults.length) {
-                        console.log('[AllianceSearch] Wheel load more...');
                         loadMoreResults(resultsContainer);
                     }
                 }
@@ -887,7 +738,6 @@
             fetchAllAlliances(true);
         });
 
-        // Initial load when ready
         if (isIndexReady) {
             setTimeout(doSearch, 100);
         }
@@ -899,23 +749,19 @@
     function loadMoreResults(container) {
         if (isLoadingMore) return;
 
-        // Remove existing load more button
         var existingBtn = container.querySelector('.load-more-btn');
         if (existingBtn) existingBtn.remove();
 
         if (displayedCount >= currentResults.length) {
-            console.log('[AllianceSearch] No more results to load');
             return;
         }
 
         isLoadingMore = true;
 
         var nextBatch = currentResults.slice(displayedCount, displayedCount + PAGE_SIZE);
-        console.log('[AllianceSearch] Rendering batch of', nextBatch.length, 'items');
         renderResults(nextBatch, container, true);
         displayedCount += nextBatch.length;
 
-        // Add "Load More" button if there are more results
         if (displayedCount < currentResults.length) {
             var loadMoreBtn = document.createElement('button');
             loadMoreBtn.className = 'load-more-btn';
@@ -946,18 +792,21 @@
 
         alliances.forEach(function(alliance) {
             var item = document.createElement('div');
-            item.style.cssText = 'padding:10px;border-bottom:1px solid #ddd;cursor:pointer;display:flex;align-items:center;gap:10px;';
+            item.style.cssText = 'padding:12px;border-bottom:1px solid #e5e5e5;cursor:pointer;background:#fff;';
 
             item.addEventListener('mouseenter', function() {
-                try { this.style.background = '#e5e5e5'; } catch {}
+                try { this.style.background = '#f5f5f5'; } catch (e) { console.error('[AllianceSearch] mouseenter error:', e); }
             });
             item.addEventListener('mouseleave', function() {
-                try { this.style.background = 'transparent'; } catch {}
+                try { this.style.background = '#fff'; } catch (e) { console.error('[AllianceSearch] mouseleave error:', e); }
             });
 
-            // Alliance logo
+            // Top row: Logo + Name + Members
+            var topRow = document.createElement('div');
+            topRow.style.cssText = 'display:flex;align-items:center;gap:10px;margin-bottom:8px;';
+
             var logoDiv = document.createElement('div');
-            logoDiv.style.cssText = 'width:40px;height:40px;flex-shrink:0;border-radius:4px;overflow:hidden;';
+            logoDiv.style.cssText = 'width:36px;height:36px;flex-shrink:0;border-radius:4px;overflow:hidden;background:#e5e5e5;';
             if (alliance.image) {
                 var logoImg = document.createElement('img');
                 logoImg.src = '/images/alliances/' + alliance.image + '.svg';
@@ -968,69 +817,56 @@
                 logoDiv.appendChild(logoImg);
             }
 
-            // Main info (name + language)
-            var mainDiv = document.createElement('div');
-            mainDiv.style.cssText = 'flex:1;min-width:0;';
-
             var nameDiv = document.createElement('div');
-            nameDiv.style.cssText = 'color:#333;font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
-            nameDiv.textContent = alliance.name;
+            nameDiv.style.cssText = 'flex:1;min-width:0;';
+            var nameText = document.createElement('div');
+            nameText.style.cssText = 'color:#1a1a1a;font-size:15px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+            nameText.textContent = alliance.name;
+            var langText = document.createElement('div');
+            langText.style.cssText = 'color:#666;font-size:12px;margin-top:2px;';
+            langText.textContent = (alliance.language || 'en').toUpperCase() + ' | Level ' + alliance.benefit_level;
+            nameDiv.appendChild(nameText);
+            nameDiv.appendChild(langText);
 
-            var langDiv = document.createElement('div');
-            langDiv.style.cssText = 'color:#888;font-size:11px;';
-            langDiv.textContent = (alliance.language || 'en').toUpperCase() + ' | Level ' + alliance.benefit_level;
-
-            mainDiv.appendChild(nameDiv);
-            mainDiv.appendChild(langDiv);
-
-            // Stats column (members/slots)
-            var membersDiv = document.createElement('div');
-            membersDiv.style.cssText = 'text-align:center;min-width:200px;';
             var freeSlots = 30 - (alliance.members || 0);
-            membersDiv.innerHTML = '<div style="font-weight:600;color:#333;font-size:14px;">' + alliance.members + '/30</div>' +
-                '<div style="color:' + (freeSlots > 0 ? '#4ade80' : '#ef4444') + ';font-size:14px;">' + freeSlots + ' free</div>';
+            var membersDiv = document.createElement('div');
+            membersDiv.style.cssText = 'text-align:right;flex-shrink:0;';
+            membersDiv.innerHTML = '<div style="font-weight:600;color:#1a1a1a;font-size:14px;">' + alliance.members + '/30</div>' +
+                '<div style="color:' + (freeSlots > 0 ? '#22c55e' : '#ef4444') + ';font-size:12px;font-weight:500;">' + freeSlots + ' free</div>';
 
-            // 24h stats (departures + contribution)
-            var statsDiv = document.createElement('div');
-            statsDiv.style.cssText = 'text-align:right;min-width:200px;font-size:11px;';
-            var departures = alliance.departures_24h || 0;
-            var contribution = alliance.contribution_24h || 0;
-            statsDiv.innerHTML =
-                '<div style="display:flex;justify-content:space-between;margin-bottom:2px;">' +
-                    '<span style="color:#888;">Departures 24h:</span>' +
-                    '<span style="color:#333;font-weight:500;">' + formatNumber(departures) + '</span>' +
-                '</div>' +
-                '<div style="display:flex;justify-content:space-between;">' +
-                    '<span style="color:#888;">Contribution 24h:</span>' +
-                    '<span style="color:#333;font-weight:500;">' + formatNumber(contribution) + '</span>' +
-                '</div>';
+            topRow.appendChild(logoDiv);
+            topRow.appendChild(nameDiv);
+            topRow.appendChild(membersDiv);
 
-            item.appendChild(logoDiv);
-            item.appendChild(mainDiv);
-            item.appendChild(membersDiv);
-            item.appendChild(statsDiv);
+            // Bottom row: Stats
+            var statsRow = document.createElement('div');
+            statsRow.style.cssText = 'display:flex;gap:12px;padding-left:46px;font-size:11px;flex-wrap:wrap;';
+            var departures = alliance.departures_24h;
+            var contribution = alliance.contribution_24h;
+            var coops = alliance.coops_24h;
+            var shareValue = alliance.total_share_value;
+            statsRow.innerHTML =
+                '<div><span style="color:#888;">Dep:</span> <span style="color:#1a1a1a;font-weight:500;">' + formatNumber(departures) + '</span></div>' +
+                '<div><span style="color:#888;">Contrib:</span> <span style="color:#1a1a1a;font-weight:500;">' + formatNumber(contribution) + '</span></div>' +
+                '<div><span style="color:#888;">Coops:</span> <span style="color:#1a1a1a;font-weight:500;">' + formatNumber(coops) + '</span></div>' +
+                '<div><span style="color:#888;">Shares:</span> <span style="color:#1a1a1a;font-weight:500;">' + formatNumber(shareValue) + '</span></div>';
+
+            item.appendChild(topRow);
+            item.appendChild(statsRow);
 
             item.addEventListener('click', function(e) {
                 e.preventDefault();
                 e.stopPropagation();
 
-                console.log('[AllianceSearch] Clicked on alliance:', alliance.name, 'ID:', alliance.id);
+                // Close our modal
+                closeAllianceSearchModal();
 
-                // Close fallback dialog if exists
-                var fallbackDialog = document.getElementById('alliance-search-dialog');
-                if (fallbackDialog) {
-                    fallbackDialog.style.display = 'none';
-                }
-                // Close rebel menu dropdown
-                var dropdown = document.getElementById('rebelship-dropdown');
-                if (dropdown) dropdown.style.display = 'none';
-                // Close game modal first, then open alliance after delay
+                // Close any game modals
                 var stores = getStores();
                 if (stores && stores.modalStore && stores.modalStore.closeAll) {
                     stores.modalStore.closeAll();
                 }
 
-                // Wait for modal to close, then open alliance
                 setTimeout(function() {
                     openAllianceModal(alliance.id);
                 }, 200);
@@ -1040,36 +876,33 @@
         });
     }
 
-    // Start background download
-    function startBackgroundDownload() {
-        var progress = getDownloadProgress();
-        var meta = getStorageMeta();
+    // Start background download (async)
+    async function startBackgroundDownload() {
+        var progress = await getDownloadProgress();
+        var meta = await getStorageMeta();
 
-        // Check if we need to download
         if (progress) {
-            // Resume incomplete download
             console.log('[AllianceSearch] Found incomplete download, resuming...');
             fetchAllAlliances(false);
         } else if (!meta || meta.count === 0) {
-            // No data, start fresh download
             console.log('[AllianceSearch] No alliance data, starting download...');
             fetchAllAlliances(true);
         } else {
-            // Index is ready
             isIndexReady = true;
             console.log('[AllianceSearch] Alliance index ready:', meta.count, 'alliances');
         }
     }
 
-    // Initialize
-    function init() {
+    // Initialize (async)
+    async function init() {
         // Check index state
-        checkIndexReady();
+        await checkIndexReady();
 
-        // Add menu item
+        // Setup navigation watcher to close modal on navigation
+        setupNavigationWatcher();
+
+        // Add menu item (native browser menu via bridge)
         addMenuItem('Alliance Search', function() {
-            var dropdown = document.getElementById('rebelship-dropdown');
-            if (dropdown) dropdown.style.display = 'none';
             openAllianceSearchModal();
         }, 10);
 
@@ -1080,8 +913,8 @@
     }
 
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', function() { setTimeout(init, 2000); });
+        document.addEventListener('DOMContentLoaded', function() { setTimeout(init, 500); });
     } else {
-        setTimeout(init, 2000);
+        setTimeout(init, 500);
     }
 })();

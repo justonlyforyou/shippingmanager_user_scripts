@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Mass-Moore/Resume
 // @namespace    http://tampermonkey.net/
-// @version      4.3
+// @version      4.15
 // @description  Mass Moor and Resume vessels with checkbox selection
 // @author       https://github.com/justonlyforyou/
 // @order        4
@@ -117,6 +117,17 @@
     }
 
     // ============================================
+    // GET VESSEL BY ID
+    // ============================================
+    function getVesselById(vesselId) {
+        var vesselStore = getVesselStore();
+        if (!vesselStore || !vesselStore.userVessels) return null;
+        return vesselStore.userVessels.find(function(v) {
+            return v.id === vesselId;
+        });
+    }
+
+    // ============================================
     // GET VESSEL ID FROM ROW
     // ============================================
     function getVesselIdFromRow(row) {
@@ -196,7 +207,7 @@
             // Create checkbox wrapper
             var checkboxWrapper = document.createElement('div');
             checkboxWrapper.className = 'fleet-manager-checkbox';
-            checkboxWrapper.style.cssText = 'position: absolute; left: 8px; top: 50%; transform: translateY(-50%); z-index: 10;';
+            checkboxWrapper.style.cssText = 'position: absolute; left: 8px; top: 50%; transform: translateY(-50%); z-index: 100;';
 
             var checkbox = document.createElement('input');
             checkbox.type = 'checkbox';
@@ -240,7 +251,17 @@
         if (!document.getElementById('fleet-manager-style')) {
             var style = document.createElement('style');
             style.id = 'fleet-manager-style';
-            style.textContent = '#notifications-vessels-listing .vesselList { padding-bottom: -2px !important; } #notifications-vessels-listing .header-text { padding: 3px !important; } .bottomWrapper.btn-group { position: absolute !important; bottom: 0 !important; left: 0 !important; width: 100% !important; } .singleButtonWrapper { position: absolute !important; bottom: 46px !important; left: 0 !important; width: 100% !important; padding: 0 4px !important; box-sizing: border-box !important; } .buttonWrapper { position: absolute !important; bottom: 46px !important; left: 0 !important; width: 100% !important; padding: 0 2px !important; box-sizing: border-box !important; gap: 2px !important; }';
+            style.textContent = [
+                '#notifications-vessels-listing .vesselList { padding-bottom: 2px !important; }',
+                '#notifications-vessels-listing .header-text { padding: 3px !important; }',
+                '.bottomWrapper.btn-group { position: absolute !important; bottom: 0 !important; left: 0 !important; width: 100% !important; }',
+                '.singleButtonWrapper { position: absolute !important; bottom: 46px !important; left: 0 !important; width: 100% !important; padding: 0 4px !important; box-sizing: border-box !important; background: var(--background-light) !important; }',
+                '.buttonWrapper { position: absolute !important; bottom: 46px !important; left: 0 !important; width: 100% !important; padding: 0 2px !important; box-sizing: border-box !important; gap: 2px !important; background: var(--background-light) !important; }',
+                '#fleet-manager-buttons { background: var(--background-light) !important; padding: 4px 2px !important; margin-bottom: 2px !important; }',
+                '.fleet-manager-checkbox { z-index: 100 !important; }',
+                '.vesselRow { position: relative !important; z-index: 1 !important; }',
+                '@media (max-width: 768px) { #notifications-vessels-listing .vesselList { max-height: calc(100% - 70px) !important; height: calc(100% - 70px) !important; } }'
+            ].join(' ');
             document.head.appendChild(style);
         }
 
@@ -272,14 +293,20 @@
 
         // Moor button
         var moorBtn = createButton('Moor', function() {
-            processSelectedVessels('moor');
+            log('MOOR BUTTON CLICKED! disabled=' + moorBtn.disabled + ', isProcessing=' + isProcessing + ', selectedVessels.size=' + selectedVessels.size);
+            if (!moorBtn.disabled) {
+                processSelectedVessels('moor');
+            }
         });
         moorBtn.id = 'fleet-manager-moor-btn';
         moorBtn.disabled = true;
 
         // Resume button
         var resumeBtn = createButton('Resume', function() {
-            processSelectedVessels('resume');
+            log('RESUME BUTTON CLICKED! disabled=' + resumeBtn.disabled + ', isProcessing=' + isProcessing + ', selectedVessels.size=' + selectedVessels.size);
+            if (!resumeBtn.disabled) {
+                processSelectedVessels('resume');
+            }
         });
         resumeBtn.id = 'fleet-manager-resume-btn';
         resumeBtn.disabled = true;
@@ -317,16 +344,19 @@
         var resumeBtn = document.getElementById('fleet-manager-resume-btn');
 
         var hasSelection = selectedVessels.size > 0;
+        var shouldDisable = !hasSelection || isProcessing;
+
+        log('updateButtonStates: hasSelection=' + hasSelection + ', isProcessing=' + isProcessing + ', shouldDisable=' + shouldDisable);
 
         if (moorBtn) {
-            moorBtn.disabled = !hasSelection || isProcessing;
-            moorBtn.style.opacity = moorBtn.disabled ? '0.5' : '1';
-            moorBtn.style.cursor = moorBtn.disabled ? 'not-allowed' : 'pointer';
+            moorBtn.disabled = shouldDisable;
+            moorBtn.style.opacity = shouldDisable ? '0.5' : '1';
+            moorBtn.style.cursor = shouldDisable ? 'not-allowed' : 'pointer';
         }
         if (resumeBtn) {
-            resumeBtn.disabled = !hasSelection || isProcessing;
-            resumeBtn.style.opacity = resumeBtn.disabled ? '0.5' : '1';
-            resumeBtn.style.cursor = resumeBtn.disabled ? 'not-allowed' : 'pointer';
+            resumeBtn.disabled = shouldDisable;
+            resumeBtn.style.opacity = shouldDisable ? '0.5' : '1';
+            resumeBtn.style.cursor = shouldDisable ? 'not-allowed' : 'pointer';
         }
     }
 
@@ -351,6 +381,16 @@
         log('Selection: ' + selectedVessels.size + ' vessels');
     }
 
+    function clearAllCheckboxes() {
+        var checkboxes = document.querySelectorAll('.fleet-manager-checkbox input[type="checkbox"]');
+        checkboxes.forEach(function(cb) {
+            cb.checked = false;
+        });
+        selectedVessels.clear();
+        updateButtonStates();
+        log('Cleared all checkboxes');
+    }
+
     // ============================================
     // PROCESS VESSELS
     // ============================================
@@ -371,51 +411,85 @@
         isProcessing = true;
         updateButtonStates();
 
-        var vesselIds = Array.from(selectedVessels);
+        var allVesselIds = Array.from(selectedVessels);
         var successCount = 0;
+        var skippedCount = 0;
         var failedVessels = [];
 
-        log('Processing ' + vesselIds.length + ' vessels for ' + action);
-
-        for (var i = 0; i < vesselIds.length; i++) {
-            var vesselId = vesselIds[i];
-            try {
-                if (action === 'moor') {
-                    await parkVessel(vesselId);
-                } else {
-                    await resumeVessel(vesselId);
-                }
-                successCount++;
-                log('Vessel ' + vesselId + ' ' + action + ' success');
-            } catch (err) {
-                failedVessels.push({ id: vesselId, error: err.message });
-                log('Vessel ' + vesselId + ' ' + action + ' failed: ' + err.message, 'error');
+        // Filter vessels based on action:
+        // - Resume: only vessels where is_parked === true
+        // - Moor: only vessels where is_parked === false
+        var vesselIds = allVesselIds.filter(function(vid) {
+            var vessel = getVesselById(vid);
+            if (!vessel) {
+                skippedCount++;
+                return false;
             }
-
-            // Small delay between requests
-            if (i < vesselIds.length - 1) {
-                await new Promise(function(resolve) { setTimeout(resolve, 200); });
+            if (action === 'resume' && vessel.is_parked !== true) {
+                skippedCount++;
+                return false;
             }
-        }
-
-        isProcessing = false;
-
-        // Show success toast
-        var actionText = action === 'moor' ? 'Moored' : 'Resumed';
-        if (successCount > 0) {
-            showToast(actionText + ' ' + successCount + ' vessel(s)', 'success');
-        }
-
-        // Show individual error toasts for each failed vessel
-        failedVessels.forEach(function(failed) {
-            showToast('Vessel ' + failed.id + ' failed: ' + failed.error, 'error');
+            if (action === 'moor' && vessel.is_parked === true) {
+                skippedCount++;
+                return false;
+            }
+            return true;
         });
 
-        // Clear selection
-        selectedVessels.clear();
+        log('Processing ' + vesselIds.length + ' vessels for ' + action + ' (skipped ' + skippedCount + ')');
 
-        // Refresh the vessel list
-        refreshVesselList();
+        if (vesselIds.length === 0) {
+            var actionText = action === 'moor' ? 'moor' : 'resume';
+            showToast('No vessels to ' + actionText + ' (all skipped)', 'error');
+            isProcessing = false;
+            clearAllCheckboxes();
+            updateButtonStates();
+            return;
+        }
+
+        try {
+            for (var i = 0; i < vesselIds.length; i++) {
+                var vesselId = vesselIds[i];
+                try {
+                    if (action === 'moor') {
+                        await parkVessel(vesselId);
+                    } else {
+                        await resumeVessel(vesselId);
+                    }
+                    successCount++;
+                } catch (err) {
+                    failedVessels.push({ id: vesselId, error: err.message });
+                }
+
+                // Small delay between requests
+                if (i < vesselIds.length - 1) {
+                    await new Promise(function(resolve) { setTimeout(resolve, 200); });
+                }
+            }
+
+            // Show success toast
+            var actionText = action === 'moor' ? 'Moored' : 'Resumed';
+            if (successCount > 0) {
+                showToast(actionText + ' ' + successCount + ' vessel(s)', 'success');
+            }
+
+            // Show individual error toasts for each failed vessel
+            failedVessels.forEach(function(failed) {
+                showToast('Vessel ' + failed.id + ' failed: ' + failed.error, 'error');
+            });
+
+            // Refresh the vessel list
+            refreshVesselList();
+        } catch (outerErr) {
+            log('processSelectedVessels outer error: ' + outerErr.message, 'error');
+            showToast('Error: ' + outerErr.message, 'error');
+        } finally {
+            // Always reset state and clear selection
+            isProcessing = false;
+            clearAllCheckboxes();
+            updateButtonStates();
+            log('processSelectedVessels finished, isProcessing reset to false');
+        }
     }
 
     function refreshVesselList() {

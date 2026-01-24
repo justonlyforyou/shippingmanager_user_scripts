@@ -1,10 +1,11 @@
 // ==UserScript==
-// @name        Shipping Manager - Premium Feature Unlocker
+// @name        ShippingManager - Premium Feature Unlocker
 // @description Unlocks premium map themes, tanker ops, metropolis and extended zoom
-// @version     1.8
+// @version     1.10
 // @author      https://github.com/justonlyforyou/
 // @order       15
 // @match       https://shippingmanager.cc/*
+// @grant       none
 // @run-at      document-end
 // @enabled     false
 // ==/UserScript==
@@ -41,7 +42,6 @@
         var store = getLocalStore();
         store.preferredTile = themeName;
         localStorage.setItem('localStore', JSON.stringify(store));
-        console.log('[Map Unlock] Saved preferredTile:', themeName);
     }
 
     function getSavedTheme() {
@@ -313,8 +313,6 @@
 
         // Sync state after adding elements
         syncRadioState(baseDiv);
-
-        console.log('[Map Unlock] Layer control fixed with premium options');
     }
 
     // Restore saved premium theme after page load
@@ -358,6 +356,4 @@
             clearInterval(restoreInterval);
         }
     }, 500);
-
-    console.log('[Map Unlock] Script loaded');
 })();

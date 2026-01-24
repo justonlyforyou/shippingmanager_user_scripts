@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name        Shipping Manager - Alliance Chat Notification
+// @name        ShippingManager - Alliance Chat Notification
 // @description Shows a red dot on Alliance button when there are unread messages
-// @version     2.9
+// @version     2.14
 // @author      https://github.com/justonlyforyou/
 // @order       2
 // @match       https://shippingmanager.cc/*
@@ -13,7 +13,9 @@
 (function() {
     'use strict';
 
-    var STORAGE_KEY = 'rebelship_alliance_chat_last_read';
+    var SCRIPT_NAME = 'AllianceChatNotify';
+    var STORE_NAME = 'data';
+
     var CHECK_INTERVAL = 30000; // Check every 30 seconds
     var MARK_READ_DELAY = 3000; // 3 seconds before marking as read
     var lastReadTimestamp = 0;
@@ -22,31 +24,66 @@
     var hasUnread = false;
     var isChatTabActive = false;
 
-    // Load last read timestamp from localStorage
-    function loadLastRead() {
+    // ============================================
+    // RebelShipBridge Storage Functions
+    // ============================================
+
+    async function dbGet(key) {
         try {
-            var stored = localStorage.getItem(STORAGE_KEY);
+            var result = await window.RebelShipBridge.storage.get(SCRIPT_NAME, STORE_NAME, key);
+            if (result) {
+                return JSON.parse(result);
+            }
+            return null;
+        } catch (e) {
+            console.error('[AllianceChatNotify] dbGet error:', e);
+            return null;
+        }
+    }
+
+    async function dbSet(key, value) {
+        try {
+            await window.RebelShipBridge.storage.set(SCRIPT_NAME, STORE_NAME, key, JSON.stringify(value));
+            return true;
+        } catch (e) {
+            console.error('[AllianceChatNotify] dbSet error:', e);
+            return false;
+        }
+    }
+
+    // ============================================
+    // Load/Save Functions
+    // ============================================
+
+    // Load last read timestamp
+    async function loadLastRead() {
+        try {
+            var stored = await dbGet('lastRead');
             if (stored) {
-                lastReadTimestamp = parseInt(stored, 10);
-                console.log('[AllianceChatNotify] Loaded last read:', new Date(lastReadTimestamp * 1000).toLocaleString());
+                lastReadTimestamp = stored;
             }
         } catch (e) {
             console.error('[AllianceChatNotify] Failed to load last read:', e);
         }
     }
 
-    // Save last read timestamp to localStorage
-    function saveLastRead(timestamp) {
+    // Save last read timestamp
+    async function saveLastRead(timestamp) {
+        lastReadTimestamp = timestamp;
+        hasUnread = false;
+        updateNotificationDots();
+
         try {
-            lastReadTimestamp = timestamp;
-            localStorage.setItem(STORAGE_KEY, timestamp.toString());
-            console.log('[AllianceChatNotify] Marked as read at:', new Date(timestamp * 1000).toLocaleString());
-            hasUnread = false;
-            updateNotificationDots();
+            await dbSet('lastRead', timestamp);
+            console.log('[AllianceChatNotify] Saved last read timestamp');
         } catch (e) {
             console.error('[AllianceChatNotify] Failed to save last read:', e);
         }
     }
+
+    // ============================================
+    // Notification Dot Functions
+    // ============================================
 
     // Create notification dot on an element
     function createDot(parent, id) {
@@ -123,137 +160,136 @@
         return null;
     }
 
+    // ============================================
+    // API Functions
+    // ============================================
+
     var cachedAllianceId = null;
 
     // Fetch alliance ID from API with retry
-    async function fetchAllianceId(maxRetries) {
-        if (cachedAllianceId) return cachedAllianceId;
+    function fetchAllianceId(maxRetries) {
+        if (cachedAllianceId) return Promise.resolve(cachedAllianceId);
 
         maxRetries = maxRetries ?? 3;
-        var lastError;
 
-        for (var attempt = 1; attempt <= maxRetries; attempt++) {
-            try {
-                var response = await fetch('/api/alliance/get-user-alliance', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    credentials: 'include',
-                    body: JSON.stringify({})
-                });
-
+        function attempt(attemptNum) {
+            return fetch('/api/alliance/get-user-alliance', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({})
+            }).then(function(response) {
                 if (!response.ok) {
                     throw new Error('HTTP ' + response.status);
                 }
-
-                var data = await response.json();
-
+                return response.json();
+            }).then(function(data) {
                 if (data && data.data && data.data.alliance && data.data.alliance.id) {
                     cachedAllianceId = data.data.alliance.id;
-                    console.log('[AllianceChatNotify] Fetched alliance ID:', cachedAllianceId);
                     return cachedAllianceId;
                 }
-
                 console.log('[AllianceChatNotify] No alliance found in API response');
                 return null;
-            } catch (e) {
-                lastError = e;
-                console.log('[AllianceChatNotify] fetchAllianceId attempt ' + attempt + '/' + maxRetries + ' failed:', e.message);
-                if (attempt < maxRetries) {
-                    var delay = attempt * 1000;
-                    await new Promise(function(r) { setTimeout(r, delay); });
+            }).catch(function(e) {
+                console.log('[AllianceChatNotify] fetchAllianceId attempt ' + attemptNum + '/' + maxRetries + ' failed:', e.message);
+                if (attemptNum < maxRetries) {
+                    var delay = attemptNum * 1000;
+                    return new Promise(function(r) { setTimeout(r, delay); }).then(function() {
+                        return attempt(attemptNum + 1);
+                    });
                 }
-            }
+                console.error('[AllianceChatNotify] Failed to fetch alliance ID after retries');
+                return null;
+            });
         }
 
-        console.error('[AllianceChatNotify] Failed to fetch alliance ID:', lastError);
-        return null;
+        return attempt(1);
     }
 
     // Fetch latest chat messages and check for unread with retry
-    async function checkForUnreadMessages(maxRetries) {
-        var allianceId = await fetchAllianceId();
-        if (!allianceId) {
-            console.log('[AllianceChatNotify] No alliance ID - user may not be in an alliance');
-            return;
-        }
+    function checkForUnreadMessages(maxRetries) {
+        return fetchAllianceId().then(function(allianceId) {
+            if (!allianceId) {
+                console.log('[AllianceChatNotify] No alliance ID - user may not be in an alliance');
+                return;
+            }
 
-        maxRetries = maxRetries ?? 3;
-        var lastError;
+            maxRetries = maxRetries ?? 3;
 
-        for (var attempt = 1; attempt <= maxRetries; attempt++) {
-            try {
-                var response = await fetch('/api/alliance/get-chat-feed', {
+            function attempt(attemptNum) {
+                return fetch('/api/alliance/get-chat-feed', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     credentials: 'include',
                     body: JSON.stringify({ alliance_id: allianceId })
-                });
+                }).then(function(response) {
+                    if (!response.ok) {
+                        throw new Error('HTTP ' + response.status);
+                    }
+                    return response.json();
+                }).then(function(data) {
+                    // API returns data.chat_feed not data.messages
+                    if (!data || !data.data || !data.data.chat_feed) {
+                        console.log('[AllianceChatNotify] No chat_feed data');
+                        return;
+                    }
 
-                if (!response.ok) {
-                    throw new Error('HTTP ' + response.status);
-                }
+                    var chatFeed = data.data.chat_feed;
+                    if (chatFeed.length === 0) {
+                        hasUnread = false;
+                        updateNotificationDots();
+                        return;
+                    }
 
-                var data = await response.json();
-
-                // API returns data.chat_feed not data.messages
-                if (!data || !data.data || !data.data.chat_feed) {
-                    console.log('[AllianceChatNotify] No chat_feed data');
-                    return;
-                }
-
-                var chatFeed = data.data.chat_feed;
-                if (chatFeed.length === 0) {
-                    hasUnread = false;
-                    updateNotificationDots();
-                    return;
-                }
-
-                // Find the newest message timestamp (only type: "chat", not "feed")
-                newestMessageTimestamp = 0;
-                chatFeed.forEach(function(msg) {
-                    // Only count actual chat messages, not feed items like "member_left"
-                    if (msg.type === 'chat') {
-                        var msgTime = msg.time_created || 0;
-                        if (msgTime > newestMessageTimestamp) {
-                            newestMessageTimestamp = msgTime;
+                    // Find the newest message timestamp (only type: "chat", not "feed")
+                    newestMessageTimestamp = 0;
+                    chatFeed.forEach(function(msg) {
+                        // Only count actual chat messages, not feed items like "member_left"
+                        if (msg.type === 'chat') {
+                            var msgTime = msg.time_created || 0;
+                            if (msgTime > newestMessageTimestamp) {
+                                newestMessageTimestamp = msgTime;
+                            }
                         }
+                    });
+
+                    // Check if there are unread messages
+                    var wasUnread = hasUnread;
+                    if (newestMessageTimestamp > lastReadTimestamp) {
+                        hasUnread = true;
+                        if (!wasUnread) {
+                            console.log('[AllianceChatNotify] Unread messages detected! Newest:', newestMessageTimestamp, 'Last read:', lastReadTimestamp);
+                        }
+                    } else {
+                        hasUnread = false;
                     }
+
+                    updateNotificationDots();
+                }).catch(function(e) {
+                    console.log('[AllianceChatNotify] checkForUnreadMessages attempt ' + attemptNum + '/' + maxRetries + ' failed:', e.message);
+                    if (attemptNum < maxRetries) {
+                        var delay = attemptNum * 1000;
+                        return new Promise(function(r) { setTimeout(r, delay); }).then(function() {
+                            return attempt(attemptNum + 1);
+                        });
+                    }
+                    console.error('[AllianceChatNotify] Failed to check messages after retries');
                 });
-
-                // Check if there are unread messages
-                var wasUnread = hasUnread;
-                if (newestMessageTimestamp > lastReadTimestamp) {
-                    hasUnread = true;
-                    if (!wasUnread) {
-                        console.log('[AllianceChatNotify] Unread messages detected! Newest:', newestMessageTimestamp, 'Last read:', lastReadTimestamp);
-                    }
-                } else {
-                    hasUnread = false;
-                }
-
-                updateNotificationDots();
-                return;
-
-            } catch (e) {
-                lastError = e;
-                console.log('[AllianceChatNotify] checkForUnreadMessages attempt ' + attempt + '/' + maxRetries + ' failed:', e.message);
-                if (attempt < maxRetries) {
-                    var delay = attempt * 1000;
-                    await new Promise(function(r) { setTimeout(r, delay); });
-                }
             }
-        }
 
-        console.error('[AllianceChatNotify] Failed to check messages:', lastError);
+            return attempt(1);
+        });
     }
+
+    // ============================================
+    // Mark As Read Functions
+    // ============================================
 
     // Mark messages as read after delay
     function scheduleMarkAsRead() {
         if (markReadTimeout) {
             clearTimeout(markReadTimeout);
         }
-
-        console.log('[AllianceChatNotify] Scheduling mark as read in 3 seconds...');
 
         markReadTimeout = setTimeout(function() {
             if (isChatTabActive && newestMessageTimestamp > 0) {
@@ -267,9 +303,12 @@
         if (markReadTimeout) {
             clearTimeout(markReadTimeout);
             markReadTimeout = null;
-            console.log('[AllianceChatNotify] Cancelled mark as read');
         }
     }
+
+    // ============================================
+    // Event Monitoring
+    // ============================================
 
     // Monitor Chat tab clicks and state
     function setupChatTabMonitor() {
@@ -280,7 +319,6 @@
             // Check if clicked on chat tab or its children
             var chatTab = findChatTab();
             if (chatTab && (chatTab === target || chatTab.contains(target))) {
-                console.log('[AllianceChatNotify] Chat tab clicked!');
                 isChatTabActive = true;
                 scheduleMarkAsRead();
             } else if (target.closest('.tab.flex-centered')) {
@@ -306,7 +344,6 @@
                 // Modal just closed
                 isChatTabActive = false;
                 cancelMarkAsRead();
-                console.log('[AllianceChatNotify] Modal closed');
             }
 
             lastModalVisible = isModalVisible;
@@ -318,9 +355,12 @@
         }, 500);
     }
 
-    // Initialize
-    function init() {
-        loadLastRead();
+    // ============================================
+    // Initialization
+    // ============================================
+
+    async function init() {
+        await loadLastRead();
 
         // Setup monitors
         setupChatTabMonitor();
@@ -340,8 +380,8 @@
 
     // Wait for page to load
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', function() { setTimeout(init, 2000); });
+        document.addEventListener('DOMContentLoaded', function() { setTimeout(init, 500); });
     } else {
-        setTimeout(init, 2000);
+        setTimeout(init, 500);
     }
 })();

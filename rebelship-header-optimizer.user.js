@@ -1,13 +1,13 @@
 // ==UserScript==
-// @name        Shipping Manager - Rebelship Header Optimizer
+// @name        ShippingManager - Rebelship Header Optimizer
 // @description Important script to handle all the Rebelship UI header elements for all scripts.
-// @version     3.48
+// @version     3.51
 // @author      https://github.com/justonlyforyou/
 // @order       999
 // @match       https://shippingmanager.cc/*
 // @run-at      document-end
 // @grant       none
-// @enabled     true
+// @enabled     false
 // ==/UserScript==
 /* globals CustomEvent */
 
@@ -30,12 +30,10 @@
         'bunker-co2-block',
         'coop-tickets-display',
         'reputation-display',
-        'rebelship-menu',
         'morale-smiley-display',
         'rebel-vip-display',
         'rebel-cash-display',
         'rebel-mobile-header',
-        'rebel-mobile-right',
         'rebel-stock-display'
     ];
 
@@ -77,69 +75,6 @@
     // Check if mobile view
     function isMobileView() {
         return window.innerWidth < 768;
-    }
-
-    // Position Cart Button and RebelShip Menu to the right on mobile
-    function positionMobileRightElements() {
-        if (!isMobileView()) return;
-
-        var cartBtn = document.getElementById('rebelship-cart-btn');
-        var rebelMenu = document.getElementById('rebelship-menu');
-
-        if (!cartBtn && !rebelMenu) return;
-
-        // Find or create the right-side container in headerMainContent
-        var rightContainer = document.getElementById('rebel-mobile-right');
-        if (!rightContainer) {
-            var headerMainContent = document.querySelector('.headerMainContent');
-            if (!headerMainContent) return;
-
-            rightContainer = document.createElement('div');
-            rightContainer.id = 'rebel-mobile-right';
-            headerMainContent.appendChild(rightContainer);
-        }
-        // Always update styles
-        rightContainer.style.cssText = 'display:flex;align-items:center;gap:4px;position:absolute;right:8px;top:50%;transform:translateY(calc(-50% + 20px));z-index:100;';
-
-        // Move cart button to right container if not already there
-        if (cartBtn && cartBtn.parentNode !== rightContainer) {
-            rightContainer.appendChild(cartBtn);
-        }
-
-        // Move rebelship menu to right container if not already there
-        if (rebelMenu && rebelMenu.parentNode !== rightContainer) {
-            rebelMenu.style.marginLeft = '-2px';
-            rightContainer.appendChild(rebelMenu);
-        }
-    }
-
-    // MutationObserver to catch when other scripts add elements
-    var mobileObserver = null;
-    function startMobileObserver() {
-        if (mobileObserver || !isMobileView()) return;
-
-        mobileObserver = new MutationObserver(function() {
-            positionMobileRightElements();
-        });
-
-        mobileObserver.observe(document.body, {
-            childList: true,
-            subtree: true
-        });
-
-        // Initial positioning
-        positionMobileRightElements();
-        console.log('[HeaderResize] Mobile observer started');
-    }
-
-    function stopMobileObserver() {
-        if (mobileObserver) {
-            mobileObserver.disconnect();
-            mobileObserver = null;
-        }
-        // Remove the right container
-        var rightContainer = document.getElementById('rebel-mobile-right');
-        if (rightContainer) rightContainer.remove();
     }
 
     // Create custom mobile header layout
@@ -232,7 +167,6 @@
                 stockValues = matches;
             }
         }
-        console.log('[HeaderResize] Stock values:', stockValues);
 
         // Get trend color from Pinia store (stock_trend: "up" or "down")
         var originalSvg = originalStockInfo.querySelector('svg');
@@ -244,7 +178,6 @@
         } else if (stockTrend === 'up') {
             trendColor = '#4ade80';
         }
-        console.log('[HeaderResize] Stock trend:', stockTrend, '-> color:', trendColor);
 
         // Line 1: Main value (same color as trend)
         var line1 = document.createElement('span');
@@ -401,7 +334,6 @@
         if (shippingHeader) {
             shippingHeader.appendChild(container);
             mobileHeaderCreated = true;
-            console.log('[HeaderResize] Mobile header created');
             return true;
         }
 
@@ -446,7 +378,6 @@
         });
 
         vipValueElement = valueEl;
-        console.log('[HeaderResize] VIP display created');
         return true;
     }
 
@@ -489,7 +420,6 @@
         });
 
         cashValueElement = valueEl;
-        console.log('[HeaderResize] Cash display created');
         return true;
     }
 
@@ -526,7 +456,6 @@
         });
 
         storeSubscribed = true;
-        console.log('[HeaderResize] Subscribed to user store for updates');
     }
 
     function adjustHeaderSpacing() {
@@ -544,9 +473,7 @@
     function initCustomDisplays() {
         if (isMobileView()) {
             createMobileHeader();
-            startMobileObserver();
         } else {
-            stopMobileObserver();
             createVipDisplay();
             createCashDisplay();
         }
@@ -562,7 +489,6 @@
             var el = document.getElementById(id);
             if (el) {
                 el.remove();
-                console.log('[HeaderResize] Removed #' + id);
             }
         });
 
@@ -598,7 +524,6 @@
     function resetScriptFlags() {
         window._bunkerPriceReset = true;
         window.dispatchEvent(new CustomEvent('rebelship-header-resize'));
-        console.log('[HeaderResize] Dispatched rebelship-header-resize event');
     }
 
     function handleResize() {
@@ -636,6 +561,4 @@
 
     window.addEventListener('resize', debouncedResize);
     init();
-
-    console.log('[HeaderResize] v3.47');
 })();

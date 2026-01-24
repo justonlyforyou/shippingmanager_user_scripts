@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         ShippingManager - Save Vessel History
+// @name         ShippingManager - Export Vessel History
 // @namespace    http://tampermonkey.net/
-// @version      3.3
+// @version      3.5
 // @description  Detect vessel history API calls and offer CSV download
 // @author       https://github.com/justonlyforyou/
 // @order        995
@@ -21,7 +21,6 @@
     // Wait 5 seconds after page load before tracking (ignore initial page load calls)
     setTimeout(() => {
         trackingEnabled = true;
-        console.log('[VesselHistory] Tracking enabled');
     }, 5000);
 
     // Intercept fetch BEFORE the game loads
@@ -37,8 +36,6 @@
                 const vesselId = body.vessel_id;
 
                 if (vesselId) {
-                    console.log('[VesselHistory] Detected fetch to get-vessel-history, vessel_id:', vesselId);
-
                     // Call original fetch first to get the response
                     const response = await originalFetch.apply(this, args);
                     const clonedResponse = response.clone();
@@ -80,8 +77,6 @@
                 const vesselId = parsedBody.vessel_id;
 
                 if (vesselId) {
-                    console.log('[VesselHistory] Detected XHR to get-vessel-history, vessel_id:', vesselId);
-
                     this.addEventListener('load', () => {
                         try {
                             const data = JSON.parse(this.responseText);
@@ -102,12 +97,8 @@
         return originalXHRSend.apply(this, [body]);
     };
 
-    console.log('[VesselHistory] Fetch and XHR interceptors installed (document-start)');
-
     // Show save button in Voyage history header
     function showSaveButton(vesselName, vesselId, historyData) {
-        console.log('[VesselHistory] showSaveButton called for', vesselName, vesselId);
-
         // Remove existing button
         if (currentHistoryBtn && currentHistoryBtn.parentNode) {
             currentHistoryBtn.parentNode.removeChild(currentHistoryBtn);
@@ -116,7 +107,6 @@
         let retryCount = 0;
         const tryInsert = () => {
             retryCount++;
-            console.log('[VesselHistory] tryInsert attempt', retryCount);
 
             // Find the blackBarHeader for voyage history section
             // Use the LAST blackBarHeader in the modal (voyage history is at bottom)
@@ -154,8 +144,6 @@
             targetHeader.style.alignItems = 'center';
             targetHeader.appendChild(btn);
             currentHistoryBtn = btn;
-
-            console.log('[VesselHistory] Button shown in header for', vesselName, vesselId);
         };
 
         // Wait for DOM to be ready
@@ -205,9 +193,6 @@
             alert('No history data available');
             return;
         }
-
-        // Log raw data to console for debugging
-        console.log('[VesselHistory] Raw history data:', JSON.stringify(history[0], null, 2));
 
         // Get all unique keys from all history entries, flatten nested objects
         const allKeys = new Set();

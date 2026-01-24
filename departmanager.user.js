@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ShippingManager - Depart Manager
 // @namespace    https://rebelship.org/
-// @description  Unified departure management: Auto bunker rebuy, auto-depart, Smuggler's Eye pricing, drydock prevention, route settings
-// @version      2.79
+// @description  Unified departure management: Auto bunker rebuy, auto-depart, route settings
+// @version      3.25
 // @author       https://github.com/justonlyforyou/
 // @order        20
 // @match        https://shippingmanager.cc/*
@@ -10,42 +10,59 @@
 // @run-at       document-end
 // @enabled      false
 // @background-job-required true
+// @RequireRebelShipMenu true
 // ==/UserScript==
+/* globals addMenuItem */
 
 (function() {
     'use strict';
 
     var SCRIPT_NAME = 'Depart Manager';
-    var STORAGE_KEY = 'rebelship_depart_manager';
-    var AUTOPRICE_CACHE_KEY = 'rebelship_autoprice_cache';
+    var SCRIPT_NAME_BRIDGE = 'DepartManager';
+    var STORE_NAME = 'data';
     var AUTOPRICE_CACHE_TTL = 4 * 60 * 60 * 1000; // 4 hours
     var CHECK_INTERVAL = 60 * 1000; // 60 seconds
-    var LAST_CHECK_KEY = 'rebelship_depart_last_check';
     var CATCHUP_THRESHOLD = 2 * 60 * 1000; // 2 minutes - if more time passed, run immediate catch-up
     var API_BASE = 'https://shippingmanager.cc/api';
+
+    // Legacy key for Android settings sync
+    var OLD_STORAGE_KEY = 'rebelship_depart_manager';
+
+    // In-memory cache (loaded from Bridge storage)
+    var storageCache = null;
+    var lastCheckTimeCache = 0;
+    var autoPriceCacheData = {};
 
     // Hijacking risk cache - stores route_origin<>route_destination -> risk mapping
     var hijackingRiskCache = {};
 
+    // ============================================
+    // REBELSHIPBRIDGE STORAGE HELPERS
+    // ============================================
+    async function dbGet(key) {
+        try {
+            var result = await window.RebelShipBridge.storage.get(SCRIPT_NAME_BRIDGE, STORE_NAME, key);
+            if (result) {
+                return JSON.parse(result);
+            }
+            return null;
+        } catch (e) {
+            log('dbGet error: ' + e.message, 'error');
+            return null;
+        }
+    }
+
+    async function dbSet(key, value) {
+        try {
+            await window.RebelShipBridge.storage.set(SCRIPT_NAME_BRIDGE, STORE_NAME, key, JSON.stringify(value));
+            return true;
+        } catch (e) {
+            log('dbSet error: ' + e.message, 'error');
+            return false;
+        }
+    }
+
     var DEFAULT_SETTINGS = {
-        // Drydock Settings
-        autoDrydockEnabled: false,
-        autoDrydockThreshold: 150,
-        autoDrydockType: 'major',
-        autoDrydockSpeed: 'minimum',
-        autoDrydockMinCash: 500000,
-        drydockNotifyIngame: true,
-        drydockNotifySystem: false,
-        // Smuggler's Eye Settings
-        smugglersEyeEnabled: false,
-        instant4Percent: true,
-        gradual8Percent: true,
-        gradualIncreaseStep: 1,
-        gradualIncreaseInterval: 25,
-        targetPercent: 8,
-        maxGuardsOnPirateRoutes: true,
-        smugglersEyeNotifyIngame: true,
-        smugglersEyeNotifySystem: false,
         // Fuel Settings
         fuelMode: 'off',
         fuelPriceThreshold: 500,
@@ -73,6 +90,11 @@
         autoDepartEnabled: false,
         departNotifyIngame: true,
         departNotifySystem: false,
+        // Min Utilization Settings
+        minUtilizationEnabled: false,
+        minUtilizationThreshold: 50,
+        minUtilizationNotifyIngame: true,
+        minUtilizationNotifySystem: false,
         // Notifications (legacy, kept for backward compatibility)
         systemNotifications: false
     };
@@ -91,39 +113,34 @@
 
 
     // ============================================
-    // STORAGE - Unified storage for all features
+    // STORAGE - Unified storage for all features (IndexedDB with in-memory cache)
     // ============================================
-    function getStorage() {
-        try {
-            var data = localStorage.getItem(STORAGE_KEY);
-            if (data) {
-                var parsed = JSON.parse(data);
-                return {
-                    settings: Object.assign({}, DEFAULT_SETTINGS, parsed.settings || {}),
-                    drydockVessels: parsed.drydockVessels || {},
-                    pendingRouteSettings: parsed.pendingRouteSettings || {},
-                    priceChangedAt: parsed.priceChangedAt || {},
-                    lastGradualIncrease: parsed.lastGradualIncrease || {}
-                };
-            }
-        } catch (e) {
-            log('Failed to read storage: ' + e.message, 'error');
-        }
+    function getDefaultStorage() {
         return {
             settings: Object.assign({}, DEFAULT_SETTINGS),
-            drydockVessels: {},
             pendingRouteSettings: {},
             priceChangedAt: {},
             lastGradualIncrease: {}
         };
     }
 
-    function saveStorage(storage) {
-        try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(storage));
+    function getStorage() {
+        if (storageCache) {
+            return {
+                settings: Object.assign({}, DEFAULT_SETTINGS, storageCache.settings || {}),
+                pendingRouteSettings: storageCache.pendingRouteSettings || {},
+                priceChangedAt: storageCache.priceChangedAt || {},
+                lastGradualIncrease: storageCache.lastGradualIncrease || {}
+            };
+        }
+        return getDefaultStorage();
+    }
+
+    async function saveStorage(storage) {
+        storageCache = storage;
+        var success = await dbSet('storage', storage);
+        if (success) {
             syncSettingsToAndroid(storage.settings);
-        } catch (e) {
-            log('Failed to save storage: ' + e.message, 'error');
         }
     }
 
@@ -139,28 +156,19 @@
     }
 
     function getLastCheckTime() {
-        try {
-            var timestamp = localStorage.getItem(LAST_CHECK_KEY);
-            return timestamp ? parseInt(timestamp, 10) : 0;
-        } catch (err) {
-            log('Failed to read last check time: ' + err.message, 'error');
-            return 0;
-        }
+        return lastCheckTimeCache;
     }
 
-    function saveLastCheckTime() {
-        try {
-            localStorage.setItem(LAST_CHECK_KEY, Date.now().toString());
-        } catch (e) {
-            log('Failed to save last check time: ' + e.message, 'error');
-        }
+    async function saveLastCheckTime() {
+        lastCheckTimeCache = Date.now();
+        await dbSet('lastCheckTime', lastCheckTimeCache);
     }
 
     function syncSettingsToAndroid(settings) {
         if (typeof window.RebelShipBridge !== 'undefined') {
             try {
                 if (window.RebelShipBridge.syncSettings) {
-                    window.RebelShipBridge.syncSettings(STORAGE_KEY, JSON.stringify(settings));
+                    window.RebelShipBridge.syncSettings(OLD_STORAGE_KEY, JSON.stringify(settings));
                 }
                 if (window.RebelShipBridge.syncRebuySettings) {
                     window.RebelShipBridge.syncRebuySettings(settings);
@@ -172,186 +180,26 @@
     }
 
     // ============================================
-    // MIGRATION FROM OLD SCRIPTS
+    // LOAD DATA FROM REBELSHIPBRIDGE STORAGE
     // ============================================
-    function migrateOldStorage() {
-        var oldDrydock = localStorage.getItem('rebelship_drydock_master');
-        var oldSmuggler = localStorage.getItem('rebelship_smugglers_eye');
-        var oldBunker = localStorage.getItem('rebelship_autobuy_settings');
-
-        if (!oldDrydock && !oldSmuggler && !oldBunker) return false;
-
-        log('Migrating old storage...');
-        var storage = getStorage();
-
-        if (oldDrydock) {
-            try {
-                var d = JSON.parse(oldDrydock);
-                if (d.settings) {
-                    storage.settings.autoDrydockEnabled = d.settings.autoDrydockEnabled || false;
-                    storage.settings.autoDrydockThreshold = d.settings.autoDrydockThreshold || 150;
-                    storage.settings.autoDrydockType = d.settings.autoDrydockType || 'major';
-                    storage.settings.autoDrydockSpeed = d.settings.autoDrydockSpeed || 'normal';
-                    storage.settings.autoDrydockMinCash = d.settings.autoDrydockMinCash || 500000;
-                    if (d.settings.systemNotifications !== undefined) {
-                        storage.settings.systemNotifications = d.settings.systemNotifications;
-                    }
-                }
-                // MERGE instead of overwrite - only copy if we don't have data yet
-                if (d.drydockVessels && Object.keys(d.drydockVessels).length > 0) {
-                    for (var dvId in d.drydockVessels) {
-                        if (!storage.drydockVessels[dvId]) {
-                            storage.drydockVessels[dvId] = d.drydockVessels[dvId];
-                        }
-                    }
-                }
-                if (d.pendingRouteSettings && Object.keys(d.pendingRouteSettings).length > 0) {
-                    for (var prId in d.pendingRouteSettings) {
-                        if (!storage.pendingRouteSettings[prId]) {
-                            storage.pendingRouteSettings[prId] = d.pendingRouteSettings[prId];
-                        }
-                    }
-                }
-                if (d.priceChangedAt && Object.keys(d.priceChangedAt).length > 0) {
-                    for (var pcId in d.priceChangedAt) {
-                        if (!storage.priceChangedAt[pcId]) {
-                            storage.priceChangedAt[pcId] = d.priceChangedAt[pcId];
-                        }
-                    }
-                }
-                log('Migrated drydock_master data');
-                // DELETE old storage after migration
-                localStorage.removeItem('rebelship_drydock_master');
-                log('Deleted old drydock_master storage');
-            } catch (e) {
-                log('Failed to migrate drydock_master: ' + e.message, 'error');
+    async function loadStorage() {
+        try {
+            var dbData = await dbGet('storage');
+            if (dbData) {
+                storageCache = dbData;
+                log('Loaded storage from RebelShipBridge');
             }
-        }
-
-        if (oldSmuggler) {
-            try {
-                var s = JSON.parse(oldSmuggler);
-                if (s.settings) {
-                    storage.settings.smugglersEyeEnabled = s.settings.enabled || false;
-                    storage.settings.instant4Percent = s.settings.instant4Percent !== false;
-                    storage.settings.gradual8Percent = s.settings.gradual8Percent !== false;
-                    storage.settings.targetPercent = s.settings.targetPercent || 8;
-                    storage.settings.maxGuardsOnPirateRoutes = s.settings.maxGuardsOnPirateRoutes !== false;
-                }
-                // MERGE lastGradualIncrease
-                if (s.lastGradualIncrease && Object.keys(s.lastGradualIncrease).length > 0) {
-                    for (var lgId in s.lastGradualIncrease) {
-                        if (!storage.lastGradualIncrease[lgId]) {
-                            storage.lastGradualIncrease[lgId] = s.lastGradualIncrease[lgId];
-                        }
-                    }
-                }
-                log('Migrated smugglers_eye data');
-                localStorage.removeItem('rebelship_smugglers_eye');
-                log('Deleted old smugglers_eye storage');
-            } catch (e) {
-                log('Failed to migrate smugglers_eye: ' + e.message, 'error');
+            var lastCheckData = await dbGet('lastCheckTime');
+            if (typeof lastCheckData === 'number') {
+                lastCheckTimeCache = lastCheckData;
             }
-        }
-
-        if (oldBunker) {
-            try {
-                var b = JSON.parse(oldBunker);
-                // Support both nested (b.settings.xxx) and flat (b.xxx) storage formats
-                var bs = b.settings || b;
-                storage.settings.fuelMode = bs.fuelMode || 'off';
-                storage.settings.fuelPriceThreshold = bs.fuelPriceThreshold || 500;
-                storage.settings.fuelMinCash = bs.fuelMinCash || 1000000;
-                storage.settings.fuelIntelligentMaxPrice = bs.fuelIntelligentMaxPrice || 600;
-                storage.settings.fuelIntelligentBelowEnabled = bs.fuelIntelligentBelowEnabled || false;
-                storage.settings.fuelIntelligentBelow = bs.fuelIntelligentBelow || 500;
-                storage.settings.fuelIntelligentShipsEnabled = bs.fuelIntelligentShipsEnabled || false;
-                storage.settings.fuelIntelligentShips = bs.fuelIntelligentShips || 5;
-                storage.settings.co2Mode = bs.co2Mode || 'off';
-                storage.settings.co2PriceThreshold = bs.co2PriceThreshold || 10;
-                storage.settings.co2MinCash = bs.co2MinCash || 1000000;
-                storage.settings.co2IntelligentMaxPrice = bs.co2IntelligentMaxPrice || 12;
-                storage.settings.co2IntelligentBelowEnabled = bs.co2IntelligentBelowEnabled || false;
-                storage.settings.co2IntelligentBelow = bs.co2IntelligentBelow || 500;
-                storage.settings.co2IntelligentShipsEnabled = bs.co2IntelligentShipsEnabled || false;
-                storage.settings.co2IntelligentShips = bs.co2IntelligentShips || 5;
-                storage.settings.avoidNegativeCO2 = bs.avoidNegativeCO2 || false;
-                storage.settings.autoDepartEnabled = bs.autoDepartEnabled || false;
-                if (bs.systemNotifications !== undefined) {
-                    storage.settings.systemNotifications = bs.systemNotifications;
-                }
-                log('Migrated autobuy_settings data');
-                localStorage.removeItem('rebelship_autobuy_settings');
-                log('Deleted old autobuy_settings storage');
-            } catch (e) {
-                log('Failed to migrate autobuy_settings: ' + e.message, 'error');
+            var cacheData = await dbGet('autoPriceCache');
+            if (cacheData) {
+                autoPriceCacheData = cacheData;
             }
+        } catch (err) {
+            log('loadStorage error: ' + err.message, 'error');
         }
-
-        saveStorage(storage);
-        log('Migration complete');
-        return true;
-    }
-
-    // ============================================
-    // DRYDOCK VESSELS STORAGE
-    // ============================================
-    function saveDrydockVessel(vesselId, data) {
-        var storage = getStorage();
-        storage.drydockVessels[vesselId] = {
-            name: data.name,
-            speed: data.speed,
-            guards: data.guards,
-            prices: data.prices,
-            hoursAtDrydock: data.hoursAtDrydock,
-            routeId: data.routeId,
-            originPort: data.originPort,
-            destinationPort: data.destinationPort,
-            status: data.status,
-            savedAt: Date.now()
-        };
-        saveStorage(storage);
-        log('Saved drydock settings for ' + data.name + ' (status: ' + data.status + ')');
-    }
-
-    function updateDrydockVesselStatus(vesselId, status) {
-        var storage = getStorage();
-        if (storage.drydockVessels[vesselId]) {
-            storage.drydockVessels[vesselId].status = status;
-            storage.drydockVessels[vesselId].updatedAt = Date.now();
-            saveStorage(storage);
-            log('Updated vessel ' + vesselId + ' status to: ' + status);
-        }
-    }
-
-    function deleteDrydockVessel(vesselId) {
-        var storage = getStorage();
-        var vessel = storage.drydockVessels[vesselId];
-        if (vessel) {
-            delete storage.drydockVessels[vesselId];
-            saveStorage(storage);
-            log('Deleted drydock entry for ' + vessel.name);
-        }
-    }
-
-    function getDrydockVesselsByStatus(status) {
-        var storage = getStorage();
-        var result = [];
-        for (var id in storage.drydockVessels) {
-            if (storage.drydockVessels[id].status === status) {
-                result.push({ vesselId: parseInt(id), data: storage.drydockVessels[id] });
-            }
-        }
-        return result;
-    }
-
-    function getAllDrydockVessels() {
-        var storage = getStorage();
-        var result = [];
-        for (var id in storage.drydockVessels) {
-            result.push({ vesselId: parseInt(id), data: storage.drydockVessels[id] });
-        }
-        return result;
     }
 
     // ============================================
@@ -420,20 +268,6 @@
         if (oldPrices.fuel !== newPrices.fuel) return true;
         if (oldPrices.crude_oil !== newPrices.crude_oil) return true;
         return false;
-    }
-
-    // ============================================
-    // GRADUAL INCREASE TRACKING (Smuggler's Eye)
-    // ============================================
-    function getLastGradualIncrease(vesselId) {
-        var storage = getStorage();
-        return storage.lastGradualIncrease[vesselId] || 0;
-    }
-
-    function setLastGradualIncrease(vesselId, timestamp) {
-        var storage = getStorage();
-        storage.lastGradualIncrease[vesselId] = timestamp;
-        saveStorage(storage);
     }
 
     // ============================================
@@ -539,12 +373,6 @@
         } else if (category === 'co2') {
             showIngame = settings.co2NotifyIngame !== false;
             showSystem = settings.co2NotifySystem === true;
-        } else if (category === 'smuggler') {
-            showIngame = settings.smugglersEyeNotifyIngame !== false;
-            showSystem = settings.smugglersEyeNotifySystem === true;
-        } else if (category === 'drydock') {
-            showIngame = settings.drydockNotifyIngame !== false;
-            showSystem = settings.drydockNotifySystem === true;
         } else if (category === 'depart') {
             showIngame = settings.departNotifyIngame !== false;
             showSystem = settings.departNotifySystem === true;
@@ -661,14 +489,6 @@
         risk = hijackingRiskCache[reverseKey];
         if (risk !== undefined) return risk;
         return 0;
-    }
-
-    async function fetchUserData() {
-        var data = await apiFetch('/user/get-user-settings', {});
-        if (data && data.user) {
-            return data;
-        }
-        return null;
     }
 
     async function fetchBunkerStateAPI(maxRetries) {
@@ -808,20 +628,12 @@
     // Fetched once at startup, read by all features
     // ============================================
     function getAutoPriceCache() {
-        try {
-            var data = localStorage.getItem(AUTOPRICE_CACHE_KEY);
-            return data ? JSON.parse(data) : {};
-        } catch {
-            return {};
-        }
+        return autoPriceCacheData;
     }
 
-    function saveAutoPriceCache(cache) {
-        try {
-            localStorage.setItem(AUTOPRICE_CACHE_KEY, JSON.stringify(cache));
-        } catch (e) {
-            log('Failed to save auto-price cache: ' + e.message, 'error');
-        }
+    async function saveAutoPriceCache(cache) {
+        autoPriceCacheData = cache;
+        await dbSet('autoPriceCache', cache);
     }
 
     function getAutoprice(routeId, vesselType) {
@@ -1020,24 +832,63 @@
         }
     }
 
-    async function sendToDrydock(vesselIds, speed, maintenanceType) {
-        var body = {
-            vessel_ids: JSON.stringify(vesselIds),
-            speed: speed,
-            maintenance_type: maintenanceType
-        };
-        return await apiFetch('/maintenance/do-major-drydock-maintenance-bulk', body);
+    // Fetch port demand from API
+    async function fetchPortDemandAPI(portCode) {
+        try {
+            var response = await originalFetch(API_BASE + '/port/get-ports', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ port_code: [portCode] })
+            });
+
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            var data = await response.json();
+
+            if (data.data && data.data.port && data.data.port.length > 0) {
+                return data.data.port[0];
+            }
+            return null;
+        } catch (e) {
+            log('fetchPortDemandAPI failed: ' + e.message, 'error');
+            return null;
+        }
     }
 
-    async function getMaintenanceCost(vesselIds, speed, maintenanceType) {
-        var body = {
-            vessel_ids: JSON.stringify(vesselIds),
-            speed: speed,
-            maintenance_type: maintenanceType
-        };
-        var data = await apiFetch('/maintenance/get', body);
-        if (data && data.data) return data.data;
-        return null;
+    // Calculate utilization percentage for a vessel at destination port
+    function calculatePortUtilization(vessel, portData) {
+        if (!portData || !portData.demand) return 100; // If no data, assume full
+
+        var demand = portData.demand;
+        var consumed = portData.consumed || {};
+        var vesselCapacity = getVesselCapacity(vessel);
+
+        if (vesselCapacity <= 0) return 100;
+
+        var totalDemand = 0;
+        var totalConsumed = 0;
+
+        if (vessel.capacity_type === 'container') {
+            var containerDemand = demand.container || {};
+            var containerConsumed = consumed.container || {};
+            totalDemand = (containerDemand.dry || 0) + (containerDemand.refrigerated || 0);
+            totalConsumed = (containerConsumed.dry || 0) + (containerConsumed.refrigerated || 0);
+        } else if (vessel.capacity_type === 'tanker') {
+            var tankerDemand = demand.tanker || {};
+            var tankerConsumed = consumed.tanker || {};
+            // Tanker demand is in barrels, convert to TEU equivalent (/74)
+            totalDemand = ((tankerDemand.fuel || 0) + (tankerDemand.crude_oil || 0)) / 74;
+            totalConsumed = ((tankerConsumed.fuel || 0) + (tankerConsumed.crude_oil || 0)) / 74;
+        }
+
+        // Available demand = total demand - already consumed
+        var availableDemand = Math.max(0, totalDemand - totalConsumed);
+
+        // Utilization = how much of vessel capacity can be filled
+        if (vesselCapacity <= 0) return 100;
+        var utilization = (availableDemand / vesselCapacity) * 100;
+
+        return Math.min(100, utilization);
     }
 
     // ============================================
@@ -1076,141 +927,16 @@
     }
 
     function getVesselFuelRequired(vessel) {
+        // Use API value directly - no buffer needed, API returns correct fuel consumption
         var fuelNeeded = vessel.route_fuel_required || vessel.fuel_required;
         if (fuelNeeded) {
-            fuelNeeded = fuelNeeded * 1.02;
-        } else {
-            var distance = vessel.route_distance;
-            var speed = vessel.route_speed || vessel.max_speed;
-            fuelNeeded = calculateFuelConsumption(vessel, distance, speed) * 1000;
+            // API value is in kg, convert to tons
+            return fuelNeeded / 1000;
         }
-        return fuelNeeded / 1000;
-    }
-
-    function calculatePriceDiffPercent(price, autoprice) {
-        if (!autoprice || autoprice === 0) return 0;
-        return Math.round(((price - autoprice) / autoprice) * 100);
-    }
-
-    // ============================================
-    // ROUTE PLANNER GUARDS SLIDER AUTO-SET
-    // ============================================
-    var routePlannerObserver = null;
-    var lastProcessedSlider = null;
-
-    /**
-     * Get hijacking risk from visible DOM (Risk assessment field in route planner)
-     */
-    function getRiskFromDOM() {
-        // Look for "Risk assessment" entry in route planner popup
-        var dataEntries = document.querySelectorAll('.dataEntry');
-        for (var i = 0; i < dataEntries.length; i++) {
-            var entry = dataEntries[i];
-            var label = entry.querySelector('p');
-            if (label && label.textContent.toLowerCase().includes('risk assessment')) {
-                var content = entry.querySelector('.content');
-                if (content) {
-                    var text = content.textContent.trim();
-                    var match = text.match(/(\d+)%/);
-                    if (match) {
-                        return parseInt(match[1], 10);
-                    }
-                }
-            }
-        }
-        return 0;
-    }
-
-    /**
-     * Add notice below guards slider that it was auto-set
-     */
-    function addGuardsAutoSetNotice(sliderParent) {
-        // Check if notice already exists
-        if (sliderParent.nextElementSibling && sliderParent.nextElementSibling.classList.contains('smugglers-eye-notice')) {
-            return;
-        }
-        var notice = document.createElement('div');
-        notice.className = 'dataEntry smugglers-eye-notice';
-        notice.style.cssText = 'color: #ef4444; font-size: 11px; font-style: italic; padding: 4px 0;';
-        notice.textContent = 'Set to 10 by Smuggler\'s Eye';
-        sliderParent.parentNode.insertBefore(notice, sliderParent.nextSibling);
-    }
-
-    /**
-     * Check for guards slider and auto-set if risk > 0
-     */
-    function checkAndSetGuardsSlider() {
-        var settings = getSettings();
-        if (!settings.maxGuardsOnPirateRoutes) return;
-
-        // Find guards slider
-        var sliders = document.querySelectorAll('input.slider[type="range"][max="10"]');
-        for (var i = 0; i < sliders.length; i++) {
-            var slider = sliders[i];
-            var parent = slider.parentElement;
-            if (parent && parent.classList.contains('dataEntry') && parent.classList.contains('slider')) {
-                // Don't process the same slider twice
-                if (slider === lastProcessedSlider) continue;
-
-                // Get risk from DOM
-                var risk = getRiskFromDOM();
-                if (risk > 0 && parseInt(slider.value, 10) < 10) {
-                    slider.value = 10;
-                    slider.dispatchEvent(new window.Event('input', { bubbles: true }));
-                    slider.dispatchEvent(new window.Event('change', { bubbles: true }));
-                    addGuardsAutoSetNotice(parent);
-                    log('Guards slider auto-set to 10 (risk from DOM: ' + risk + '%)');
-                    lastProcessedSlider = slider;
-                }
-            }
-        }
-    }
-
-    /**
-     * Start watching for route planner guards slider
-     */
-    function startRoutePlannerObserver() {
-        if (routePlannerObserver) return;
-
-        routePlannerObserver = new window.MutationObserver(function() {
-            checkAndSetGuardsSlider();
-        });
-
-        routePlannerObserver.observe(document.body, {
-            childList: true,
-            subtree: true
-        });
-    }
-
-    /**
-     * Auto-set guards slider to 10 in route planner when hijacking risk > 0
-     * Fallback method using API response
-     */
-    function autoSetGuardsSliderInRoutePlanner(hijackingRisk) {
-        var settings = getSettings();
-        if (!settings.maxGuardsOnPirateRoutes) return;
-
-        if (hijackingRisk > 0) {
-            // Find the guards slider in the route planner
-            // Structure: <div class="dataEntry slider"><input class="slider" type="range" min="0" max="10"></div>
-            var sliders = document.querySelectorAll('input.slider[type="range"][max="10"]');
-            for (var i = 0; i < sliders.length; i++) {
-                var slider = sliders[i];
-                // Verify it's the guards slider by checking parent class
-                var parent = slider.parentElement;
-                if (parent && parent.classList.contains('dataEntry') && parent.classList.contains('slider')) {
-                    if (slider !== lastProcessedSlider && parseInt(slider.value, 10) < 10) {
-                        slider.value = 10;
-                        // Trigger input event so Vue picks up the change
-                        slider.dispatchEvent(new window.Event('input', { bubbles: true }));
-                        slider.dispatchEvent(new window.Event('change', { bubbles: true }));
-                        addGuardsAutoSetNotice(parent);
-                        log('Guards slider auto-set to 10 (hijacking risk: ' + hijackingRisk + '%)');
-                        lastProcessedSlider = slider;
-                    }
-                }
-            }
-        }
+        // Fallback: calculate ourselves (already includes small buffer)
+        var distance = vessel.route_distance;
+        var speed = vessel.route_speed || vessel.max_speed;
+        return calculateFuelConsumption(vessel, distance, speed);
     }
 
     // ============================================
@@ -1275,20 +1001,6 @@
         }
     }
 
-
-    /**
-     * Click price button to set a new price
-     */
-    function uiClickPriceButton(cargo, increment) {
-        var buttons = cargo.querySelectorAll('.priceSelector button');
-        if (buttons.length < 2) return false;
-        var btn = increment ? buttons[1] : buttons[0];
-        if (btn) {
-            btn.click();
-            return true;
-        }
-        return false;
-    }
 
     /**
      * Get current vessel being edited from Pinia store
@@ -1361,7 +1073,7 @@
     }
 
     /**
-     * Update price diff badges and auto-set prices if Smuggler's Eye is active
+     * Update price diff badges
      * Uses central auto-price cache, intercepted auto-price, or DOM prices for create route
      */
     function uiUpdatePriceDiffs() {
@@ -1372,7 +1084,7 @@
 
         var autoPrice = null;
 
-        // For CREATE route: prefer API auto-price for correct Smuggler's Eye calculation
+        // For CREATE route: prefer API auto-price for correct price diff calculation
         // Fall back to DOM prices only if API price not available
         if (isCreateRouteModal()) {
             if (uiCurrentAutoPrice) {
@@ -1408,9 +1120,6 @@
             return;
         }
 
-        var settings = getSettings();
-        var shouldAutoSet = settings.smugglersEyeEnabled && settings.instant4Percent;
-
         changePriceEls.forEach(function(changePriceEl) {
             var cargos = changePriceEl.querySelectorAll('.cargo');
             cargos.forEach(function(cargo) {
@@ -1436,32 +1145,6 @@
                 if (currentPrice && cargoAutoPrice) {
                     var diff = uiCalcDiffPercent(currentPrice, cargoAutoPrice);
                     uiUpdateDiffBadge(priceSpan, diff);
-
-                    // Auto-set to +4% if Smuggler's Eye instant4Percent is enabled and price is below 4%
-                    if (shouldAutoSet && diff < 4) {
-                        // Mark as processing to avoid loops
-                        if (cargo.dataset.autoSettingPrice) return;
-                        cargo.dataset.autoSettingPrice = 'true';
-
-                        // Click +1% button until we reach 4%
-                        var clickCount = 0;
-                        var maxClicks = 10;
-                        var clickInterval = setInterval(function() {
-                            var newPrice = uiParsePrice(priceSpan.textContent);
-                            var newDiff = uiCalcDiffPercent(newPrice, cargoAutoPrice);
-                            if (newDiff >= 4 || clickCount >= maxClicks) {
-                                clearInterval(clickInterval);
-                                delete cargo.dataset.autoSettingPrice;
-                                uiUpdateDiffBadge(priceSpan, newDiff);
-                                if (newDiff >= 4) {
-                                    log('Auto-set ' + cargoType + ' price to +' + newDiff + '% (Smuggler\'s Eye)');
-                                }
-                                return;
-                            }
-                            uiClickPriceButton(cargo, true);
-                            clickCount++;
-                        }, 100);
-                    }
                 }
             });
         });
@@ -1595,18 +1278,13 @@
     }
 
     // ============================================
-    // FETCH INTERCEPTOR - Central hook for drydock and depart
+    // FETCH INTERCEPTOR - Central hook for depart
     // ============================================
     window.fetch = async function() {
         var args = arguments;
         var url = args[0];
         var options = args[1];
         var urlStr = typeof url === 'string' ? url : url.toString();
-
-        // Intercept drydock bulk request - save settings BEFORE drydock
-        if (urlStr.includes('/maintenance/do-major-drydock-maintenance-bulk')) {
-            await handleDrydockRequest(options);
-        }
 
         // Intercept depart request - apply pending settings BEFORE departure
         if (urlStr.includes('/route/depart')) {
@@ -1628,7 +1306,7 @@
             await handlePriceChangeResponse(priceChangeContext, responseClone);
         }
 
-        // Intercept vessel data responses - check drydock completion
+        // Intercept vessel data responses - update hijacking risk cache
         if (urlStr.includes('/vessel/get-vessels') ||
             urlStr.includes('/vessel/get-all-user-vessels') ||
             urlStr.includes('/game/index')) {
@@ -1640,7 +1318,7 @@
             }
         }
 
-        // Intercept route planner routes response - auto-set guards slider
+        // Intercept route planner routes response - reset auto-price cache
         if (urlStr.includes('/route/get-routes-by-ports')) {
             // Reset auto-price cache when new route search happens
             // This prevents stale prices from previous route being used
@@ -1648,20 +1326,6 @@
             uiCreateRouteBasePrices = null;
             uiClearPriceDiffBadges();
             log('Route search - reset auto-price cache');
-
-            try {
-                var routesClone = response.clone();
-                var routesData = await routesClone.json();
-                if (routesData && routesData.data && routesData.data.routes && routesData.data.routes.length > 0) {
-                    var selectedRoute = routesData.data.routes[0];
-                    var hijackingRisk = selectedRoute.hijacking_risk || 0;
-                    setTimeout(function() {
-                        autoSetGuardsSliderInRoutePlanner(hijackingRisk);
-                    }, 100);
-                }
-            } catch {
-                // Ignore JSON parse errors
-            }
         }
 
         // Intercept game's auto-price response - store for price diff badges
@@ -1741,95 +1405,6 @@
         }
     }
 
-    async function handleDrydockRequest(options) {
-        if (!options || !options.body) return;
-
-        try {
-            var body = JSON.parse(options.body);
-            var vesselIds = JSON.parse(body.vessel_ids || '[]');
-            if (vesselIds.length === 0) return;
-
-            log('Drydock request detected for ' + vesselIds.length + ' vessel(s)');
-
-            var MAX_RETRIES = 3;
-            var RETRY_DELAY_MS = 750;
-
-            for (var i = 0; i < vesselIds.length; i++) {
-                var vesselId = vesselIds[i];
-                var vessel = null;
-                var retryCount = 0;
-                var validData = false;
-
-                while (retryCount < MAX_RETRIES && !validData) {
-                    var vessels = await fetchVesselData();
-                    if (!vessels || vessels.length === 0) {
-                        retryCount++;
-                        log('Retry ' + retryCount + '/' + MAX_RETRIES + ': No vessel data received');
-                        await new Promise(function(r) { setTimeout(r, RETRY_DELAY_MS); });
-                        continue;
-                    }
-
-                    var vesselMap = new Map(vessels.map(function(v) { return [v.id, v]; }));
-                    vessel = vesselMap.get(vesselId);
-
-                    if (!vessel) {
-                        retryCount++;
-                        log('Retry ' + retryCount + '/' + MAX_RETRIES + ': Vessel ' + vesselId + ' not found');
-                        await new Promise(function(r) { setTimeout(r, RETRY_DELAY_MS); });
-                        continue;
-                    }
-
-                    if (vessel.route_speed === undefined ||
-                        vessel.route_guards === undefined ||
-                        !vessel.prices ||
-                        vessel.hours_until_check === undefined) {
-                        retryCount++;
-                        log('Retry ' + retryCount + '/' + MAX_RETRIES + ': ' + vessel.name + ' has incomplete data');
-                        await new Promise(function(r) { setTimeout(r, RETRY_DELAY_MS); });
-                        continue;
-                    }
-
-                    validData = true;
-                }
-
-                if (!validData) {
-                    var missing = [];
-                    if (!vessel) {
-                        log('ERROR: Vessel ' + vesselId + ' not found after ' + MAX_RETRIES + ' retries, skipping', 'error');
-                        continue;
-                    }
-                    if (vessel.route_speed === undefined) missing.push('route_speed');
-                    if (vessel.route_guards === undefined) missing.push('route_guards');
-                    if (!vessel.prices) missing.push('prices');
-                    if (vessel.hours_until_check === undefined) missing.push('hours_until_check');
-                    log(vessel.name + ': ERROR - Missing fields after ' + MAX_RETRIES + ' retries: ' + missing.join(', '), 'error');
-                    continue;
-                }
-
-                var hasActiveRoute = (vessel.active_route && vessel.active_route.route_id) || vessel.route_id;
-                var isBugUse = !hasActiveRoute;
-
-                saveDrydockVessel(vesselId, {
-                    name: vessel.name,
-                    speed: vessel.route_speed,
-                    guards: vessel.route_guards,
-                    prices: vessel.prices,
-                    hoursAtDrydock: vessel.hours_until_check,
-                    routeId: vessel.active_route ? vessel.active_route.route_id : null,
-                    originPort: vessel.route_origin ? vessel.route_origin : vessel.current_port_code,
-                    destinationPort: vessel.route_destination,
-                    status: isBugUse ? 'bug_use' : 'pre_drydock'
-                });
-
-                if (isBugUse) {
-                    log(vessel.name + ': Bug-use detected (no active route)');
-                }
-            }
-        } catch (e) {
-            log('Failed to process drydock request: ' + e.message, 'error');
-        }
-    }
-
     async function handleVesselDataResponse(data) {
         var vessels = [];
         if (data && data.data && data.data.user_vessels) {
@@ -1841,80 +1416,10 @@
 
         // Update hijacking risk cache from intercepted vessel data (game/index, etc.)
         updateHijackingRiskCache(vessels);
-
-        var vesselMap = new Map(vessels.map(function(v) { return [v.id, v]; }));
-
-        // Check bug_use vessels - delete when anchored
-        var bugUseVessels = getDrydockVesselsByStatus('bug_use');
-        for (var i = 0; i < bugUseVessels.length; i++) {
-            var bugEntry = bugUseVessels[i];
-            var bugVessel = vesselMap.get(bugEntry.vesselId);
-            if (!bugVessel) {
-                deleteDrydockVessel(bugEntry.vesselId);
-                continue;
-            }
-            if (bugVessel.status === 'anchor') {
-                log(bugEntry.data.name + ': Bug-use complete (anchored)');
-                deleteDrydockVessel(bugEntry.vesselId);
-            }
-        }
-
-        // Check pre_drydock vessels - mark as past_drydock when complete
-        var preDrydockVessels = getDrydockVesselsByStatus('pre_drydock');
-        for (var j = 0; j < preDrydockVessels.length; j++) {
-            var preEntry = preDrydockVessels[j];
-            var preVessel = vesselMap.get(preEntry.vesselId);
-            if (!preVessel) continue;
-
-            if (preVessel.route_dry_operation === 1) continue;
-            if (preVessel.status === 'maintenance') continue;
-
-            var currentHours = preVessel.hours_until_check;
-            var savedHours = preEntry.data.hoursAtDrydock;
-
-            if (currentHours > savedHours) {
-                log(preEntry.data.name + ': Drydock complete (hours: ' + savedHours + ' -> ' + currentHours + ')');
-                updateDrydockVesselStatus(preEntry.vesselId, 'past_drydock');
-            }
-        }
-
-        // Check past_drydock vessels - restore when in port or anchored
-        var pastDrydockVessels = getDrydockVesselsByStatus('past_drydock');
-        for (var k = 0; k < pastDrydockVessels.length; k++) {
-            var pastEntry = pastDrydockVessels[k];
-            var pastVessel = vesselMap.get(pastEntry.vesselId);
-            if (!pastVessel) continue;
-
-            if ((pastVessel.status === 'port' || pastVessel.status === 'anchor') && !pastVessel.is_parked) {
-                await restoreDrydockSettings(pastEntry.vesselId, pastEntry.data, pastVessel);
-            }
-        }
-    }
-
-    async function restoreDrydockSettings(vesselId, savedData, currentVessel) {
-        var needsRestore =
-            savedData.speed !== currentVessel.route_speed ||
-            savedData.guards !== currentVessel.route_guards ||
-            JSON.stringify(savedData.prices) !== JSON.stringify(currentVessel.prices);
-
-        if (!needsRestore) {
-            log(savedData.name + ': Settings already match');
-            deleteDrydockVessel(vesselId);
-            return;
-        }
-
-        log(savedData.name + ': Restoring post-drydock settings');
-
-        var success = await updateRouteData(vesselId, savedData.speed, savedData.guards, savedData.prices, currentVessel.prices);
-        if (success) {
-            log(savedData.name + ': Settings restored');
-            deleteDrydockVessel(vesselId);
-            notify('Restored settings for ' + savedData.name);
-        }
     }
 
     // ============================================
-    // PRE-DEPARTURE HOOK - Apply Pending + Smuggler's Eye
+    // PRE-DEPARTURE HOOK - Apply Pending Settings
     // ============================================
     async function applyPendingSettingsBeforeDepart(options) {
         if (!options || !options.body) return;
@@ -1927,11 +1432,6 @@
             // Get vessel data
             var vessels = await fetchVesselData();
             var vessel = vessels ? vessels.find(function(v) { return v.id === vesselId; }) : null;
-
-            if (vessel) {
-                // Run Smuggler's Eye for this vessel BEFORE departure
-                await applySmugglersEyeToVessel(vessel);
-            }
 
             // Check for pending settings
             var pending = getPendingRouteSettings(vesselId);
@@ -2020,285 +1520,6 @@
         if (removed > 0) {
             saveStorage(storage);
             log('Cleaned up ' + removed + ' stale pending entries');
-        }
-    }
-
-    // ============================================
-    // SMUGGLER'S EYE LOGIC
-    // ============================================
-    async function applySmugglersEyeToVessel(vessel) {
-        var settings = getSettings();
-        if (!settings.smugglersEyeEnabled) return;
-
-        if (!vessel.route_destination) return;
-
-        var routeId = (vessel.active_route && vessel.active_route.route_id) || vessel.route_id;
-        if (!routeId) return;
-
-        // Skip parked vessels
-        if (vessel.is_parked) return;
-
-        var autoprice = getAutoprice(routeId, vessel.capacity_type);
-        if (!autoprice) return;
-
-        var currentPrices = vessel.prices || {};
-        var newPrices = Object.assign({}, currentPrices);
-        var newGuards = vessel.route_guards || 0;
-        var needsUpdate = false;
-
-        // 4% Instant Markup
-        if (settings.instant4Percent) {
-            if (currentPrices.dry && autoprice.dry) {
-                var diffDry = calculatePriceDiffPercent(currentPrices.dry, autoprice.dry);
-                if (diffDry < 4) {
-                    newPrices.dry = Math.round(autoprice.dry * 1.04);
-                    needsUpdate = true;
-                }
-            }
-            if (currentPrices.refrigerated && autoprice.ref) {
-                var diffRef = calculatePriceDiffPercent(currentPrices.refrigerated, autoprice.ref);
-                if (diffRef < 4) {
-                    newPrices.refrigerated = Math.round(autoprice.ref * 1.04);
-                    needsUpdate = true;
-                }
-            }
-            if (currentPrices.fuel && autoprice.fuel) {
-                var diffFuel = calculatePriceDiffPercent(currentPrices.fuel, autoprice.fuel);
-                if (diffFuel < 4) {
-                    newPrices.fuel = Math.round(autoprice.fuel * 1.04 * 100) / 100;
-                    needsUpdate = true;
-                }
-            }
-            if (currentPrices.crude_oil && autoprice.crude) {
-                var diffCrude = calculatePriceDiffPercent(currentPrices.crude_oil, autoprice.crude);
-                if (diffCrude < 4) {
-                    newPrices.crude_oil = Math.round(autoprice.crude * 1.04 * 100) / 100;
-                    needsUpdate = true;
-                }
-            }
-        }
-
-        // Gradual Increase
-        if (settings.gradual8Percent) {
-            var now = Date.now();
-            var lastIncrease = getLastGradualIncrease(vessel.id);
-            var targetPercent = settings.targetPercent || 8;
-            var increaseStep = settings.gradualIncreaseStep || 1;
-            var intervalMs = (settings.gradualIncreaseInterval || 25) * 60 * 60 * 1000;
-            var stepMultiplier = 1 + increaseStep / 100;
-
-            if (!lastIncrease || (now - lastIncrease) >= intervalMs) {
-                var gradualUpdated = false;
-
-                if (currentPrices.dry && autoprice.dry) {
-                    var currentDiffDry = calculatePriceDiffPercent(newPrices.dry || currentPrices.dry, autoprice.dry);
-                    if (currentDiffDry < targetPercent) {
-                        var maxPriceDry = Math.round(autoprice.dry * (1 + targetPercent / 100));
-                        newPrices.dry = Math.min(Math.round((newPrices.dry || currentPrices.dry) * stepMultiplier), maxPriceDry);
-                        gradualUpdated = true;
-                    }
-                }
-                if (currentPrices.refrigerated && autoprice.ref) {
-                    var currentDiffRef = calculatePriceDiffPercent(newPrices.refrigerated || currentPrices.refrigerated, autoprice.ref);
-                    if (currentDiffRef < targetPercent) {
-                        var maxPriceRef = Math.round(autoprice.ref * (1 + targetPercent / 100));
-                        newPrices.refrigerated = Math.min(Math.round((newPrices.refrigerated || currentPrices.refrigerated) * stepMultiplier), maxPriceRef);
-                        gradualUpdated = true;
-                    }
-                }
-                if (currentPrices.fuel && autoprice.fuel) {
-                    var currentDiffFuel = calculatePriceDiffPercent(newPrices.fuel || currentPrices.fuel, autoprice.fuel);
-                    if (currentDiffFuel < targetPercent) {
-                        var maxPriceFuel = Math.round(autoprice.fuel * (1 + targetPercent / 100) * 100) / 100;
-                        newPrices.fuel = Math.min(Math.round((newPrices.fuel || currentPrices.fuel) * stepMultiplier * 100) / 100, maxPriceFuel);
-                        gradualUpdated = true;
-                    }
-                }
-                if (currentPrices.crude_oil && autoprice.crude) {
-                    var currentDiffCrude = calculatePriceDiffPercent(newPrices.crude_oil || currentPrices.crude_oil, autoprice.crude);
-                    if (currentDiffCrude < targetPercent) {
-                        var maxPriceCrude = Math.round(autoprice.crude * (1 + targetPercent / 100) * 100) / 100;
-                        newPrices.crude_oil = Math.min(Math.round((newPrices.crude_oil || currentPrices.crude_oil) * stepMultiplier * 100) / 100, maxPriceCrude);
-                        gradualUpdated = true;
-                    }
-                }
-
-                if (gradualUpdated) {
-                    setLastGradualIncrease(vessel.id, now);
-                    needsUpdate = true;
-                }
-            }
-        }
-
-        // Max Guards on Pirate Routes
-        if (settings.maxGuardsOnPirateRoutes) {
-            var hijackingRisk = getVesselHijackingRisk(vessel);
-            if (hijackingRisk > 0 && newGuards < 10) {
-                newGuards = 10;
-                needsUpdate = true;
-            }
-        }
-
-        if (needsUpdate) {
-            if (vessel.status === 'port') {
-                // Ship in port - apply directly via API
-                log(vessel.name + ": Smuggler's Eye applying changes directly");
-                await updateRouteData(vessel.id, vessel.route_speed, newGuards, newPrices, currentPrices);
-            } else {
-                // Ship enroute - save to pending settings for next departure
-                log(vessel.name + ": Smuggler's Eye saving pending changes (enroute)");
-                savePendingRouteSettings(vessel.id, {
-                    name: vessel.name,
-                    speed: vessel.route_speed,
-                    guards: newGuards,
-                    prices: newPrices
-                });
-            }
-        }
-    }
-
-    async function runSmugglersEye(manual) {
-        var settings = getSettings();
-        if (!manual && !settings.smugglersEyeEnabled) return { updated: 0, pending: 0 };
-
-        log("Running Smuggler's Eye...");
-
-        var vessels = await fetchVesselData();
-        if (!vessels || vessels.length === 0) return { updated: 0, pending: 0 };
-
-        var updated = 0;
-        var pending = 0;
-
-        for (var i = 0; i < vessels.length; i++) {
-            var vessel = vessels[i];
-            if (vessel.is_parked) continue;
-            if (!vessel.route_destination) continue;
-
-            await applySmugglersEyeToVessel(vessel);
-
-            if (vessel.status === 'port') {
-                updated++;
-            } else {
-                pending++;
-            }
-
-            await new Promise(function(r) { setTimeout(r, 200); });
-        }
-
-        if (updated > 0 || pending > 0) {
-            log("Smuggler's Eye: " + updated + ' direct, ' + pending + ' pending');
-        }
-
-        return { updated: updated, pending: pending };
-    }
-
-    // ============================================
-    // AUTO DRYDOCK LOGIC
-    // ============================================
-    var autoDrydockRunning = false;
-
-    async function runAutoDrydock(manual) {
-        if (autoDrydockRunning) {
-            log('Auto drydock already running');
-            return;
-        }
-
-        var settings = getSettings();
-        if (!manual && !settings.autoDrydockEnabled) return;
-
-        autoDrydockRunning = true;
-
-        try {
-            var vessels = await fetchVesselData();
-            if (!vessels || vessels.length === 0) {
-                if (manual) notify('No vessels found', 'error');
-                return;
-            }
-
-            var threshold = settings.autoDrydockThreshold;
-
-            // Filter: below threshold, not already in drydock or going to drydock
-            var needsDrydock = vessels.filter(function(v) {
-                var dominated = v.hours_until_check <= threshold;
-                var notInDrydock = v.status !== 'drydock';
-                var notGoingToDrydock = !v.next_route_is_maintenance && v.route_dry_operation !== 1;
-                return dominated && notInDrydock && notGoingToDrydock;
-            });
-
-            log('Drydock check: ' + vessels.length + ' total, ' + needsDrydock.length + ' need drydock (threshold: ' + threshold + 'h)');
-
-            if (needsDrydock.length === 0) {
-                if (manual) notify('No vessels need drydock', 'info', 'drydock');
-                return;
-            }
-
-            log(needsDrydock.length + ' vessel(s) need drydock');
-
-            var userData = await fetchUserData();
-            if (!userData || !userData.user) {
-                if (manual) notify('Could not fetch user data', 'error', 'drydock');
-                return;
-            }
-
-            var cash = userData.user.cash;
-            var minCash = settings.autoDrydockMinCash;
-            var vesselIds = needsDrydock.map(function(v) { return v.id; });
-
-            var costSpeedValue = settings.autoDrydockSpeed === 'maximum' ? 'maximum' : 'minimum';
-
-            var costData = await getMaintenanceCost(vesselIds, costSpeedValue, settings.autoDrydockType);
-            if (!costData) {
-                if (manual) notify('Could not get maintenance cost', 'error', 'drydock');
-                return;
-            }
-
-            var totalCost = 0;
-            if (costData.vessels) {
-                for (var i = 0; i < costData.vessels.length; i++) {
-                    var vCost = costData.vessels[i];
-                    totalCost += (settings.autoDrydockType === 'major' ? vCost.major_cost : vCost.minor_cost) || 0;
-                }
-            }
-
-            var cashAfter = cash - totalCost;
-            if (cashAfter < minCash) {
-                log('Insufficient funds: $' + cash + ' - $' + totalCost + ' = $' + cashAfter + ' < min $' + minCash);
-                if (manual) notify('Insufficient funds for drydock', 'error', 'drydock');
-                return;
-            }
-
-            for (var j = 0; j < needsDrydock.length; j++) {
-                var vessel = needsDrydock[j];
-                var hasActiveRoute = (vessel.active_route && vessel.active_route.route_id) || vessel.route_id;
-
-                saveDrydockVessel(vessel.id, {
-                    name: vessel.name,
-                    speed: vessel.route_speed || vessel.max_speed,
-                    guards: vessel.route_guards || 0,
-                    prices: vessel.prices || {},
-                    hoursAtDrydock: vessel.hours_until_check || 0,
-                    routeId: vessel.active_route ? vessel.active_route.route_id : null,
-                    originPort: vessel.route_origin || vessel.current_port_code,
-                    destinationPort: vessel.route_destination,
-                    status: hasActiveRoute ? 'pre_drydock' : 'bug_use'
-                });
-            }
-
-            var speedValue = settings.autoDrydockSpeed === 'maximum' ? 'maximum' : 'minimum';
-
-            var result = await sendToDrydock(vesselIds, speedValue, settings.autoDrydockType);
-
-            if (result) {
-                var vesselNames = needsDrydock.map(function(v) { return v.name; }).join(', ');
-                log('Sent ' + needsDrydock.length + ' vessel(s) to drydock: ' + vesselNames);
-                notify('Sent ' + needsDrydock.length + ' vessel(s) to drydock', 'success', 'drydock');
-            }
-
-        } catch (e) {
-            log('Auto drydock error: ' + e.message, 'error');
-            if (manual) notify('Error: ' + e.message, 'error', 'drydock');
-        } finally {
-            autoDrydockRunning = false;
         }
     }
 
@@ -2478,182 +1699,214 @@
             var totalFuelUsed = 0;
             var totalCO2Used = 0;
             var totalIncome = 0;
-            var recentDepartures = [];
             var errors = [];
             var skipped = [];
-            var round = 0;
 
-            // Batch tracking for notifications (reset after each batch of 10)
+            // Batch tracking for notifications
             var batchCount = 0;
             var batchFuel = 0;
             var batchCO2 = 0;
             var batchIncome = 0;
 
-            // Keep processing until no more vessels are ready
-            while (true) {
-                round++;
-                log('Auto-depart round ' + round);
+            // Fetch initial data
+            var vessels = await fetchVesselData();
+            var bunker = await getBunkerData();
+            var prices = await fetchPricesAPI();
 
-                var vessels = await fetchVesselData();
-                var bunker = await getBunkerData();
-                var prices = await fetchPricesAPI();
+            if (!vessels || !bunker || !prices) {
+                log('Missing data for auto-depart');
+                if (manual) notify('Failed to fetch data', 'error');
+                autoDepartRunning = false;
+                return { departed: 0 };
+            }
 
-                if (!vessels || !bunker || !prices) {
-                    log('Missing data for auto-depart');
-                    if (manual && departedCount === 0) notify('Failed to fetch data', 'error');
-                    break;
+            // Filter ready vessels
+            var readyVessels = vessels.filter(function(v) {
+                return v.status === 'port' && !v.is_parked && v.route_destination;
+            });
+
+            if (readyVessels.length === 0) {
+                log('No vessels ready to depart');
+                if (manual) notify('No vessels ready to depart', 'info');
+                autoDepartRunning = false;
+                return { departed: 0 };
+            }
+
+            log('Found ' + readyVessels.length + ' vessels ready to depart');
+
+            // Sort by fuel requirement (smallest first = more vessels can depart)
+            readyVessels.sort(function(a, b) {
+                return getVesselFuelRequired(a) - getVesselFuelRequired(b);
+            });
+
+            // Check price thresholds once
+            var canBuyFuel = false;
+            var canBuyCO2 = false;
+
+            if (settings.fuelMode !== 'off') {
+                if (prices.fuelPrice <= settings.fuelPriceThreshold) {
+                    canBuyFuel = true;
+                } else if (settings.fuelMode === 'intelligent' && prices.fuelPrice <= settings.fuelIntelligentMaxPrice) {
+                    canBuyFuel = true;
                 }
+            }
 
-                var readyVessels = vessels.filter(function(v) {
-                    return v.status === 'port' && !v.is_parked && v.route_destination;
-                });
-
-                if (readyVessels.length === 0) {
-                    log('No more vessels ready to depart (round ' + round + ')');
-                    break;
+            if (settings.co2Mode !== 'off') {
+                if (prices.co2Price <= settings.co2PriceThreshold) {
+                    canBuyCO2 = true;
+                } else if (settings.co2Mode === 'intelligent' && prices.co2Price <= settings.co2IntelligentMaxPrice) {
+                    canBuyCO2 = true;
                 }
+            }
 
-                log('Found ' + readyVessels.length + ' vessels ready to depart');
+            log('Price check: Fuel $' + prices.fuelPrice + ' (can buy: ' + canBuyFuel + '), CO2 $' + prices.co2Price + ' (can buy: ' + canBuyCO2 + ')');
 
-                readyVessels.sort(function(a, b) {
-                    return getVesselFuelRequired(b) - getVesselFuelRequired(a);
-                });
+            // Process each vessel individually
+            for (var i = 0; i < readyVessels.length; i++) {
+                var vessel = readyVessels[i];
+                var fuelNeeded = getVesselFuelRequired(vessel);
+                var co2Needed = calculateCO2Consumption(vessel, vessel.route_distance);
 
-                var roundDeparted = 0;
+                // Min utilization check
+                if (settings.minUtilizationEnabled && vessel.route_destination && vessel.route_origin) {
+                    var actualDestination = vessel.current_port_code === vessel.route_origin
+                        ? vessel.route_destination
+                        : vessel.route_origin;
+                    var portDemand = await fetchPortDemandAPI(actualDestination);
+                    var utilization = calculatePortUtilization(vessel, portDemand);
 
-                for (var i = 0; i < readyVessels.length; i++) {
-                    var vessel = readyVessels[i];
-                    var fuelNeeded = getVesselFuelRequired(vessel);
-                    var co2Needed = calculateCO2Consumption(vessel, vessel.route_distance);
+                    if (utilization < settings.minUtilizationThreshold) {
+                        var utilMsg = vessel.name + ': Low utilization (' + utilization.toFixed(0) + '% < ' + settings.minUtilizationThreshold + '%)';
+                        log(utilMsg);
+                        skipped.push(utilMsg);
 
-                    // Fresh bunker BEFORE each ship (prices only change at :00 and :30)
-                    bunker = await getBunkerData();
-
-                    if (!bunker) {
-                        errors.push(vessel.name + ': Failed to get bunker data');
+                        if (settings.minUtilizationNotifyIngame) {
+                            try {
+                                var toastStore = getToastStore();
+                                if (toastStore && toastStore.warning) {
+                                    toastStore.warning(vessel.name + ': Skipped - ' + utilization.toFixed(0) + '% util');
+                                }
+                            } catch (e) {
+                                log('Toast error: ' + e.message);
+                            }
+                        }
                         continue;
                     }
+                }
 
-                    // Pre-depart fuel rebuy
-                    if (bunker.fuel < fuelNeeded) {
-                        var fuelShortfall = fuelNeeded - bunker.fuel;
-                        if (settings.fuelMode !== 'off') {
-                            if (prices.fuelPrice <= settings.fuelPriceThreshold) {
-                                await purchaseFuelAPI(fuelShortfall + 100, prices.fuelPrice);
-                                await new Promise(function(r) { setTimeout(r, 250); });
-                                bunker = await getBunkerData();
-                            } else if (settings.fuelMode === 'intelligent' && prices.fuelPrice <= settings.fuelIntelligentMaxPrice) {
-                                await purchaseFuelAPI(fuelShortfall + 100, prices.fuelPrice);
-                                await new Promise(function(r) { setTimeout(r, 250); });
+                // Refresh bunker before each vessel
+                bunker = await getBunkerData();
+                if (!bunker) {
+                    errors.push(vessel.name + ': Failed to get bunker data');
+                    continue;
+                }
+
+                // STEP 1: Check if we need fuel and buy BEFORE departure
+                if (bunker.fuel < fuelNeeded) {
+                    if (canBuyFuel) {
+                        var fuelShortfall = fuelNeeded - bunker.fuel + 50; // +50 buffer
+                        var fuelSpace = bunker.maxFuel - bunker.fuel;
+                        var availableCash = Math.max(0, bunker.cash - settings.fuelMinCash);
+                        var maxAffordable = Math.floor(availableCash / prices.fuelPrice);
+                        var fuelToBuy = Math.min(fuelShortfall, fuelSpace, maxAffordable);
+
+                        if (fuelToBuy > 0) {
+                            log(vessel.name + ': Buying ' + fuelToBuy.toFixed(0) + 't fuel (need ' + fuelNeeded.toFixed(0) + 't, have ' + bunker.fuel.toFixed(0) + 't)');
+                            var fuelResult = await purchaseFuelAPI(fuelToBuy, prices.fuelPrice);
+                            if (fuelResult.success) {
+                                await new Promise(function(r) { setTimeout(r, 300); });
                                 bunker = await getBunkerData();
                             }
                         }
                     }
 
-                    // Pre-depart CO2 rebuy
-                    if (bunker.co2 < co2Needed) {
-                        var co2Shortfall = co2Needed - bunker.co2;
-                        if (settings.co2Mode !== 'off') {
-                            if (prices.co2Price <= settings.co2PriceThreshold) {
-                                await purchaseCO2API(co2Shortfall + 50, prices.co2Price);
-                                await new Promise(function(r) { setTimeout(r, 250); });
-                                bunker = await getBunkerData();
-                            } else if (settings.co2Mode === 'intelligent' && prices.co2Price <= settings.co2IntelligentMaxPrice) {
-                                await purchaseCO2API(co2Shortfall + 50, prices.co2Price);
-                                await new Promise(function(r) { setTimeout(r, 250); });
-                                bunker = await getBunkerData();
-                            }
-                        }
-                    }
-
-                    // Final check: enough fuel?
+                    // Final fuel check
                     if (bunker.fuel < fuelNeeded) {
-                        var fuelMsg = vessel.name + ': Insufficient fuel (' + bunker.fuel.toFixed(0) + 't < ' + fuelNeeded.toFixed(0) + 't)';
+                        var fuelMsg = vessel.name + ': not_enough_fuel (' + bunker.fuel.toFixed(0) + 't < ' + fuelNeeded.toFixed(0) + 't)';
                         log(fuelMsg);
                         skipped.push(fuelMsg);
                         continue;
                     }
+                }
 
-                    // Final check: enough CO2?
-                    if (bunker.co2 < co2Needed) {
-                        var co2Msg = vessel.name + ': Insufficient CO2 (' + bunker.co2.toFixed(0) + 't < ' + co2Needed.toFixed(0) + 't)';
-                        log(co2Msg);
-                        skipped.push(co2Msg);
-                        continue;
-                    }
+                // STEP 2: Buy CO2 BEFORE departure (CO2 can go negative - no skip!)
+                var co2Deficit = 0;
+                if (bunker.co2 < co2Needed && canBuyCO2) {
+                    var co2Shortfall = co2Needed - bunker.co2;
+                    var co2Space = bunker.maxCO2 - bunker.co2;
+                    var availableCashCO2 = Math.max(0, bunker.cash - settings.co2MinCash);
+                    var maxAffordableCO2 = Math.floor(availableCashCO2 / prices.co2Price);
+                    // Buy what we need, but max what fits in bunker
+                    var co2ToBuy = Math.min(co2Shortfall, co2Space, maxAffordableCO2);
 
-                    var result = await departVesselAPI(vessel.id, vessel.route_speed, vessel.route_guards);
-
-                    if (result.success) {
-                        departedCount++;
-                        roundDeparted++;
-                        totalFuelUsed += result.fuelUsed;
-                        totalCO2Used += result.co2Used;
-                        totalIncome += result.income;
-
-                        // Track batch-specific totals
-                        batchCount++;
-                        batchFuel += result.fuelUsed;
-                        batchCO2 += result.co2Used;
-                        batchIncome += result.income;
-
-                        // Collect departure info for batch notification
-                        recentDepartures.push({
-                            name: vessel.name,
-                            income: result.income,
-                            harborFee: result.harborFee,
-                            fuelUsed: result.fuelUsed
-                        });
-
-                        log(vessel.name + ': Departed');
-
-                        // Every 10 ships: show batch summary, refresh harbor
-                        if (batchCount >= 10) {
-                            var batchMsg = 'Departed ' + batchCount + ' | +$' + formatNumber(batchIncome) +
-                                ' | Fuel: ' + batchFuel.toFixed(0) + 't | CO2: ' + batchCO2.toFixed(0) + 't';
-                            notify(batchMsg, 'success', 'depart');
-                            refreshGameData();
-                            // Reset batch counters
-                            batchCount = 0;
-                            batchFuel = 0;
-                            batchCO2 = 0;
-                            batchIncome = 0;
+                    if (co2ToBuy > 0) {
+                        log(vessel.name + ': Buying ' + co2ToBuy.toFixed(0) + 't CO2 (need ' + co2Needed.toFixed(0) + 't, have ' + bunker.co2.toFixed(0) + 't, max ' + bunker.maxCO2.toFixed(0) + 't)');
+                        var co2Result = await purchaseCO2API(co2ToBuy, prices.co2Price);
+                        if (co2Result.success) {
+                            await new Promise(function(r) { setTimeout(r, 300); });
+                            bunker = await getBunkerData();
                         }
-                    } else {
-                        var errMsg = vessel.name + ': ' + result.error;
-                        log(errMsg, 'error');
-                        errors.push(errMsg);
                     }
 
-                    await new Promise(function(r) { setTimeout(r, 500); });
+                    // Calculate deficit: what exceeds bunker capacity (will go negative after depart)
+                    if (co2Needed > bunker.maxCO2) {
+                        co2Deficit = co2Needed - bunker.maxCO2;
+                        log(vessel.name + ': CO2 deficit ' + co2Deficit.toFixed(0) + 't (need ' + co2Needed.toFixed(0) + 't > max ' + bunker.maxCO2.toFixed(0) + 't)');
+                    }
+                }
+                // NO SKIP FOR CO2 - game allows negative CO2!
+
+                // STEP 3: Depart the vessel
+                var result = await departVesselAPI(vessel.id, vessel.route_speed, vessel.route_guards);
+
+                if (result.success) {
+                    departedCount++;
+                    totalFuelUsed += result.fuelUsed;
+                    totalCO2Used += result.co2Used;
+                    totalIncome += result.income;
+
+                    batchCount++;
+                    batchFuel += result.fuelUsed;
+                    batchCO2 += result.co2Used;
+                    batchIncome += result.income;
+
+                    log(vessel.name + ': Departed');
+
+                    // STEP 4: Buy back CO2 deficit immediately after departure
+                    if (co2Deficit > 0 && canBuyCO2) {
+                        log(vessel.name + ': Buying back ' + co2Deficit.toFixed(0) + 't CO2 deficit');
+                        await purchaseCO2API(co2Deficit, prices.co2Price);
+                        await new Promise(function(r) { setTimeout(r, 300); });
+                    }
+
+                    // Every 10 ships: show batch summary
+                    if (batchCount >= 10) {
+                        var batchMsg = 'Departed ' + batchCount + ' | +$' + formatNumber(batchIncome) +
+                            ' | Fuel: ' + batchFuel.toFixed(0) + 't | CO2: ' + batchCO2.toFixed(0) + 't';
+                        notify(batchMsg, 'success', 'depart');
+                        refreshGameData();
+                        batchCount = 0;
+                        batchFuel = 0;
+                        batchCO2 = 0;
+                        batchIncome = 0;
+                    }
+                } else {
+                    var errMsg = vessel.name + ': ' + result.error;
+                    log(errMsg, 'error');
+                    errors.push(errMsg);
                 }
 
-                log('Round ' + round + ' complete: ' + roundDeparted + ' departed');
-
-                // If no vessels departed this round, stop (prevents infinite loop on errors)
-                if (roundDeparted === 0) {
-                    log('No vessels departed this round, stopping');
-                    break;
-                }
-
-                // Small delay before next round to let new ships arrive/register
-                await new Promise(function(r) { setTimeout(r, 1000); });
+                await new Promise(function(r) { setTimeout(r, 400); });
             }
 
-            // Post-depart: Avoid negative CO2 (ONLY for Intelligent Rebuy!)
-            // Basic threshold fills to 100% anyway in the "Final Fill" section below
-            // Uses 100t buffer to prevent rounding/calculation errors causing negative values
+            // Post-depart: Avoid negative CO2 (Intelligent mode only)
             var CO2_BUFFER = 100;
             if (settings.avoidNegativeCO2 && departedCount > 0 && settings.co2Mode === 'intelligent') {
                 bunker = await getBunkerData();
-                prices = await fetchPricesAPI();
-                // Only act if CO2 < buffer AND price > basic threshold (otherwise Final Fill handles it)
-                if (bunker && prices && bunker.co2 < CO2_BUFFER && prices.co2Price > settings.co2PriceThreshold) {
-                    // Check intelligent max threshold
+                if (bunker && bunker.co2 < CO2_BUFFER && prices.co2Price > settings.co2PriceThreshold) {
                     if (prices.co2Price <= settings.co2IntelligentMaxPrice) {
-                        // Refill to 100t buffer (not full!)
                         var refillAmount = Math.ceil(CO2_BUFFER - bunker.co2);
-                        log('CO2 buffer refill: ' + bunker.co2.toFixed(1) + 't -> ' + CO2_BUFFER + 't (buying ' + refillAmount + 't)');
+                        log('CO2 buffer refill: ' + bunker.co2.toFixed(1) + 't -> ' + CO2_BUFFER + 't');
                         await purchaseCO2API(refillAmount, prices.co2Price);
                     }
                 }
@@ -2662,9 +1915,8 @@
             // Post-depart: Final Fill if price <= basic threshold
             if (departedCount > 0) {
                 bunker = await getBunkerData();
-                prices = await fetchPricesAPI();
 
-                if (bunker && prices) {
+                if (bunker) {
                     if (settings.fuelMode !== 'off' && prices.fuelPrice <= settings.fuelPriceThreshold) {
                         var fuelToFill = bunker.maxFuel - bunker.fuel;
                         if (fuelToFill > 0) {
@@ -2690,7 +1942,7 @@
                 }
             }
 
-            // Send notification for remaining ships in partial batch (less than 10)
+            // Send notification for remaining batch
             if (batchCount > 0) {
                 var remainderMsg = 'Departed ' + batchCount + ' | +$' + formatNumber(batchIncome) +
                     ' | Fuel: ' + batchFuel.toFixed(0) + 't | CO2: ' + batchCO2.toFixed(0) + 't';
@@ -2711,6 +1963,7 @@
                 }
             }
 
+            log('Auto-depart complete: ' + departedCount + ' departed, ' + skipped.length + ' skipped');
             return { departed: departedCount, fuelUsed: totalFuelUsed, co2Used: totalCO2Used, income: totalIncome };
 
         } catch (e) {
@@ -2886,6 +2139,31 @@
             }
             el.classList.remove('changed');
         }
+
+        // Update percentage cell for price changes - show new % as pending indicator
+        if (changeKey.indexOf('price_') === 0) {
+            // Get auto price dynamically from cache (not from data attribute which may be stale)
+            var keyType = changeKey.replace('price_', '');
+            if (keyType === 'crude') keyType = 'crude_oil';
+            var vessel = rsCachedVessels ? rsCachedVessels.find(function(v) { return v.id === parseInt(vesselId); }) : null;
+            var autoPrice = vessel ? rsGetAutoPrice(vessel, keyType) : null;
+            var newPrice = parseFloat(value);
+            var pctCell = document.querySelector('[data-pct-for="' + vesselId + '-' + changeKey + '"]');
+            if (pctCell) {
+                // Remove existing pending indicator
+                var existingIndicator = pctCell.querySelector('.pending-indicator');
+                if (existingIndicator) existingIndicator.remove();
+
+                if (isChanged && !isNaN(newPrice) && autoPrice !== null) {
+                    var newPct = rsCalcPctDiff(newPrice, autoPrice);
+                    var indicator = document.createElement('span');
+                    indicator.className = 'pending-indicator';
+                    indicator.textContent = '->' + newPct;
+                    pctCell.appendChild(indicator);
+                }
+            }
+        }
+
         rsUpdateSaveButton();
     }
 
@@ -2983,13 +2261,13 @@
             speedHtml += '<span class="pending-indicator">->' + pending.speed + '</span>';
         }
 
-        var price1Html = '<input type="number" step="0.01" data-vessel-id="' + v.id + '" data-change-key="' + key1 + '" data-original="' + (price1 !== null ? price1 : '') + '" value="' + (price1 !== null ? price1 : '') + '" placeholder="-">';
+        var price1Html = '<input type="number" step="0.01" data-vessel-id="' + v.id + '" data-change-key="' + key1 + '" data-auto="' + (auto1 !== null ? auto1 : '') + '" data-original="' + (price1 !== null ? price1 : '') + '" value="' + (price1 !== null ? price1 : '') + '" placeholder="-">';
         var pendingPrice1 = hasPending && pending.prices ? (isCargo ? pending.prices.dry : pending.prices.fuel) : null;
         if (pendingPrice1 !== null && pendingPrice1 !== undefined && pendingPrice1 !== price1) {
             price1Html += '<span class="pending-indicator">->' + pendingPrice1 + '</span>';
         }
 
-        var price2Html = '<input type="number" step="0.01" data-vessel-id="' + v.id + '" data-change-key="' + key2 + '" data-original="' + (price2 !== null ? price2 : '') + '" value="' + (price2 !== null ? price2 : '') + '" placeholder="-">';
+        var price2Html = '<input type="number" step="0.01" data-vessel-id="' + v.id + '" data-change-key="' + key2 + '" data-auto="' + (auto2 !== null ? auto2 : '') + '" data-original="' + (price2 !== null ? price2 : '') + '" value="' + (price2 !== null ? price2 : '') + '" placeholder="-">';
         var pendingPrice2 = hasPending && pending.prices ? (isCargo ? pending.prices.refrigerated : pending.prices.crude_oil) : null;
         if (pendingPrice2 !== null && pendingPrice2 !== undefined && pendingPrice2 !== price2) {
             price2Html += '<span class="pending-indicator">->' + pendingPrice2 + '</span>';
@@ -3006,6 +2284,19 @@
         var pct2Class = pct2 !== '-' && parseFloat(pct2) > 0 ? 'pct-positive' : (pct2 !== '-' && parseFloat(pct2) < 0 ? 'pct-negative' : '');
         var priceAge = rsFormatPriceAge(v.id);
 
+        // Build percentage cell content with pending indicator if applicable
+        var pct1Html = pct1;
+        if (pendingPrice1 !== null && pendingPrice1 !== undefined && pendingPrice1 !== price1 && auto1 !== null) {
+            var pendingPct1 = rsCalcPctDiff(pendingPrice1, auto1);
+            pct1Html += '<span class="pending-indicator">->' + pendingPct1 + '</span>';
+        }
+
+        var pct2Html = pct2;
+        if (pendingPrice2 !== null && pendingPrice2 !== undefined && pendingPrice2 !== price2 && auto2 !== null) {
+            var pendingPct2 = rsCalcPctDiff(pendingPrice2, auto2);
+            pct2Html += '<span class="pending-indicator">->' + pendingPct2 + '</span>';
+        }
+
         return '<tr>' +
             '<td class="status-cell"><span class="status-icon ' + statusInfo.cssClass + '" title="' + statusInfo.tooltip + '">' + statusInfo.code + '</span></td>' +
             '<td class="route-cell">' + route + '</td>' +
@@ -3014,9 +2305,9 @@
             '<td class="num max-speed">' + v.max_speed + '</td>' +
             '<td class="num auto-price">' + autoDisplay + '</td>' +
             '<td class="num">' + price1Html + '</td>' +
-            '<td class="num pct-diff ' + pct1Class + '">' + pct1 + '</td>' +
+            '<td class="num pct-diff ' + pct1Class + '" data-pct-for="' + v.id + '-' + key1 + '">' + pct1Html + '</td>' +
             '<td class="num">' + price2Html + '</td>' +
-            '<td class="num pct-diff ' + pct2Class + '">' + pct2 + '</td>' +
+            '<td class="num pct-diff ' + pct2Class + '" data-pct-for="' + v.id + '-' + key2 + '">' + pct2Html + '</td>' +
             '<td class="num">' + guardsHtml + '</td>' +
             '<td class="num ' + (risk > 0 ? 'warning' : '') + '">' + risk + '%</td>' +
             (showAge ? '<td class="num price-age">' + priceAge + '</td>' : '') +
@@ -3046,7 +2337,6 @@
 
         var label1 = isCargo ? 'Dry' : 'Fuel';
         var label2 = isCargo ? 'Ref' : 'Crude';
-        var settings = getSettings();
 
         var statusTip = 'Status Codes:\nP = In Port\nA = Anchored\nEO = Enroute Outbound\nER = Enroute Return\nTD = To Drydock\nFD = From Drydock\nM = In Maintenance\nMP = Moored at Port\nME = Moored Enroute';
         var headers = '<th class="th-status" data-tip="' + statusTip + '">S</th>' +
@@ -3060,11 +2350,9 @@
             '<th data-tip="' + (isCargo ? 'Refrigerated Price\nper TEU' : 'Crude Oil Price\nper Ton') + '">' + label2 + '</th>' +
             '<th data-tip="Difference from\nAuto Price">%</th>' +
             '<th data-tip="Guards\n0 or 10">G</th>' +
-            '<th data-tip="Hijacking Risk\nPercentage">R%</th>' +
-            (settings.gradual8Percent ? '<th data-tip="Smugglers Eye:\nTime since last price\nincrease (' + (settings.gradualIncreaseInterval || 25) + 'h interval)">Age</th>' : '');
+            '<th data-tip="Hijacking Risk\nPercentage">R%</th>';
 
-        var showAge = settings.gradual8Percent;
-        var rows = filtered.map(function(v) { return rsRenderRow(v, isCargo, showAge); }).join('');
+        var rows = filtered.map(function(v) { return rsRenderRow(v, isCargo, false); }).join('');
 
         wrapper.innerHTML = '<table class="rs-table"><thead><tr>' + headers + '</tr></thead><tbody>' + rows + '</tbody></table>';
 
@@ -3094,7 +2382,8 @@
             '<span class="rs-status"></span>' +
             '<button class="rs-save-btn">Save</button>' +
         '</div>' +
-        '<div class="rs-table-wrapper"><div class="rs-loading">Loading...</div></div>';
+        '<div class="rs-table-wrapper"><div class="rs-loading">Loading...</div></div>' +
+        '<div class="rs-footer"><a href="https://discord.gg/2wvtPz6k89" target="_blank">Join the RebelShip Discord Community</a></div>';
 
         container.querySelectorAll('.rs-subtab').forEach(function(btn) {
             btn.addEventListener('click', function() {
@@ -3157,6 +2446,9 @@
         // Reset Settings tab styling
         rsCloseSettingsView();
 
+        // Restore original viewport (disable zoom)
+        rsRestoreViewport();
+
         // Remove settings container
         var settingsContainer = document.getElementById('rs-settings-container');
         if (settingsContainer) settingsContainer.remove();
@@ -3166,9 +2458,35 @@
         if (hideStyle) hideStyle.remove();
     }
 
-    function rsInjectSettingsContent() {
+    var rsOriginalViewport = null;
+
+    function rsEnableZoom() {
+        var viewport = document.querySelector('meta[name="viewport"]');
+        if (viewport) {
+            rsOriginalViewport = viewport.getAttribute('content');
+            viewport.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes');
+        }
+    }
+
+    function rsRestoreViewport() {
+        if (rsOriginalViewport !== null) {
+            var viewport = document.querySelector('meta[name="viewport"]');
+            if (viewport) {
+                viewport.setAttribute('content', rsOriginalViewport);
+            }
+            rsOriginalViewport = null;
+        }
+    }
+
+    async function rsInjectSettingsContent() {
         var centralContainer = document.getElementById('central-container');
         if (!centralContainer) return;
+
+        // Enable pinch-zoom on mobile
+        rsEnableZoom();
+
+        // Refresh storage from DB to get latest pending settings from other scripts
+        await loadStorage();
 
         // Update title only, keep navigation intact
         var modalStore = getModalStore();
@@ -3176,16 +2494,21 @@
             modalStore.modalSettings.title = 'Route Settings';
         }
 
-        // Add CSS to hide original content and depart button, extend height
+        // Add CSS to hide original content and depart button
         var hideButtonStyle = document.createElement('style');
         hideButtonStyle.id = 'rs-hide-depart-btn';
-        hideButtonStyle.textContent = '.control-btn.dark-green{display:none!important}#central-container>:not(#rs-settings-container):not(style){display:none!important}';
+        hideButtonStyle.textContent = '#central-container>:not(#rs-settings-container):not(style){display:none!important}.control-btn.dark-green{display:none!important}';
         document.head.appendChild(hideButtonStyle);
 
         // Create overlay container instead of replacing innerHTML
         var settingsContainer = document.createElement('div');
         settingsContainer.id = 'rs-settings-container';
         centralContainer.appendChild(settingsContainer);
+
+        // Prevent touch events from propagating to modal swipe handler
+        settingsContainer.addEventListener('touchstart', function(e) { e.stopPropagation(); }, { passive: true });
+        settingsContainer.addEventListener('touchmove', function(e) { e.stopPropagation(); }, { passive: true });
+        settingsContainer.addEventListener('touchend', function(e) { e.stopPropagation(); }, { passive: true });
 
         // Add click handlers to other tabs to close Settings view
         var bottomNav = document.getElementById('bottom-nav');
@@ -3210,7 +2533,7 @@
         modalCloseObserver.observe(document.body, { childList: true, subtree: true });
 
         var style = document.createElement('style');
-        style.textContent = '#rs-settings-container{width:100%;height:100%;display:flex;flex-direction:column;background:#f5f5f5;color:#01125d;font-family:Lato,sans-serif;font-size:11px}.rs-header{display:flex;align-items:center;gap:4px;padding:4px 6px;background:#e8e8e8;border-bottom:1px solid #ccc}.rs-subtab{padding:3px 8px;background:#fff;color:#01125d;border:1px solid #ccc;border-radius:3px;cursor:pointer;font-size:10px;font-weight:600}.rs-subtab:hover{background:#ddd}.rs-subtab.active{background:#0db8f4;color:#fff;border-color:#0db8f4}.rs-save-btn{margin-left:auto;padding:3px 10px;background:#22c55e;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:10px;font-weight:600;opacity:0.4}.rs-save-btn.has-changes{opacity:1}.rs-status{font-size:9px;color:#666;margin-left:6px}.rs-table-wrapper{flex:1;overflow:auto;padding-bottom:50px}.rs-table{width:100%;border-collapse:collapse;font-size:10px}.rs-table thead{position:sticky;top:0;background:#e0e0e0;z-index:1}.rs-table th{padding:1px;text-align:center;font-weight:600;color:#01125d;border-bottom:1px solid #ccc;white-space:nowrap;background:#e0e0e0;font-size:10px}.rs-table td{padding:1px;border-bottom:1px solid #ddd;vertical-align:middle;text-align:center}.rs-table td.route-cell,.rs-table td.name-cell{text-align:left}.rs-table td.max-speed,.rs-table td.auto-price,.rs-table td.pct-diff{color:#666;font-size:9px}.rs-table tr:hover{background:#e8f4fc}.rs-table .warning{color:#d97706}.rs-table .status-cell{width:22px;text-align:center;padding:1px}.rs-table .status-icon{display:inline-block;height:14px;line-height:14px;text-align:center;font-size:8px;font-weight:700;border-radius:2px;padding:0 2px}.rs-table .status-icon.status-e{background:#3b82f6;color:#fff}.rs-table .status-icon.status-p{background:#22c55e;color:#fff}.rs-table .status-icon.status-a{background:#f59e0b;color:#fff}.rs-table .status-icon.status-mp,.rs-table .status-icon.status-me{background:#8b5cf6;color:#fff}.rs-table .status-icon.status-m{background:#ef4444;color:#fff}.rs-table .status-icon.status-d{background:#6366f1;color:#fff}.rs-table .status-icon.status-td{background:#f97316;color:#fff}.rs-table .status-icon.status-fd{background:#14b8a6;color:#fff}.rs-table .status-icon.status-eo{background:#1d4ed8;color:#fff}.rs-table .status-icon.status-er{background:#0891b2;color:#fff}.rs-table .status-icon.status-bu{background:#dc2626;color:#fff}.rs-table .route-cell{font-size:9px;white-space:nowrap}.rs-table .name-cell{max-width:60px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;cursor:pointer}.rs-table .name-cell:hover{text-decoration:underline}.rs-table input[type="number"]{width:32px;padding:1px 2px;margin:0;background:#fff;border:1px solid #ccc;border-radius:2px;color:#01125d;font-size:10px;text-align:right;box-sizing:border-box;-moz-appearance:textfield}.rs-table input.speed-input{width:24px}.rs-table .pct-positive{color:#22c55e}.rs-table .pct-negative{color:#ef4444}.rs-table input[type="number"]::-webkit-outer-spin-button,.rs-table input[type="number"]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}.rs-table input[type="number"]:focus{outline:none;border-color:#0db8f4}.rs-table input.changed{background:#fef3c7;border-color:#f59e0b}.rs-table select{padding:1px 2px;background:#fff;border:1px solid #ccc;border-radius:2px;color:#01125d;font-size:10px;cursor:pointer}.rs-table select:focus{outline:none;border-color:#0db8f4}.rs-table select.changed{background:#fef3c7;border-color:#f59e0b}.rs-loading,.rs-error,.rs-no-data{padding:20px;text-align:center;color:#666}.rs-table .pending-indicator{display:inline;font-size:9px;color:#8b5cf6;font-weight:600;margin-left:2px}.rs-table th[data-tip]{position:relative;cursor:help}.rs-table th[data-tip]:hover::after{content:attr(data-tip);position:absolute;top:100%;left:50%;transform:translateX(-50%);background:#333;color:#fff;padding:6px 10px;border-radius:4px;font-size:10px;font-weight:400;white-space:pre-line;z-index:100;min-width:100px;max-width:180px;text-align:left;box-shadow:0 2px 8px rgba(0,0,0,0.3);margin-top:4px}.rs-table th[data-tip]:nth-child(-n+3):hover::after{left:0;transform:translateX(0)}.rs-table th[data-tip]:nth-last-child(-n+5):hover::after{left:auto;right:0;transform:translateX(0)}';
+        style.textContent = '#rs-settings-container{width:100%;height:100%;display:flex;flex-direction:column;background:#f5f5f5;color:#01125d;font-family:Lato,sans-serif;font-size:11px}.rs-header{display:flex;align-items:center;gap:4px;padding:4px 6px;background:#e8e8e8;border-bottom:1px solid #ccc}.rs-subtab{padding:3px 8px;background:#fff;color:#01125d;border:1px solid #ccc;border-radius:3px;cursor:pointer;font-size:10px;font-weight:600}.rs-subtab:hover{background:#ddd}.rs-subtab.active{background:#0db8f4;color:#fff;border-color:#0db8f4}.rs-save-btn{margin-left:auto;padding:3px 10px;background:#22c55e;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:10px;font-weight:600;opacity:0.4}.rs-save-btn.has-changes{opacity:1}.rs-status{font-size:9px;color:#666;margin-left:6px}.rs-table-wrapper{flex:1;overflow:auto}.rs-table{width:100%;border-collapse:collapse;font-size:10px}.rs-table thead{position:sticky;top:0;background:#e0e0e0;z-index:1}.rs-table th{padding:1px;text-align:center;font-weight:600;color:#01125d;border-bottom:1px solid #ccc;white-space:nowrap;background:#e0e0e0;font-size:10px}.rs-table td{padding:1px;border-bottom:1px solid #ddd;vertical-align:middle;text-align:center}.rs-table td.route-cell,.rs-table td.name-cell{text-align:left}.rs-table td.max-speed,.rs-table td.auto-price,.rs-table td.pct-diff{color:#666;font-size:9px}.rs-table tr:hover{background:#e8f4fc}.rs-table .warning{color:#d97706}.rs-table .status-cell{width:22px;text-align:center;padding:1px}.rs-table .status-icon{display:inline-block;height:14px;line-height:14px;text-align:center;font-size:8px;font-weight:700;border-radius:2px;padding:0 2px}.rs-table .status-icon.status-e{background:#3b82f6;color:#fff}.rs-table .status-icon.status-p{background:#22c55e;color:#fff}.rs-table .status-icon.status-a{background:#f59e0b;color:#fff}.rs-table .status-icon.status-mp,.rs-table .status-icon.status-me{background:#8b5cf6;color:#fff}.rs-table .status-icon.status-m{background:#ef4444;color:#fff}.rs-table .status-icon.status-d{background:#6366f1;color:#fff}.rs-table .status-icon.status-td{background:#f97316;color:#fff}.rs-table .status-icon.status-fd{background:#14b8a6;color:#fff}.rs-table .status-icon.status-eo{background:#1d4ed8;color:#fff}.rs-table .status-icon.status-er{background:#0891b2;color:#fff}.rs-table .status-icon.status-bu{background:#dc2626;color:#fff}.rs-table .route-cell{font-size:9px;white-space:nowrap}.rs-table .name-cell{max-width:60px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;cursor:pointer}.rs-table .name-cell:hover{text-decoration:underline}.rs-table input[type="number"]{width:32px;padding:1px 2px;margin:0;background:#fff;border:1px solid #ccc;border-radius:2px;color:#01125d;font-size:10px;text-align:right;box-sizing:border-box;-moz-appearance:textfield}.rs-table input.speed-input{width:24px}.rs-table .pct-positive{color:#22c55e}.rs-table .pct-negative{color:#ef4444}.rs-table input[type="number"]::-webkit-outer-spin-button,.rs-table input[type="number"]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}.rs-table input[type="number"]:focus{outline:none;border-color:#0db8f4}.rs-table input.changed{background:#fef3c7;border-color:#f59e0b}.rs-table select{padding:1px 2px;background:#fff;border:1px solid #ccc;border-radius:2px;color:#01125d;font-size:10px;cursor:pointer}.rs-table select:focus{outline:none;border-color:#0db8f4}.rs-table select.changed{background:#fef3c7;border-color:#f59e0b}.rs-loading,.rs-error,.rs-no-data{padding:20px;text-align:center;color:#666}.rs-table .pending-indicator{display:inline;font-size:9px;color:#8b5cf6;font-weight:600;margin-left:2px}.rs-table th[data-tip]{position:relative;cursor:help}.rs-table th[data-tip]:hover::after{content:attr(data-tip);position:absolute;top:100%;left:50%;transform:translateX(-50%);background:#333;color:#fff;padding:6px 10px;border-radius:4px;font-size:10px;font-weight:400;white-space:pre-line;z-index:100;min-width:100px;max-width:180px;text-align:left;box-shadow:0 2px 8px rgba(0,0,0,0.3);margin-top:4px}.rs-table th[data-tip]:nth-child(-n+3):hover::after{left:0;transform:translateX(0)}.rs-table th[data-tip]:nth-last-child(-n+5):hover::after{left:auto;right:0;transform:translateX(0)}.rs-footer{position:fixed;bottom:73px;left:0;right:0;max-width:460px;margin:0 auto;padding:6px 4px;text-align:center;background:#e8e8e8;border-top:1px solid #ccc;z-index:9999}.rs-footer a{color:#5865F2;font-size:14px;font-weight:700;text-decoration:underline}';
         centralContainer.appendChild(style);
 
         rsRenderSettingsPanel();
@@ -3267,13 +2590,12 @@
             var centralContainer = document.getElementById('central-container');
             if (!centralContainer) return;
 
-            var drydockVessels = getAllDrydockVessels();
             var pendingCount = getPendingRouteSettingsCount();
 
-            var html = '<div style="padding:20px;max-width:900px;margin:0 auto;font-family:Lato,sans-serif;color:#01125d;overflow-y:auto;max-height:80vh;">';
+            var html = '<div style="padding:20px 2px;max-width:900px;margin:0 auto;font-family:Lato,sans-serif;color:#01125d;overflow-y:auto;max-height:80vh;">';
 
             // === FUEL & CO2 SETTINGS (side by side) ===
-            html += '<div style="display:flex;gap:16px;margin-bottom:16px;">';
+            html += '<div style="display:flex;gap:8px;margin-bottom:16px;">';
             // === FUEL SETTINGS ===
             html += '<div style="flex:1;background:#fff;border-radius:8px;padding:16px;border:1px solid #ddd;">';
             html += '<div style="font-weight:700;font-size:16px;margin-bottom:12px;color:#0db8f4;">Fuel Auto-Rebuy</div>';
@@ -3424,102 +2746,29 @@
             html += '<span style="font-size:12px;">System</span></label>';
             html += '</div>';
             html += '</div>';
-            html += '</div>';
-
-            // === SMUGGLER'S EYE SETTINGS ===
-            html += '<div style="background:#fff;border-radius:8px;padding:16px;margin-bottom:16px;border:1px solid #ddd;">';
-            html += '<div style="font-weight:700;font-size:16px;margin-bottom:12px;color:#0db8f4;">Smuggler\'s Eye</div>';
-            html += '<div style="margin-bottom:12px;">';
-            html += '<label style="display:flex;align-items:center;cursor:pointer;">';
-            html += '<input type="checkbox" id="dm-smuggler-enabled"' + (settings.smugglersEyeEnabled ? ' checked' : '') + ' style="width:18px;height:18px;margin-right:10px;accent-color:#0db8f4;">';
-            html += '<span style="font-weight:600;">Enable Smuggler\'s Eye</span></label>';
-            html += '</div>';
-            html += '<div style="margin-bottom:12px;">';
-            html += '<label style="display:flex;align-items:center;cursor:pointer;">';
-            html += '<input type="checkbox" id="dm-instant4"' + (settings.instant4Percent ? ' checked' : '') + ' style="width:18px;height:18px;margin-right:10px;accent-color:#0db8f4;">';
-            html += '<span>4% Instant Markup (raise prices below 4% to 4%)</span></label>';
-            html += '</div>';
-            html += '<div style="margin-bottom:12px;">';
-            html += '<label style="display:flex;align-items:center;cursor:pointer;">';
-            html += '<input type="checkbox" id="dm-gradual8"' + (settings.gradual8Percent ? ' checked' : '') + ' style="width:18px;height:18px;margin-right:10px;accent-color:#0db8f4;">';
-            html += '<span>Gradual Increase</span></label>';
-            html += '</div>';
-            html += '<div style="margin-bottom:12px;display:flex;gap:12px;">';
-            html += '<div style="flex:1;">';
-            html += '<label style="display:block;font-weight:600;margin-bottom:6px;">Step (%)</label>';
-            html += '<input type="number" id="dm-gradual-step" value="' + (settings.gradualIncreaseStep || 1) + '" min="1" max="10" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;">';
-            html += '</div>';
-            html += '<div style="flex:1;">';
-            html += '<label style="display:block;font-weight:600;margin-bottom:6px;">Interval (h)</label>';
-            html += '<input type="number" id="dm-gradual-interval" value="' + (settings.gradualIncreaseInterval || 25) + '" min="1" max="168" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;">';
-            html += '</div>';
-            html += '<div style="flex:1;">';
-            html += '<label style="display:block;font-weight:600;margin-bottom:6px;">Max (%)</label>';
-            html += '<input type="number" id="dm-target-pct" value="' + settings.targetPercent + '" min="1" max="20" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;">';
-            html += '</div>';
-            html += '</div>';
-            html += '<div style="margin-bottom:12px;">';
-            html += '<label style="display:flex;align-items:flex-start;cursor:pointer;">';
-            html += '<input type="checkbox" id="dm-max-guards"' + (settings.maxGuardsOnPirateRoutes ? ' checked' : '') + ' style="width:18px;height:18px;margin-right:10px;margin-top:2px;accent-color:#0db8f4;">';
-            html += '<span>Max Guards on Pirate Routes<br><small style="font-weight:normal;color:#666;">(set 10 guards when hijacking risk > 0)</small></span></label>';
-            html += '</div>';
-            // Smuggler's Eye Notifications
+            // Min Utilization Settings
             html += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid #ddd;">';
+            html += '<div style="margin-bottom:12px;">';
+            html += '<label style="display:flex;align-items:center;cursor:pointer;">';
+            html += '<input type="checkbox" id="dm-min-util-enabled"' + (settings.minUtilizationEnabled ? ' checked' : '') + ' style="width:18px;height:18px;margin-right:10px;accent-color:#0db8f4;">';
+            html += '<span style="font-weight:600;">Min Utilization Check</span></label>';
+            html += '<div style="font-size:12px;color:#666;margin-top:4px;">Skip departure if port demand is below threshold.</div>';
+            html += '</div>';
+            html += '<div style="margin-bottom:12px;">';
+            html += '<label style="display:block;font-weight:600;margin-bottom:4px;font-size:13px;">Min Utilization</label>';
+            html += '<select id="dm-min-util-threshold" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;">';
+            for (var u = 10; u <= 100; u += 10) {
+                html += '<option value="' + u + '"' + (settings.minUtilizationThreshold === u ? ' selected' : '') + '>' + u + '%</option>';
+            }
+            html += '</select>';
+            html += '</div>';
             html += '<div style="font-weight:600;font-size:13px;margin-bottom:8px;">Notifications</div>';
             html += '<div style="display:flex;gap:16px;">';
             html += '<label style="display:flex;align-items:center;cursor:pointer;">';
-            html += '<input type="checkbox" id="dm-smuggler-notify-ingame"' + (settings.smugglersEyeNotifyIngame ? ' checked' : '') + ' style="width:16px;height:16px;margin-right:6px;accent-color:#0db8f4;">';
+            html += '<input type="checkbox" id="dm-min-util-notify-ingame"' + (settings.minUtilizationNotifyIngame ? ' checked' : '') + ' style="width:16px;height:16px;margin-right:6px;accent-color:#0db8f4;">';
             html += '<span style="font-size:12px;">Ingame</span></label>';
             html += '<label style="display:flex;align-items:center;cursor:pointer;">';
-            html += '<input type="checkbox" id="dm-smuggler-notify-system"' + (settings.smugglersEyeNotifySystem ? ' checked' : '') + ' style="width:16px;height:16px;margin-right:6px;accent-color:#0db8f4;">';
-            html += '<span style="font-size:12px;">System</span></label>';
-            html += '</div>';
-            html += '</div>';
-            html += '</div>';
-
-            // === DRYDOCK SETTINGS ===
-            html += '<div style="background:#fff;border-radius:8px;padding:16px;margin-bottom:16px;border:1px solid #ddd;">';
-            html += '<div style="font-weight:700;font-size:16px;margin-bottom:12px;color:#0db8f4;">Auto Drydock</div>';
-            html += '<div style="margin-bottom:12px;">';
-            html += '<label style="display:flex;align-items:center;cursor:pointer;">';
-            html += '<input type="checkbox" id="dm-drydock-enabled"' + (settings.autoDrydockEnabled ? ' checked' : '') + ' style="width:18px;height:18px;margin-right:10px;accent-color:#0db8f4;">';
-            html += '<span style="font-weight:600;">Enable Auto Drydock</span></label>';
-            html += '<div style="font-size:12px;color:#666;margin-top:4px;">Automatically sends vessels to drydock when hours drop below threshold.</div>';
-            html += '</div>';
-            html += '<div style="margin-bottom:12px;">';
-            html += '<label style="display:block;font-weight:600;margin-bottom:6px;">Hours Threshold</label>';
-            html += '<select id="dm-drydock-threshold" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;">';
-            html += '<option value="150"' + (settings.autoDrydockThreshold === 150 ? ' selected' : '') + '>150 hours</option>';
-            html += '<option value="100"' + (settings.autoDrydockThreshold === 100 ? ' selected' : '') + '>100 hours</option>';
-            html += '<option value="75"' + (settings.autoDrydockThreshold === 75 ? ' selected' : '') + '>75 hours</option>';
-            html += '<option value="50"' + (settings.autoDrydockThreshold === 50 ? ' selected' : '') + '>50 hours</option>';
-            html += '<option value="25"' + (settings.autoDrydockThreshold === 25 ? ' selected' : '') + '>25 hours</option>';
-            html += '</select></div>';
-            html += '<div style="margin-bottom:12px;">';
-            html += '<label style="display:block;font-weight:600;margin-bottom:6px;">Maintenance Type</label>';
-            html += '<select id="dm-drydock-type" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;">';
-            html += '<option value="major"' + (settings.autoDrydockType === 'major' ? ' selected' : '') + '>Major (100% antifouling)</option>';
-            html += '<option value="minor"' + (settings.autoDrydockType === 'minor' ? ' selected' : '') + '>Minor (60% antifouling)</option>';
-            html += '</select></div>';
-            html += '<div style="margin-bottom:12px;">';
-            html += '<label style="display:block;font-weight:600;margin-bottom:6px;">Drydock Speed</label>';
-            html += '<select id="dm-drydock-speed" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;">';
-            html += '<option value="minimum"' + (settings.autoDrydockSpeed !== 'maximum' ? ' selected' : '') + '>Minimum (slower, cheaper)</option>';
-            html += '<option value="maximum"' + (settings.autoDrydockSpeed === 'maximum' ? ' selected' : '') + '>Maximum (fast, expensive)</option>';
-            html += '</select></div>';
-            html += '<div style="margin-bottom:12px;">';
-            html += '<label style="display:block;font-weight:600;margin-bottom:6px;">Min Cash Reserve ($)</label>';
-            html += '<input type="number" id="dm-drydock-mincash" value="' + settings.autoDrydockMinCash + '" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;">';
-            html += '</div>';
-            // Drydock Notifications
-            html += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid #ddd;">';
-            html += '<div style="font-weight:600;font-size:13px;margin-bottom:8px;">Notifications</div>';
-            html += '<div style="display:flex;gap:16px;">';
-            html += '<label style="display:flex;align-items:center;cursor:pointer;">';
-            html += '<input type="checkbox" id="dm-drydock-notify-ingame"' + (settings.drydockNotifyIngame ? ' checked' : '') + ' style="width:16px;height:16px;margin-right:6px;accent-color:#0db8f4;">';
-            html += '<span style="font-size:12px;">Ingame</span></label>';
-            html += '<label style="display:flex;align-items:center;cursor:pointer;">';
-            html += '<input type="checkbox" id="dm-drydock-notify-system"' + (settings.drydockNotifySystem ? ' checked' : '') + ' style="width:16px;height:16px;margin-right:6px;accent-color:#0db8f4;">';
+            html += '<input type="checkbox" id="dm-min-util-notify-system"' + (settings.minUtilizationNotifySystem ? ' checked' : '') + ' style="width:16px;height:16px;margin-right:6px;accent-color:#0db8f4;">';
             html += '<span style="font-size:12px;">System</span></label>';
             html += '</div>';
             html += '</div>';
@@ -3529,14 +2778,12 @@
             html += '<div style="background:#f3f4f6;border-radius:8px;padding:12px;margin-bottom:20px;">';
             html += '<div style="font-weight:700;font-size:14px;margin-bottom:8px;">Status</div>';
             html += '<div style="font-size:13px;color:#626b90;">';
-            html += '<div>Drydock Tracking: <strong>' + drydockVessels.length + '</strong> vessel(s)</div>';
             html += '<div>Pending Route Changes: <strong>' + pendingCount + '</strong> vessel(s)</div>';
             html += '</div></div>';
 
             // === BUTTONS ===
             html += '<div style="display:flex;gap:12px;justify-content:space-between;margin-bottom:40px;">';
             html += '<button id="dm-run-depart" style="padding:10px 16px;background:linear-gradient(180deg,#3b82f6,#1d4ed8);border:0;border-radius:6px;color:#fff;cursor:pointer;font-size:13px;">Run Depart</button>';
-            html += '<button id="dm-run-drydock" style="padding:10px 16px;background:linear-gradient(180deg,#8b5cf6,#6d28d9);border:0;border-radius:6px;color:#fff;cursor:pointer;font-size:13px;">Run Drydock</button>';
             html += '<button id="dm-open-route-settings" style="padding:10px 16px;background:linear-gradient(180deg,#0db8f4,#0284c7);border:0;border-radius:6px;color:#fff;cursor:pointer;font-size:13px;">Route Settings</button>';
             html += '<button id="dm-save" style="padding:10px 20px;background:linear-gradient(180deg,#46ff33,#129c00);border:0;border-radius:6px;color:#fff;cursor:pointer;font-size:16px;font-weight:500;">Save</button>';
             html += '</div>';
@@ -3550,14 +2797,6 @@
                 this.textContent = 'Running...';
                 await autoDepartVessels(true);
                 this.textContent = 'Run Depart';
-                this.disabled = false;
-            });
-
-            document.getElementById('dm-run-drydock').addEventListener('click', async function() {
-                this.disabled = true;
-                this.textContent = 'Running...';
-                await runAutoDrydock(true);
-                this.textContent = 'Run Drydock';
                 this.disabled = false;
             });
 
@@ -3621,22 +2860,10 @@
                     autoDepartEnabled: document.getElementById('dm-auto-depart').checked,
                     departNotifyIngame: document.getElementById('dm-depart-notify-ingame').checked,
                     departNotifySystem: document.getElementById('dm-depart-notify-system').checked,
-                    smugglersEyeEnabled: document.getElementById('dm-smuggler-enabled').checked,
-                    instant4Percent: document.getElementById('dm-instant4').checked,
-                    gradual8Percent: document.getElementById('dm-gradual8').checked,
-                    gradualIncreaseStep: parseInt(document.getElementById('dm-gradual-step').value, 10) || 1,
-                    gradualIncreaseInterval: parseInt(document.getElementById('dm-gradual-interval').value, 10) || 25,
-                    targetPercent: parseInt(document.getElementById('dm-target-pct').value, 10) || 8,
-                    maxGuardsOnPirateRoutes: document.getElementById('dm-max-guards').checked,
-                    smugglersEyeNotifyIngame: document.getElementById('dm-smuggler-notify-ingame').checked,
-                    smugglersEyeNotifySystem: document.getElementById('dm-smuggler-notify-system').checked,
-                    autoDrydockEnabled: document.getElementById('dm-drydock-enabled').checked,
-                    autoDrydockThreshold: parseInt(document.getElementById('dm-drydock-threshold').value, 10) || 150,
-                    autoDrydockType: document.getElementById('dm-drydock-type').value || 'major',
-                    autoDrydockSpeed: document.getElementById('dm-drydock-speed').value || 'normal',
-                    autoDrydockMinCash: parseInt(document.getElementById('dm-drydock-mincash').value, 10) || 500000,
-                    drydockNotifyIngame: document.getElementById('dm-drydock-notify-ingame').checked,
-                    drydockNotifySystem: document.getElementById('dm-drydock-notify-system').checked,
+                    minUtilizationEnabled: document.getElementById('dm-min-util-enabled').checked,
+                    minUtilizationThreshold: parseInt(document.getElementById('dm-min-util-threshold').value, 10) || 50,
+                    minUtilizationNotifyIngame: document.getElementById('dm-min-util-notify-ingame').checked,
+                    minUtilizationNotifySystem: document.getElementById('dm-min-util-notify-system').checked,
                     systemNotifications: false
                 };
 
@@ -3644,130 +2871,6 @@
                 notify('Settings saved');
             });
         }, 150);
-    }
-
-    // ============================================
-    // REBELSHIP MENU
-    // ============================================
-    var REBELSHIP_LOGO = '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><path d="M20 21c-1.39 0-2.78-.47-4-1.32-2.44 1.71-5.56 1.71-8 0C6.78 20.53 5.39 21 4 21H2v2h2c1.38 0 2.74-.35 4-.99 2.52 1.29 5.48 1.29 8 0 1.26.65 2.62.99 4 .99h2v-2h-2zM3.95 19H4c1.6 0 3.02-.88 4-2 .98 1.12 2.4 2 4 2s3.02-.88 4-2c.98 1.12 2.4 2 4 2h.05l1.89-6.68c.08-.26.06-.54-.06-.78s-.34-.42-.6-.5L20 10.62V6c0-1.1-.9-2-2-2h-3V1H9v3H6c-1.1 0-2 .9-2 2v4.62l-1.29.42c-.26.08-.48.26-.6.5s-.15.52-.06.78L3.95 19zM6 6h12v3.97L12 8 6 9.97V6z"/></svg>';
-
-    // Wait for messaging icon using MutationObserver
-    function waitForMessagingIcon(callback) {
-        var messagingIcon = document.querySelector('div.messaging.cursor-pointer') || document.querySelector('.messaging');
-        if (messagingIcon) { callback(messagingIcon); return; }
-        var observer = new MutationObserver(function(mutations, obs) {
-            var icon = document.querySelector('div.messaging.cursor-pointer') || document.querySelector('.messaging');
-            if (icon) { obs.disconnect(); callback(icon); }
-        });
-        observer.observe(document.body, { childList: true, subtree: true });
-        setTimeout(function() { observer.disconnect(); }, 5000);
-    }
-
-    function getOrCreateRebelShipMenu(callback) {
-        var existingDropdown = document.getElementById('rebelship-dropdown');
-        if (existingDropdown) { if (callback) callback(existingDropdown); return existingDropdown; }
-
-        if (window._rebelshipMenuCreating) { setTimeout(function() { getOrCreateRebelShipMenu(callback); }, 100); return null; }
-        window._rebelshipMenuCreating = true;
-
-        existingDropdown = document.getElementById('rebelship-dropdown');
-        if (existingDropdown) { window._rebelshipMenuCreating = false; if (callback) callback(existingDropdown); return existingDropdown; }
-
-        waitForMessagingIcon(function(messagingIcon) {
-            var container = document.createElement('div');
-            container.id = 'rebelship-menu';
-            container.style.cssText = 'position:relative;display:inline-block;vertical-align:middle;margin-right:4px !important;z-index:999999;';
-
-            var btn = document.createElement('button');
-            btn.id = 'rebelship-menu-btn';
-            btn.innerHTML = REBELSHIP_LOGO;
-            btn.title = 'RebelShip Menu';
-            btn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:28px;height:28px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:white;border:none;border-radius:6px;cursor:pointer;box-shadow:0 2px 4px rgba(0,0,0,0.2);';
-
-            var dropdown = document.createElement('div');
-            dropdown.id = 'rebelship-dropdown';
-            dropdown.className = 'rebelship-dropdown';
-            dropdown.style.cssText = 'display:none;position:fixed;background:#1f2937;border:1px solid #374151;border-radius:4px;min-width:200px;z-index:999999;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
-
-            container.appendChild(btn);
-            document.body.appendChild(dropdown);
-
-            btn.addEventListener('click', function(e) {
-                e.stopPropagation();
-                if (dropdown.style.display === 'block') {
-                    dropdown.style.display = 'none';
-                } else {
-                    var rect = btn.getBoundingClientRect();
-                    dropdown.style.top = (rect.bottom + 4) + 'px';
-                    dropdown.style.right = (window.innerWidth - rect.right) + 'px';
-                    dropdown.style.display = 'block';
-                }
-            });
-
-            document.addEventListener('click', function(e) {
-                if (!container.contains(e.target) && !dropdown.contains(e.target)) {
-                    dropdown.style.display = 'none';
-                }
-            });
-
-            if (messagingIcon.parentNode) {
-                messagingIcon.parentNode.insertBefore(container, messagingIcon);
-            }
-
-            window._rebelshipMenuCreating = false;
-            if (callback) callback(dropdown);
-        });
-        return null;
-    }
-
-    function addMenuItem(label, onClick, scriptOrder) {
-        function doAddItem(dropdown) {
-            if (dropdown.querySelector('[data-rebelship-item="' + label + '"]')) {
-                return dropdown.querySelector('[data-rebelship-item="' + label + '"]');
-            }
-
-            var item = document.createElement('div');
-            item.dataset.rebelshipItem = label;
-            item.dataset.order = scriptOrder;
-            item.style.cssText = 'position:relative;';
-
-            var itemBtn = document.createElement('div');
-            itemBtn.style.cssText = 'padding:10px 12px;cursor:pointer;color:#fff;font-size:13px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #374151;';
-            itemBtn.innerHTML = '<span>' + label + '</span>';
-
-            itemBtn.addEventListener('mouseenter', function() { itemBtn.style.background = '#374151'; });
-            itemBtn.addEventListener('mouseleave', function() { itemBtn.style.background = 'transparent'; });
-
-            if (onClick) {
-                itemBtn.addEventListener('click', function() {
-                    dropdown.style.display = 'none';
-                    onClick();
-                });
-            }
-
-            item.appendChild(itemBtn);
-
-            var items = dropdown.querySelectorAll('[data-rebelship-item]');
-            var insertBefore = null;
-            for (var i = 0; i < items.length; i++) {
-                var existingOrder = parseInt(items[i].dataset.order, 10);
-                if (scriptOrder < existingOrder) {
-                    insertBefore = items[i];
-                    break;
-                }
-            }
-            if (insertBefore) {
-                dropdown.insertBefore(item, insertBefore);
-            } else {
-                dropdown.appendChild(item);
-            }
-            return item;
-        }
-
-        var dropdown = document.getElementById('rebelship-dropdown');
-        if (dropdown) { return doAddItem(dropdown); }
-        getOrCreateRebelShipMenu(function(dd) { doAddItem(dd); });
-        return null;
     }
 
     // ============================================
@@ -3785,14 +2888,6 @@
         var vessels = await fetchVesselData();
         if (vessels && vessels.length > 0) {
             await handleVesselDataResponse({ data: { user_vessels: vessels } });
-        }
-
-        if (settings.autoDrydockEnabled) {
-            await runAutoDrydock(false);
-        }
-
-        if (settings.smugglersEyeEnabled) {
-            await runSmugglersEye(false);
         }
 
         if (settings.fuelMode !== 'off') {
@@ -3827,8 +2922,12 @@
     // EXPOSE FOR ANDROID BACKGROUND SERVICE
     // ============================================
     window.rebelshipRunDepartManager = async function() {
+        // Ensure storage is loaded (needed when called from background without init)
+        if (!storageCache) {
+            await loadStorage();
+        }
         var settings = getSettings();
-        if (!settings.autoDepartEnabled && !settings.autoDrydockEnabled && settings.fuelMode === 'off' && settings.co2Mode === 'off') {
+        if (!settings.autoDepartEnabled && settings.fuelMode === 'off' && settings.co2Mode === 'off') {
             return { skipped: true, reason: 'all disabled' };
         }
         await periodicCheck();
@@ -3877,13 +2976,14 @@
         log('Menu item added');
     }
 
-    function init() {
+    async function init() {
         try {
-            migrateOldStorage();
+            // Load data from IndexedDB or migrate from localStorage
+            await loadStorage();
+
             requestNotificationPermission();
             initUI();
             rsWatchRoutesModal();
-            startRoutePlannerObserver();
             startUIObserver();
 
             setTimeout(cleanupStalePendingSettings, 3000);
@@ -3929,4 +3029,10 @@
         setTimeout(init, 2000);
     }
 
+    // Register for background job system
+    window.rebelshipBackgroundJobs = window.rebelshipBackgroundJobs || [];
+    window.rebelshipBackgroundJobs.push({
+        name: 'DepartManager',
+        run: async function() { return await window.rebelshipRunDepartManager(); }
+    });
 })();

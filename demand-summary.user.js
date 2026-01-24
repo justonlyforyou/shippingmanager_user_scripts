@@ -1,24 +1,54 @@
 // ==UserScript==
-// @name         Shipping Manager - Demand Summary
+// @name         ShippingManager - Demand Summary
 // @namespace    https://rebelship.org/
 // @description  Shows port demand with vessel capacity allocation overview
-// @version      4.20
+// @version      4.43
 // @author       https://github.com/justonlyforyou/
 // @order        12
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-end
+// @RequireRebelShipMenu true
 // @enabled      false
 // ==/UserScript==
 
-/* global MutationObserver */
+/* global addMenuItem */
 (function() {
     'use strict';
 
-    const SCRIPT_NAME = 'Demand Summary';
-    const STORAGE_KEY = 'rebelship_demand_cache';
+    const SCRIPT_NAME = 'DemandSummary';
+    const STORE_NAME = 'data';
     const COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
     const API_BASE = 'https://shippingmanager.cc/api';
+
+    // ========== REBELSHIPBRIDGE STORAGE ==========
+    async function dbGet(key) {
+        try {
+            var result = await window.RebelShipBridge.storage.get(SCRIPT_NAME, STORE_NAME, key);
+            if (result) {
+                return JSON.parse(result);
+            }
+            return null;
+        } catch (e) {
+            console.error('[' + SCRIPT_NAME + '] dbGet error:', e);
+            return null;
+        }
+    }
+
+    async function dbSet(key, value) {
+        try {
+            await window.RebelShipBridge.storage.set(SCRIPT_NAME, STORE_NAME, key, JSON.stringify(value));
+            return true;
+        } catch (e) {
+            console.error('[' + SCRIPT_NAME + '] dbSet error:', e);
+            return false;
+        }
+    }
+
+    // Get storage key for demand cache
+    function getStorageKey() {
+        return 'demandCache';
+    }
 
     // ========== LOGGING ==========
     function log(msg, level) {
@@ -73,42 +103,52 @@
         }
     }
 
-    // ========== CACHE MANAGEMENT ==========
-    function loadCache() {
+    // ========== CACHE MANAGEMENT (INDEXEDDB) ==========
+    // In-memory cache for sync access (loaded on init)
+    let cachedData = null;
+
+    async function loadCache() {
         try {
-            const saved = localStorage.getItem(STORAGE_KEY);
+            const saved = await dbGet(getStorageKey());
             if (saved) {
-                return JSON.parse(saved);
+                cachedData = saved;
+                return saved;
             }
-        } catch {
-            log('Failed to load cache', 'error');
+        } catch (e) {
+            log('Failed to load cache: ' + e.message, 'error');
         }
         return null;
     }
 
-    function saveCache(data) {
+    // Sync version for functions that can't be async (uses in-memory cache)
+    function loadCacheSync() {
+        return cachedData;
+    }
+
+    async function saveCache(data) {
         try {
             const cacheData = {
                 timestamp: Date.now(),
                 ports: data
             };
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(cacheData));
+            await dbSet(getStorageKey(), cacheData);
+            cachedData = cacheData;
             return true;
-        } catch {
-            log('Failed to save cache', 'error');
+        } catch (e) {
+            log('Failed to save cache: ' + e.message, 'error');
             return false;
         }
     }
 
     function canCollect() {
-        const cache = loadCache();
+        const cache = loadCacheSync();
         if (!cache || !cache.timestamp) return true;
         const elapsed = Date.now() - cache.timestamp;
         return elapsed >= COOLDOWN_MS;
     }
 
     function getTimeUntilNextCollect() {
-        const cache = loadCache();
+        const cache = loadCacheSync();
         if (!cache || !cache.timestamp) return 0;
         const elapsed = Date.now() - cache.timestamp;
         const remaining = COOLDOWN_MS - elapsed;
@@ -137,12 +177,6 @@
     function getRefreshButtonHtml(id) {
         const disabled = !canCollect() || isCollecting ? ' disabled' : '';
         return '<button id="' + id + '" style="margin-top:8px;width:100%;padding:6px 12px;' + getRefreshButtonStyle() + 'border:0;border-radius:4px;color:#fff;font-size:11px;font-weight:500;"' + disabled + '>' + getRefreshButtonText() + '</button>';
-    }
-
-    function getRefreshButtonHtmlSmall(id) {
-        const disabled = !canCollect() || isCollecting ? ' disabled' : '';
-        const style = canCollect() && !isCollecting ? 'background:#129c00;cursor:pointer;' : 'background:#9ca3af;cursor:not-allowed;';
-        return '<button id="' + id + '" style="padding:2px 8px;' + style + 'border:0;border-radius:3px;color:#fff;font-size:10px;"' + disabled + '>' + getRefreshButtonText() + '</button>';
     }
 
     async function refreshAllPorts() {
@@ -253,7 +287,7 @@
     }
 
     function getPortLastUpdated(portCode) {
-        const cache = loadCache();
+        const cache = loadCacheSync();
         if (!cache) return null;
         if (cache.portTimestamps && cache.portTimestamps[portCode]) {
             return cache.portTimestamps[portCode];
@@ -346,126 +380,25 @@
         return result;
     }
 
-    // ========== UI: REBELSHIP MENU ==========
-    const REBELSHIP_LOGO = '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><path d="M20 21c-1.39 0-2.78-.47-4-1.32-2.44 1.71-5.56 1.71-8 0C6.78 20.53 5.39 21 4 21H2v2h2c1.38 0 2.74-.35 4-.99 2.52 1.29 5.48 1.29 8 0 1.26.65 2.62.99 4 .99h2v-2h-2zM3.95 19H4c1.6 0 3.02-.88 4-2 .98 1.12 2.4 2 4 2s3.02-.88 4-2c.98 1.12 2.4 2 4 2h.05l1.89-6.68c.08-.26.06-.54-.06-.78s-.34-.42-.6-.5L20 10.62V6c0-1.1-.9-2-2-2h-3V1H9v3H6c-1.1 0-2 .9-2 2v4.62l-1.29.42c-.26.08-.48.26-.6.5s-.15.52-.06.78L3.95 19zM6 6h12v3.97L12 8 6 9.97V6z"/></svg>';
+    // ========== MOBILE ZOOM ==========
+    let originalViewport = null;
 
-    // Wait for messaging icon using MutationObserver
-    function waitForMessagingIcon(callback) {
-        var messagingIcon = document.querySelector('div.messaging.cursor-pointer') || document.querySelector('.messaging');
-        if (messagingIcon) { callback(messagingIcon); return; }
-        var observer = new MutationObserver(function(mutations, obs) {
-            var icon = document.querySelector('div.messaging.cursor-pointer') || document.querySelector('.messaging');
-            if (icon) { obs.disconnect(); callback(icon); }
-        });
-        observer.observe(document.body, { childList: true, subtree: true });
-        setTimeout(function() { observer.disconnect(); }, 5000);
-    }
-
-    function getOrCreateRebelShipMenu(callback) {
-        var existingDropdown = document.getElementById('rebelship-dropdown');
-        if (existingDropdown) { if (callback) callback(existingDropdown); return existingDropdown; }
-
-        if (window._rebelshipMenuCreating) { setTimeout(function() { getOrCreateRebelShipMenu(callback); }, 100); return null; }
-        window._rebelshipMenuCreating = true;
-
-        existingDropdown = document.getElementById('rebelship-dropdown');
-        if (existingDropdown) { window._rebelshipMenuCreating = false; if (callback) callback(existingDropdown); return existingDropdown; }
-
-        waitForMessagingIcon(function(messagingIcon) {
-            var container = document.createElement('div');
-            container.id = 'rebelship-menu';
-            container.style.cssText = 'position:relative;display:inline-block;vertical-align:middle;margin-right:4px !important;z-index:999999;';
-
-            var btn = document.createElement('button');
-            btn.id = 'rebelship-menu-btn';
-            btn.innerHTML = REBELSHIP_LOGO;
-            btn.title = 'RebelShip Menu';
-            btn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:28px;height:28px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:white;border:none;border-radius:6px;cursor:pointer;box-shadow:0 2px 4px rgba(0,0,0,0.2);';
-
-            var dropdown = document.createElement('div');
-            dropdown.id = 'rebelship-dropdown';
-            dropdown.className = 'rebelship-dropdown';
-            dropdown.style.cssText = 'display:none;position:fixed;background:#1f2937;border:1px solid #374151;border-radius:4px;min-width:200px;z-index:999999;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
-
-            container.appendChild(btn);
-            document.body.appendChild(dropdown);
-
-            btn.addEventListener('click', function(e) {
-                e.stopPropagation();
-                if (dropdown.style.display === 'block') {
-                    dropdown.style.display = 'none';
-                } else {
-                    var rect = btn.getBoundingClientRect();
-                    dropdown.style.top = (rect.bottom + 4) + 'px';
-                    dropdown.style.right = (window.innerWidth - rect.right) + 'px';
-                    dropdown.style.display = 'block';
-                }
-            });
-
-            document.addEventListener('click', function(e) {
-                if (!container.contains(e.target) && !dropdown.contains(e.target)) {
-                    dropdown.style.display = 'none';
-                }
-            });
-
-            if (messagingIcon.parentNode) {
-                messagingIcon.parentNode.insertBefore(container, messagingIcon);
-            }
-
-            window._rebelshipMenuCreating = false;
-            if (callback) callback(dropdown);
-        });
-        return null;
-    }
-
-    function addMenuItem(label, onClick, scriptOrder) {
-        function doAddItem(dropdown) {
-            if (dropdown.querySelector('[data-rebelship-item="' + label + '"]')) {
-                return dropdown.querySelector('[data-rebelship-item="' + label + '"]');
-            }
-
-            var item = document.createElement('div');
-            item.dataset.rebelshipItem = label;
-            item.dataset.order = scriptOrder;
-            item.style.cssText = 'position:relative;';
-
-            var itemBtn = document.createElement('div');
-            itemBtn.style.cssText = 'padding:10px 12px;cursor:pointer;color:#fff;font-size:13px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #374151;';
-            itemBtn.innerHTML = '<span>' + label + '</span>';
-
-            itemBtn.addEventListener('mouseenter', function() { itemBtn.style.background = '#374151'; });
-            itemBtn.addEventListener('mouseleave', function() { itemBtn.style.background = 'transparent'; });
-
-            if (onClick) {
-                itemBtn.addEventListener('click', function() {
-                    dropdown.style.display = 'none';
-                    onClick();
-                });
-            }
-
-            item.appendChild(itemBtn);
-
-            var items = dropdown.querySelectorAll('[data-rebelship-item]');
-            var insertBefore = null;
-            for (var i = 0; i < items.length; i++) {
-                var existingOrder = parseInt(items[i].dataset.order, 10);
-                if (scriptOrder < existingOrder) {
-                    insertBefore = items[i];
-                    break;
-                }
-            }
-            if (insertBefore) {
-                dropdown.insertBefore(item, insertBefore);
-            } else {
-                dropdown.appendChild(item);
-            }
-            return item;
+    function enableMobileZoom() {
+        const viewport = document.querySelector('meta[name="viewport"]');
+        if (viewport) {
+            originalViewport = viewport.getAttribute('content');
+            viewport.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes');
         }
+    }
 
-        var dropdown = document.getElementById('rebelship-dropdown');
-        if (dropdown) { return doAddItem(dropdown); }
-        getOrCreateRebelShipMenu(function(dd) { doAddItem(dd); });
-        return null;
+    function restoreViewport() {
+        if (originalViewport !== null) {
+            const viewport = document.querySelector('meta[name="viewport"]');
+            if (viewport) {
+                viewport.setAttribute('content', originalViewport);
+            }
+            originalViewport = null;
+        }
     }
 
     // ========== MODAL ==========
@@ -476,6 +409,8 @@
     let activeModalContainer = null;
     let savedScrollPosition = 0;
     let pendingReturn = false;
+    let isDemandModalOpen = false;
+    let modalListenerAttached = false;
 
     function formatNumber(num) {
         if (num >= 1000000) {
@@ -496,9 +431,66 @@
         return date.toLocaleString();
     }
 
+    // ========== CUSTOM MODAL (Game-style) ==========
+    function injectDemandModalStyles() {
+        if (document.getElementById('demand-modal-styles')) return;
+
+        const style = document.createElement('style');
+        style.id = 'demand-modal-styles';
+        style.textContent = [
+            '@keyframes demand-fade-in{0%{opacity:0}to{opacity:1}}',
+            '@keyframes demand-fade-out{0%{opacity:1}to{opacity:0}}',
+            '@keyframes demand-drop-down{0%{transform:translateY(-10px)}to{transform:translateY(0)}}',
+            '@keyframes demand-push-up{0%{transform:translateY(0)}to{transform:translateY(-10px)}}',
+            '#demand-modal-wrapper{align-items:flex-start;display:flex;height:100vh;justify-content:center;left:0;overflow:hidden;position:absolute;top:0;width:100vw;z-index:9999}',
+            '#demand-modal-wrapper #demand-modal-background{animation:demand-fade-in .15s linear forwards;background-color:rgba(0,0,0,.5);height:100%;left:0;opacity:0;position:absolute;top:0;width:100%}',
+            '#demand-modal-wrapper.hide #demand-modal-background{animation:demand-fade-out .15s linear forwards}',
+            '#demand-modal-wrapper #demand-modal-content-wrapper{animation:demand-drop-down .15s linear forwards,demand-fade-in .15s linear forwards;height:100%;max-width:460px;opacity:0;position:relative;width:1140px;z-index:9001}',
+            '#demand-modal-wrapper.hide #demand-modal-content-wrapper{animation:demand-push-up .15s linear forwards,demand-fade-out .15s linear forwards}',
+            '@media screen and (min-width:1200px){#demand-modal-wrapper #demand-modal-content-wrapper{max-width:460px}}',
+            '@media screen and (min-width:992px) and (max-width:1199px){#demand-modal-wrapper #demand-modal-content-wrapper{max-width:460px}}',
+            '@media screen and (min-width:769px) and (max-width:991px){#demand-modal-wrapper #demand-modal-content-wrapper{max-width:460px}}',
+            '@media screen and (max-width:768px){#demand-modal-wrapper #demand-modal-content-wrapper{max-width:100%}}',
+            '#demand-modal-wrapper #demand-modal-container{background-color:#fff;height:100vh;overflow:hidden;position:absolute;width:100%}',
+            '#demand-modal-container .modal-header{align-items:center;background:#626b90;border-radius:0;color:#fff;display:flex;height:31px;justify-content:space-between;text-align:left;width:100%;border:0!important;padding:0 .5rem!important}',
+            '#demand-modal-container .header-title{font-weight:700;text-transform:uppercase;width:90%}',
+            '#demand-modal-container .header-icon{cursor:pointer;height:1.2rem;margin:0 .5rem}',
+            '#demand-modal-container .header-icon.closeModal{height:19px;width:19px}',
+            '#demand-modal-container #demand-modal-content{height:calc(100% - 31px);max-width:inherit;overflow:hidden;display:flex;flex-direction:column}',
+            '#demand-modal-container #demand-central-container{background-color:#e9effd;margin:0;overflow-x:hidden;overflow-y:auto;width:100%;flex:1;padding:0}',
+            '#demand-modal-wrapper.hide{pointer-events:none}'
+        ].join('');
+        document.head.appendChild(style);
+    }
+
+    function closeDemandModal() {
+        if (!isDemandModalOpen) return;
+        log('Closing modal');
+        isDemandModalOpen = false;
+        restoreViewport();
+        const modalWrapper = document.getElementById('demand-modal-wrapper');
+        if (modalWrapper) {
+            modalWrapper.classList.add('hide');
+        }
+    }
+
+    function setupDemandModalWatcher() {
+        if (modalListenerAttached) return;
+        modalListenerAttached = true;
+
+        window.addEventListener('rebelship-menu-click', function() {
+            if (isDemandModalOpen) {
+                log('RebelShip menu clicked, closing modal');
+                closeDemandModal();
+            }
+        });
+    }
+
     // ========== HOVER TOOLTIP ==========
     let tooltipElement = null;
     let tooltipTimeout = null;
+    let longPressTimer = null;
+    const LONG_PRESS_DURATION = 500;
 
     function createTooltip() {
         if (tooltipElement) return tooltipElement;
@@ -508,156 +500,6 @@
         tooltipElement.style.cssText = 'position:fixed;display:none;background:#1f2937;border:1px solid #374151;border-radius:6px;padding:12px;min-width:200px;max-width:300px;z-index:99999;box-shadow:0 4px 12px rgba(0,0,0,0.4);font-size:12px;color:#fff;pointer-events:auto;';
         document.body.appendChild(tooltipElement);
         return tooltipElement;
-    }
-
-    function showTooltipForPort(portCode, rowElement) {
-        const cache = loadCache();
-        if (!cache || !cache.ports) return;
-
-        const port = cache.ports.find(function(p) { return p.code === portCode; });
-        if (!port) return;
-
-        const tooltip = createTooltip();
-        const demand = port.demand || {};
-        const consumed = port.consumed || {};
-        const containerDemand = demand.container || {};
-        const containerConsumed = consumed.container || {};
-        const tankerDemand = demand.tanker || {};
-        const tankerConsumed = consumed.tanker || {};
-        const vesselsByPort = getVesselsByPort();
-        const vessels = vesselsByPort[portCode] || {};
-
-        const lastUpdated = getPortLastUpdated(portCode);
-
-        let html = '<div style="font-weight:bold;font-size:14px;margin-bottom:8px;color:#3b82f6;">' + capitalizePortName(portCode) + '</div>';
-
-        // Container demand
-        if (containerDemand.dry || containerDemand.refrigerated) {
-            html += '<div style="margin-bottom:6px;">';
-            html += '<div style="color:#9ca3af;font-size:10px;margin-bottom:2px;">CONTAINER DEMAND</div>';
-            if (containerDemand.dry) {
-                const dryRemain = Math.max(0, containerDemand.dry - (containerConsumed.dry || 0));
-                html += '<div>Dry: ' + formatNumber(dryRemain) + ' / ' + formatNumber(containerDemand.dry) + ' TEU</div>';
-            }
-            if (containerDemand.refrigerated) {
-                const refRemain = Math.max(0, containerDemand.refrigerated - (containerConsumed.refrigerated || 0));
-                html += '<div>Ref: ' + formatNumber(refRemain) + ' / ' + formatNumber(containerDemand.refrigerated) + ' TEU</div>';
-            }
-            html += '</div>';
-        }
-
-        // Tanker demand
-        if (tankerDemand.fuel || tankerDemand.crude_oil) {
-            html += '<div style="margin-bottom:6px;">';
-            html += '<div style="color:#9ca3af;font-size:10px;margin-bottom:2px;">TANKER DEMAND</div>';
-            if (tankerDemand.fuel) {
-                const fuelRemain = Math.max(0, tankerDemand.fuel - (tankerConsumed.fuel || 0));
-                html += '<div>Fuel: ' + formatNumber(fuelRemain) + ' / ' + formatNumber(tankerDemand.fuel) + ' BBL</div>';
-            }
-            if (tankerDemand.crude_oil) {
-                const crudeRemain = Math.max(0, tankerDemand.crude_oil - (tankerConsumed.crude_oil || 0));
-                html += '<div>Crude: ' + formatNumber(crudeRemain) + ' / ' + formatNumber(tankerDemand.crude_oil) + ' BBL</div>';
-            }
-            html += '</div>';
-        }
-
-        // Vessels section - always show
-        const hasDestVessels = vessels.destContainerCount || vessels.destTankerCount;
-        const hasOriginVessels = vessels.originContainerCount || vessels.originTankerCount;
-        html += '<div style="margin-top:8px;padding-top:8px;border-top:1px solid #374151;">';
-        html += '<div style="color:#9ca3af;font-size:10px;margin-bottom:4px;">YOUR VESSELS</div>';
-
-        html += '<div style="margin-bottom:4px;"><span style="color:#4ade80;">Arriving:</span></div>';
-        if (hasDestVessels) {
-            if (vessels.destContainerCount) {
-                html += '<div style="margin-left:12px;">' + vessels.destContainerCount + ' cargo (' + formatNumber(vessels.destContainerCapacity) + ' TEU)</div>';
-            }
-            if (vessels.destTankerCount) {
-                html += '<div style="margin-left:12px;">' + vessels.destTankerCount + ' tanker (' + formatNumber(vessels.destTankerCapacity) + ' BBL)</div>';
-            }
-        } else {
-            html += '<div style="margin-left:12px;">0</div>';
-        }
-
-        html += '<div style="margin-top:4px;"><span style="color:#fbbf24;">Departing:</span></div>';
-        if (hasOriginVessels) {
-            if (vessels.originContainerCount) {
-                html += '<div style="margin-left:12px;">' + vessels.originContainerCount + ' cargo (' + formatNumber(vessels.originContainerCapacity) + ' TEU)</div>';
-            }
-            if (vessels.originTankerCount) {
-                html += '<div style="margin-left:12px;">' + vessels.originTankerCount + ' tanker (' + formatNumber(vessels.originTankerCapacity) + ' BBL)</div>';
-            }
-        } else {
-            html += '<div style="margin-left:12px;">0</div>';
-        }
-        html += '</div>';
-
-        // Last updated
-        html += '<div style="color:#9ca3af;font-size:10px;margin-top:8px;padding-top:8px;border-top:1px solid #374151;">';
-        html += 'Updated: ' + formatTimestamp(lastUpdated);
-        html += '</div>';
-
-        // Refresh button (refreshes ALL ports with 5min cooldown)
-        html += getRefreshButtonHtml('tooltip-refresh-btn');
-
-        tooltip.innerHTML = html;
-
-        // Position tooltip near the row
-        // First show it off-screen to measure actual height
-        tooltip.style.visibility = 'hidden';
-        tooltip.style.display = 'block';
-        var tooltipHeight = tooltip.offsetHeight;
-        var tooltipWidth = tooltip.offsetWidth;
-        tooltip.style.visibility = 'visible';
-
-        var rect = rowElement.getBoundingClientRect();
-        var left = rect.right + 10;
-        var top = rect.top;
-
-        // Keep tooltip horizontally in viewport
-        if (left + tooltipWidth > window.innerWidth) {
-            left = rect.left - tooltipWidth - 10;
-        }
-        if (left < 10) left = 10;
-
-        // Keep tooltip vertically in viewport
-        // If tooltip would go below viewport, flip it above the row or cap it
-        if (top + tooltipHeight > window.innerHeight - 10) {
-            // Try positioning above the row
-            var topAbove = rect.bottom - tooltipHeight;
-            if (topAbove >= 10) {
-                top = topAbove;
-            } else {
-                // Can't fit above either, position at bottom of viewport
-                top = window.innerHeight - tooltipHeight - 10;
-            }
-        }
-        if (top < 10) top = 10;
-
-        tooltip.style.left = left + 'px';
-        tooltip.style.top = top + 'px';
-
-        // Attach refresh button handler
-        const refreshBtn = document.getElementById('tooltip-refresh-btn');
-        if (refreshBtn) {
-            refreshBtn.addEventListener('click', async function(e) {
-                e.stopPropagation();
-                hideTooltip();
-                await refreshAllPorts();
-            });
-        }
-
-        // Keep tooltip visible when hovering over it
-        tooltip.addEventListener('mouseenter', function() {
-            if (tooltipTimeout) {
-                clearTimeout(tooltipTimeout);
-                tooltipTimeout = null;
-            }
-        });
-
-        tooltip.addEventListener('mouseleave', function() {
-            hideTooltip();
-        });
     }
 
     function hideTooltip() {
@@ -768,8 +610,15 @@
         }
         pendingReturn = true;
 
-        // Close current modal and open port modal
-        modalStore.closeAll(0);
+        // Close our custom modal (hide it, don't remove)
+        isDemandModalOpen = false;
+        const demandWrapper = document.getElementById('demand-modal-wrapper');
+        if (demandWrapper) {
+            demandWrapper.classList.add('hide');
+        }
+        restoreViewport();
+
+        // Open game's port modal
         setTimeout(function() {
             try {
                 modalStore.open('port', {
@@ -785,53 +634,87 @@
     }
 
     function openDemandModal() {
+        // Close any open game modal first
         const modalStore = getModalStore();
-        if (!modalStore) {
-            log('Modal store not found', 'error');
-            return;
-        }
-
-        // Check if game is locked
-        const globalStore = getStore('global');
-        if (globalStore && globalStore.isGameLocked) {
-            log('Game is locked, cannot open modal', 'error');
-            return;
+        if (modalStore && modalStore.closeAll) {
+            modalStore.closeAll();
         }
 
         pendingReturn = false;
-        log('Opening routeResearch modal');
-        modalStore.open('routeResearch');
+        injectDemandModalStyles();
 
-        setTimeout(function() {
-            log('Injecting demand content, title before: ' + (modalStore.modalSettings ? modalStore.modalSettings.title : 'N/A'));
-            injectDemandContent();
-            log('Title after inject: ' + (modalStore.modalSettings ? modalStore.modalSettings.title : 'N/A'));
-        }, 200);
-    }
-
-    function injectDemandContent() {
-        const modalStore = getModalStore();
-        if (modalStore && modalStore.modalSettings) {
-            modalStore.modalSettings.title = 'Demand Summary';
-            modalStore.modalSettings.navigation = [];
-            modalStore.modalSettings.controls = [];
-            modalStore.modalSettings.noBackButton = true;
-        }
-        // Clear history to prevent back arrow in header
-        if (modalStore && modalStore.history) {
-            modalStore.history.length = 0;
+        const existing = document.getElementById('demand-modal-wrapper');
+        if (existing) {
+            const contentCheck = existing.querySelector('#demand-central-container');
+            if (contentCheck) {
+                existing.classList.remove('hide');
+                isDemandModalOpen = true;
+                enableMobileZoom();
+                renderModalContent(contentCheck);
+                return;
+            }
+            existing.remove();
         }
 
-        const centralContainer = document.getElementById('central-container');
-        if (!centralContainer) {
-            log('central-container not found', 'error');
-            return;
-        }
+        const headerEl = document.querySelector('header');
+        const headerHeight = headerEl ? headerEl.offsetHeight : 89;
 
-        // Make container fill modal height
-        centralContainer.style.height = '100%';
-        centralContainer.style.overflow = 'hidden';
+        const modalWrapper = document.createElement('div');
+        modalWrapper.id = 'demand-modal-wrapper';
 
+        const modalBackground = document.createElement('div');
+        modalBackground.id = 'demand-modal-background';
+        modalBackground.onclick = function() { closeDemandModal(); };
+
+        const modalContentWrapper = document.createElement('div');
+        modalContentWrapper.id = 'demand-modal-content-wrapper';
+
+        const modalContainer = document.createElement('div');
+        modalContainer.id = 'demand-modal-container';
+        modalContainer.className = 'font-lato';
+        modalContainer.style.top = headerHeight + 'px';
+        modalContainer.style.height = 'calc(100vh - ' + headerHeight + 'px)';
+        modalContainer.style.maxHeight = 'calc(100vh - ' + headerHeight + 'px)';
+
+        const modalHeader = document.createElement('div');
+        modalHeader.className = 'modal-header';
+
+        const headerTitle = document.createElement('span');
+        headerTitle.className = 'header-title';
+        headerTitle.textContent = 'Demand Summary';
+
+        const closeIcon = document.createElement('img');
+        closeIcon.className = 'header-icon closeModal';
+        closeIcon.src = '/images/icons/close_icon_new.svg';
+        closeIcon.onclick = function() { closeDemandModal(); };
+        closeIcon.onerror = function() {
+            this.style.display = 'none';
+            const fallback = document.createElement('span');
+            fallback.textContent = 'X';
+            fallback.style.cssText = 'cursor:pointer;font-weight:bold;padding:0 .5rem;';
+            fallback.onclick = function() { closeDemandModal(); };
+            this.parentNode.appendChild(fallback);
+        };
+
+        modalHeader.appendChild(headerTitle);
+        modalHeader.appendChild(closeIcon);
+
+        const modalContent = document.createElement('div');
+        modalContent.id = 'demand-modal-content';
+
+        const centralContainer = document.createElement('div');
+        centralContainer.id = 'demand-central-container';
+
+        modalContent.appendChild(centralContainer);
+        modalContainer.appendChild(modalHeader);
+        modalContainer.appendChild(modalContent);
+        modalContentWrapper.appendChild(modalContainer);
+        modalWrapper.appendChild(modalBackground);
+        modalWrapper.appendChild(modalContentWrapper);
+        document.body.appendChild(modalWrapper);
+
+        isDemandModalOpen = true;
+        enableMobileZoom();
         renderModalContent(centralContainer);
 
         // Restore scroll position if returning from port modal
@@ -867,55 +750,47 @@
         }, true);
     }
 
-    function renderModalContent(container) {
+    async function renderModalContent(container) {
         activeModalContainer = container;
-        const cache = loadCache();
+        const cache = loadCacheSync();
         const hasCache = cache && cache.ports && cache.ports.length > 0;
         const canCollectNow = canCollect();
         const cooldownRemaining = getTimeUntilNextCollect();
         const vesselsByDest = getVesselsByDestination();
 
-        let html = '<div style="padding:20px 2px;font-family:Lato,sans-serif;color:#01125d;height:100%;display:flex;flex-direction:column;box-sizing:border-box;">';
+        let html = '<div id="demand-summary-wrapper" data-rebelship-modal="demand-summary" style="padding:8px 2px;font-family:Lato,sans-serif;color:#01125d;height:100%;display:flex;flex-direction:column;box-sizing:border-box;">';
 
-        // Header with last collect time and buttons
-        html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:10px;">';
-        html += '<div style="font-size:12px;color:#626b90;">';
+        // Header with last collect time
+        html += '<div style="font-size:11px;color:#626b90;margin-bottom:2px;">';
         html += 'Last collected: ' + formatTimestamp(cache ? cache.timestamp : null);
         html += '</div>';
 
-        html += '<div style="display:flex;gap:8px;">';
-        if (canCollectNow) {
-            html += '<button id="demand-collect-btn" style="padding:8px 16px;background:linear-gradient(180deg,#46ff33,#129c00);border:0;border-radius:6px;color:#fff;cursor:pointer;font-size:14px;font-weight:500;font-family:Lato,sans-serif;">';
-            html += isCollecting ? 'Collecting...' : 'Collect Demand';
-            html += '</button>';
-        } else {
-            const mins = Math.ceil(cooldownRemaining / 60000);
-            html += '<button disabled style="padding:8px 16px;background:#9ca3af;border:0;border-radius:6px;color:#fff;font-size:14px;font-weight:500;font-family:Lato,sans-serif;cursor:not-allowed;">';
-            html += 'Wait ' + mins + ' min';
-            html += '</button>';
-        }
-        html += '</div>';
-        html += '</div>';
-
         if (!hasCache) {
-            html += '<div style="text-align:center;padding:40px;color:#626b90;">';
+            html += '<div style="flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:40px;color:#626b90;">';
             html += '<p style="font-size:16px;margin-bottom:10px;">No demand data cached yet.</p>';
-            html += '<p style="font-size:13px;">Click "Collect Demand" to fetch demand for all 360 ports.</p>';
+            html += '<p style="font-size:13px;margin-bottom:20px;">Click "Collect Demand" to fetch demand for all 360 ports.</p>';
+            html += '<button id="demand-collect-btn" style="padding:10px 20px;background:linear-gradient(180deg,#46ff33,#129c00);border:0;border-radius:4px;color:#fff;font-size:14px;cursor:pointer;font-weight:bold;">' + (isCollecting ? 'Collecting...' : 'Collect Demand') + '</button>';
             html += '</div>';
         } else {
             // Summary
             const portsWithVessels = cache.ports.filter(p => vesselsByDest[p.code]);
-            html += '<div style="margin-bottom:16px;font-size:13px;color:#626b90;">';
+            html += '<div style="margin-bottom:6px;font-size:11px;color:#626b90;">';
             html += cache.ports.length + ' ports cached | ' + portsWithVessels.length + ' ports with vessels en route';
             html += '</div>';
 
             // Filter tabs
-            html += '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center;">';
+            html += '<div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap;align-items:center;justify-content:center;">';
             html += '<button class="demand-filter-btn" data-filter="all" style="padding:6px 12px;background:' + (currentFilter === 'all' ? '#0db8f4' : '#374151') + ';border:0;border-radius:4px;color:#fff;font-size:12px;cursor:pointer;">All</button>';
             html += '<button class="demand-filter-btn" data-filter="vessels" style="padding:6px 12px;background:' + (currentFilter === 'vessels' ? '#0db8f4' : '#374151') + ';border:0;border-radius:4px;color:#fff;font-size:12px;cursor:pointer;">With Vessels</button>';
             html += '<button class="demand-filter-btn" data-filter="novessels" style="padding:6px 12px;background:' + (currentFilter === 'novessels' ? '#0db8f4' : '#374151') + ';border:0;border-radius:4px;color:#fff;font-size:12px;cursor:pointer;">No Vessels</button>';
             html += '<button class="demand-filter-btn" data-filter="container" style="padding:6px 12px;background:' + (currentFilter === 'container' ? '#0db8f4' : '#374151') + ';border:0;border-radius:4px;color:#fff;font-size:12px;cursor:pointer;">Container</button>';
             html += '<button class="demand-filter-btn" data-filter="tanker" style="padding:6px 12px;background:' + (currentFilter === 'tanker' ? '#0db8f4' : '#374151') + ';border:0;border-radius:4px;color:#fff;font-size:12px;cursor:pointer;">Tanker</button>';
+            if (canCollectNow) {
+                html += '<button id="demand-collect-btn" style="padding:6px 12px;background:linear-gradient(180deg,#46ff33,#129c00);border:0;border-radius:4px;color:#fff;font-size:12px;cursor:pointer;">' + (isCollecting ? 'Collecting...' : 'Collect Demand') + '</button>';
+            } else {
+                const mins = Math.ceil(cooldownRemaining / 60000);
+                html += '<button disabled style="padding:6px 12px;background:#9ca3af;border:0;border-radius:4px;color:#fff;font-size:12px;cursor:not-allowed;">Wait ' + mins + ' min</button>';
+            }
             html += '<button id="demand-export-btn" style="padding:6px 12px;background:linear-gradient(180deg,#3b82f6,#1d4ed8);border:0;border-radius:4px;color:#fff;font-size:12px;cursor:pointer;">Export</button>';
             html += '</div>';
 
@@ -990,28 +865,8 @@
             link.addEventListener('click', function() {
                 const portCode = link.dataset.port;
                 if (portCode) {
-                    hideTooltip();
                     openPortModal(portCode);
                 }
-            });
-        });
-
-        // Row hover handlers for tooltip
-        const portRows = document.querySelectorAll('.demand-port-row');
-        portRows.forEach(function(row) {
-            row.addEventListener('mouseenter', function() {
-                if (tooltipTimeout) {
-                    clearTimeout(tooltipTimeout);
-                    tooltipTimeout = null;
-                }
-                const portCode = row.dataset.port;
-                if (portCode) {
-                    showTooltipForPort(portCode, row);
-                }
-            });
-
-            row.addEventListener('mouseleave', function() {
-                hideTooltipDelayed();
             });
         });
     }
@@ -1107,7 +962,7 @@
         // Sort icon helper
         function sortIcon(column) {
             if (sortColumn === column) {
-                return sortOrder === 'desc' ? ' ▼' : ' ▲';
+                return sortOrder === 'desc' ? ' v' : ' ^';
             }
             return '';
         }
@@ -1121,8 +976,8 @@
         html += '<th class="demand-sort-header" data-column="currentTEU" style="padding:4px 4px;border-bottom:2px solid #9ca3af;text-align:right;white-space:nowrap;cursor:pointer;">Cur TEU' + sortIcon('currentTEU') + '</th>';
         html += '<th class="demand-sort-header" data-column="maxBBL" style="padding:4px 4px;border-bottom:2px solid #9ca3af;text-align:right;white-space:nowrap;cursor:pointer;">Max BBL' + sortIcon('maxBBL') + '</th>';
         html += '<th class="demand-sort-header" data-column="currentBBL" style="padding:4px 4px;border-bottom:2px solid #9ca3af;text-align:right;white-space:nowrap;cursor:pointer;">Cur BBL' + sortIcon('currentBBL') + '</th>';
-        html += '<th class="demand-sort-header" data-column="containerVessels" style="padding:4px 4px;border-bottom:2px solid #9ca3af;text-align:center;white-space:nowrap;cursor:pointer;" title="Container Vessels">📦' + sortIcon('containerVessels') + '</th>';
-        html += '<th class="demand-sort-header" data-column="tankerVessels" style="padding:4px 4px;border-bottom:2px solid #9ca3af;text-align:center;white-space:nowrap;cursor:pointer;" title="Tanker Vessels">🛢️' + sortIcon('tankerVessels') + '</th>';
+        html += '<th class="demand-sort-header" data-column="containerVessels" style="padding:4px 4px;border-bottom:2px solid #9ca3af;text-align:center;white-space:nowrap;cursor:pointer;" title="Container Vessels"><img src="/images/icons/departure_notification/container_yellow.svg" alt="Container" style="width:16px;height:16px;vertical-align:middle;">' + sortIcon('containerVessels') + '</th>';
+        html += '<th class="demand-sort-header" data-column="tankerVessels" style="padding:4px 4px;border-bottom:2px solid #9ca3af;text-align:center;white-space:nowrap;cursor:pointer;" title="Tanker Vessels"><img src="/images/icons/departure_notification/oil_icon.svg" alt="Tanker" style="width:16px;height:16px;vertical-align:middle;">' + sortIcon('tankerVessels') + '</th>';
         html += '</tr>';
         html += '</thead>';
         html += '<tbody>';
@@ -1190,7 +1045,7 @@
             const ports = await fetchPortsDemand(portCodes);
             log('Collected demand for ' + ports.length + ' ports');
 
-            saveCache(ports);
+            await saveCache(ports);
             showToast('Demand collected for ' + ports.length + ' ports', 'success');
 
             // Refresh modal if still open
@@ -1237,42 +1092,85 @@
         log('Menu item added');
     }
 
-    function init() {
+    async function init() {
         log('Initializing...');
+
+        // Load cache into memory for sync access
+        await loadCache();
+
+        setupDemandModalWatcher();
         initUI();
         initMapMarkerHover();
-        initPortPopupEnhancement();
+
+        log('Script loaded');
     }
 
     // ========== MAP MARKER HOVER ==========
     // Show demand tooltip when hovering over port markers on harbor map
 
     function initMapMarkerHover() {
-        // Delegate hover events for port marker icons
+        function isPortMarker(el) {
+            if (!el || !el.classList || !el.classList.contains('leaflet-marker-icon')) return false;
+            const src = el.getAttribute('src');
+            return src && src.includes('porticon');
+        }
+
+        // Desktop: mouse hover
         document.addEventListener('mouseenter', function(e) {
-            const marker = e.target;
-            if (!marker.classList || !marker.classList.contains('leaflet-marker-icon')) return;
-
-            // Check if it's a port icon
-            const src = marker.getAttribute('src');
-            if (!src || !src.includes('porticon')) return;
-
-            // Find the port code via Leaflet layer matching
-            const portCode = getPortCodeFromMarker(marker);
+            if (!isPortMarker(e.target)) return;
+            const portCode = getPortCodeFromMarker(e.target);
             if (portCode) {
-                showMapTooltip(portCode, marker);
+                showMapTooltip(portCode, e.target);
             }
         }, true);
 
         document.addEventListener('mouseleave', function(e) {
-            const marker = e.target;
-            if (!marker.classList || !marker.classList.contains('leaflet-marker-icon')) return;
-
-            const src = marker.getAttribute('src');
-            if (!src || !src.includes('porticon')) return;
-
+            if (!isPortMarker(e.target)) return;
             hideTooltipDelayed();
         }, true);
+
+        // Mobile: long-press (500ms)
+        document.addEventListener('touchstart', function(e) {
+            const marker = e.target;
+            if (!isPortMarker(marker)) return;
+
+            if (longPressTimer) {
+                clearTimeout(longPressTimer);
+                longPressTimer = null;
+            }
+
+            longPressTimer = setTimeout(function() {
+                const portCode = getPortCodeFromMarker(marker);
+                if (portCode) {
+                    showMapTooltip(portCode, marker);
+                }
+                longPressTimer = null;
+            }, LONG_PRESS_DURATION);
+        }, true);
+
+        document.addEventListener('touchend', function(e) {
+            if (!isPortMarker(e.target)) return;
+            if (longPressTimer) {
+                clearTimeout(longPressTimer);
+                longPressTimer = null;
+            }
+        }, true);
+
+        document.addEventListener('touchmove', function() {
+            if (longPressTimer) {
+                clearTimeout(longPressTimer);
+                longPressTimer = null;
+            }
+        }, true);
+
+        // Close tooltip when tapping elsewhere
+        document.addEventListener('touchstart', function(e) {
+            if (tooltipElement && tooltipElement.style.display === 'block') {
+                if (!tooltipElement.contains(e.target) && !isPortMarker(e.target)) {
+                    hideTooltip();
+                }
+            }
+        }, false);
     }
 
     function getLeafletMap() {
@@ -1310,7 +1208,7 @@
     }
 
     function showMapTooltip(portCode, markerElement) {
-        const cache = loadCache();
+        const cache = loadCacheSync();
         if (!cache || !cache.ports) return;
 
         const port = cache.ports.find(function(p) { return p.code === portCode; });
@@ -1360,7 +1258,7 @@
             html += '</div>';
         }
 
-        // Vessels section - always show
+        // Vessels section
         const hasDestVessels = vessels.destContainerCount || vessels.destTankerCount;
         const hasOriginVessels = vessels.originContainerCount || vessels.originTankerCount;
         html += '<div style="margin-top:8px;padding-top:8px;border-top:1px solid #374151;">';
@@ -1378,7 +1276,7 @@
             html += '<div style="margin-left:12px;">0</div>';
         }
 
-        html += '<div style="margin-top:4px;"><span style="color:#fbbf24;">Departing:</span></div>';
+        html += '<div style="margin-top:4px;"><span style="color:#f59e0b;">Departing:</span></div>';
         if (hasOriginVessels) {
             if (vessels.originContainerCount) {
                 html += '<div style="margin-left:12px;">' + vessels.originContainerCount + ' cargo (' + formatNumber(vessels.originContainerCapacity) + ' TEU)</div>';
@@ -1401,24 +1299,36 @@
 
         tooltip.innerHTML = html;
 
-        // Position tooltip near the marker
-        const rect = markerElement.getBoundingClientRect();
-        const tooltipWidth = 250;
-        let left = rect.right + 10;
-        let top = rect.top - 50;
+        // Position tooltip - measure actual size first
+        tooltip.style.visibility = 'hidden';
+        tooltip.style.display = 'block';
+        const tooltipWidth = tooltip.offsetWidth;
+        const tooltipHeight = tooltip.offsetHeight;
+        tooltip.style.visibility = 'visible';
 
-        // Keep tooltip in viewport
-        if (left + tooltipWidth > window.innerWidth) {
-            left = rect.left - tooltipWidth - 10;
+        const rect = markerElement.getBoundingClientRect();
+        const padding = 10;
+        let left, top;
+
+        // Horizontal: prefer right of marker, fallback to left
+        if (rect.right + padding + tooltipWidth <= window.innerWidth) {
+            left = rect.right + padding;
+        } else if (rect.left - padding - tooltipWidth >= 0) {
+            left = rect.left - padding - tooltipWidth;
+        } else {
+            left = Math.max(padding, Math.min(window.innerWidth - tooltipWidth - padding, rect.left));
         }
-        if (top + 200 > window.innerHeight) {
-            top = window.innerHeight - 220;
+
+        // Vertical: center on marker, but keep in viewport
+        top = rect.top + (rect.height / 2) - (tooltipHeight / 2);
+        if (top < padding) {
+            top = padding;
+        } else if (top + tooltipHeight > window.innerHeight - padding) {
+            top = window.innerHeight - tooltipHeight - padding;
         }
-        if (top < 10) top = 10;
 
         tooltip.style.left = left + 'px';
         tooltip.style.top = top + 'px';
-        tooltip.style.display = 'block';
 
         // Attach refresh button handler
         const refreshBtn = document.getElementById('map-tooltip-refresh-btn');
@@ -1441,101 +1351,6 @@
         tooltip.addEventListener('mouseleave', function() {
             hideTooltip();
         });
-    }
-
-    // ========== PORT POPUP ENHANCEMENT ==========
-    // Instead of hover tooltip, enhance the game's existing port popup with demand info
-
-    function initPortPopupEnhancement() {
-        // Watch for port popup appearing
-        const observer = new MutationObserver(function() {
-            const portPopup = document.querySelector('#popover .port-popup');
-            if (portPopup && !portPopup.dataset.demandEnhanced) {
-                portPopup.dataset.demandEnhanced = '1';
-                enhancePortPopup(portPopup);
-            }
-        });
-
-        observer.observe(document.body, { childList: true, subtree: true });
-    }
-
-    function enhancePortPopup(portPopup) {
-        // Get port name from popup header
-        const headerSpan = portPopup.closest('#popover').querySelector('.popup_header span');
-        if (!headerSpan) return;
-
-        const portName = headerSpan.textContent.trim().toLowerCase().replace(/\s+/g, '_');
-        if (!portName) return;
-
-        const cache = loadCache();
-        if (!cache || !cache.ports) return;
-
-        const port = cache.ports.find(function(p) { return p.code === portName; });
-        if (!port) return;
-
-        // Check if we already added our section
-        if (portPopup.querySelector('.demand-info-section')) return;
-
-        const demand = port.demand || {};
-        const consumed = port.consumed || {};
-        const containerDemand = demand.container || {};
-        const containerConsumed = consumed.container || {};
-        const tankerDemand = demand.tanker || {};
-        const tankerConsumed = consumed.tanker || {};
-
-        const lastUpdated = getPortLastUpdated(portName);
-
-        // Create demand info section
-        const section = document.createElement('div');
-        section.className = 'demand-info-section';
-        section.style.cssText = 'background:#1e3a5f;margin:5px 10px;padding:8px;border-radius:4px;font-size:11px;color:#fff;';
-
-        let html = '<div style="font-weight:bold;margin-bottom:6px;color:#3b82f6;display:flex;justify-content:space-between;align-items:center;">';
-        html += '<span>Remaining Demand</span>';
-        html += getRefreshButtonHtmlSmall('popup-refresh-demand');
-        html += '</div>';
-
-        // Container
-        if (containerDemand.dry || containerDemand.refrigerated) {
-            const dryRemain = Math.max(0, (containerDemand.dry || 0) - (containerConsumed.dry || 0));
-            const refRemain = Math.max(0, (containerDemand.refrigerated || 0) - (containerConsumed.refrigerated || 0));
-            html += '<div style="margin-bottom:4px;">';
-            html += '<span style="color:#9ca3af;">Container:</span> ';
-            html += 'Dry ' + formatNumber(dryRemain) + ' | Ref ' + formatNumber(refRemain) + ' TEU';
-            html += '</div>';
-        }
-
-        // Tanker
-        if (tankerDemand.fuel || tankerDemand.crude_oil) {
-            const fuelRemain = Math.max(0, (tankerDemand.fuel || 0) - (tankerConsumed.fuel || 0));
-            const crudeRemain = Math.max(0, (tankerDemand.crude_oil || 0) - (tankerConsumed.crude_oil || 0));
-            html += '<div style="margin-bottom:4px;">';
-            html += '<span style="color:#9ca3af;">Tanker:</span> ';
-            html += 'Fuel ' + formatNumber(fuelRemain) + ' | Crude ' + formatNumber(crudeRemain) + ' BBL';
-            html += '</div>';
-        }
-
-        // Last updated
-        html += '<div style="color:#6b7280;font-size:10px;margin-top:4px;">';
-        html += 'Updated: ' + formatTimestamp(lastUpdated);
-        html += '</div>';
-
-        section.innerHTML = html;
-
-        // Insert after popup_image
-        const popupData = portPopup.querySelector('.popup_data');
-        if (popupData) {
-            popupData.insertBefore(section, popupData.firstChild);
-        }
-
-        // Refresh button handler
-        const refreshBtn = document.getElementById('popup-refresh-demand');
-        if (refreshBtn) {
-            refreshBtn.addEventListener('click', async function(e) {
-                e.stopPropagation();
-                await refreshAllPorts();
-            });
-        }
     }
 
     if (document.readyState === 'loading') {

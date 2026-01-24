@@ -1,5 +1,8 @@
 module.exports = [
   {
+    ignores: ['eslint.config.js']
+  },
+  {
     files: ['**/*.js'],
     languageOptions: {
       ecmaVersion: 2021,
@@ -32,7 +35,8 @@ module.exports = [
         URL: 'readonly',
         MutationObserver: 'readonly',
         location: 'readonly',
-        confirm: 'readonly'
+        confirm: 'readonly',
+        CustomEvent: 'readonly'
       }
     },
     rules: {

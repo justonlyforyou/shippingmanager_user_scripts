@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Shipping Manager - Distance Filter for Route Planner
+// @name         ShippingManager - Distance Filter for Route Planner
 // @namespace    http://tampermonkey.net/
 // @description  Filter ports by distance when creating new routes!
-// @version      8.3
+// @version      9.18
 // @order        10
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
@@ -10,13 +10,16 @@
 // @run-at       document-end
 // @enabled      false
 // ==/UserScript==
-
-/* eslint-env browser */
-/* global MutationObserver */
+/* globals MutationObserver */
 
 (function() {
+    var API_BASE = 'https://shippingmanager.cc/api';
     var injected = false;
     var dropdownOpen = false;
+    var _activeDistanceFilter = null;
+    var _activeVesselCoords = null;
+    var filteredPortCodes = null;
+    var markerFilterInterval = null;
 
     var RANGES = [
         { label: "All", min: 0, max: 999999 },
@@ -50,136 +53,197 @@
         return pinia._s.get(name);
     }
 
-    function getVesselCoords() {
-        var rs = getStore("route");
-        if (!rs || !rs.selectedVessel || !rs.ports) return null;
-        var code = rs.selectedVessel.current_port_code;
-        var port = rs.ports.find(function(p) { return p.code === code; });
-        if (!port) return null;
-        return { lat: parseFloat(port.lat), lon: parseFloat(port.lon) };
-    }
-
-    function clickShowAll() {
-        var btns = document.querySelectorAll("#createRoutePopup button");
-        for (var i = 0; i < btns.length; i++) {
-            var t = btns[i].textContent.toLowerCase();
-            if (t.indexOf("all") !== -1 && t.indexOf("port") !== -1) {
-                btns[i].click();
-                return true;
+    async function fetchVesselPorts(vesselId) {
+        try {
+            var response = await fetch(API_BASE + '/route/get-vessel-ports', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ user_vessel_id: vesselId })
+            });
+            if (!response.ok) return null;
+            var data = await response.json();
+            if (data && data.data && data.data.all && data.data.all.ports) {
+                return data.data.all.ports;
             }
-        }
-        return false;
-    }
-
-    // Get Leaflet map from mapStore
-    function getLeafletMap() {
-        var ms = getStore("mapStore");
-        if (!ms || !ms.map) return null;
-
-        var mapVal = ms.map;
-        // Check if it's a Vue ref
-        if (mapVal && typeof mapVal.value !== "undefined" && mapVal.value !== null) {
-            return mapVal.value;
-        }
-        if (mapVal && typeof mapVal.eachLayer === "function") {
-            return mapVal;
+        } catch (err) {
+            console.log("[DistFilter] fetchVesselPorts error:", err);
         }
         return null;
     }
 
-    function filterByDistance(range, btn) {
-        var vesselCoords = getVesselCoords();
-        if (!vesselCoords) {
-            console.log("[DistFilter] No vessel coords");
-            return;
+    async function fetchPortCoords(portCode) {
+        try {
+            var response = await fetch(API_BASE + '/port/get-ports', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ port_code: [portCode] })
+            });
+            if (!response.ok) return null;
+            var data = await response.json();
+            if (data && data.data && data.data.port && data.data.port.length > 0) {
+                var port = data.data.port[0];
+                return { lat: parseFloat(port.lat), lon: parseFloat(port.lon) };
+            }
+        } catch (err) {
+            console.log("[DistFilter] fetchPortCoords error:", err);
         }
+        return null;
+    }
 
-        var map = getLeafletMap();
-        if (!map) {
-            console.log("[DistFilter] No map");
-            return;
+    function filterPortsByDistance(ports, range, vesselCoords) {
+        if (!ports || !range || range.label === "All" || !vesselCoords) {
+            return ports;
         }
+        return ports.filter(function(port) {
+            var pLat = parseFloat(port.lat);
+            var pLon = parseFloat(port.lon);
+            var dist = haversine(vesselCoords.lat, vesselCoords.lon, pLat, pLon);
+            return dist >= range.min && dist < range.max;
+        });
+    }
 
-        console.log("[DistFilter] Vessel at:", vesselCoords.lat, vesselCoords.lon);
-        console.log("[DistFilter] Filtering for range:", range.label);
+    function removeOutOfRangeMarkers() {
+        if (!filteredPortCodes || filteredPortCodes.length === 0) return;
 
-        var kept = 0;
-        var hidden = 0;
-        var total = 0;
+        var mapStore = getStore("mapStore");
+        if (!mapStore || !mapStore.map) return;
+
+        var map = mapStore.map;
+        var markersToRemove = [];
 
         map.eachLayer(function(layer) {
-            // Check if this layer has port data
             if (layer.options && layer.options.port) {
-                total++;
-                var port = layer.options.port;
-                var pLat = parseFloat(port.lat);
-                var pLon = parseFloat(port.lon);
-                var dist = haversine(vesselCoords.lat, vesselCoords.lon, pLat, pLon);
-
-                var shouldShow = (range.label === "All") || (dist >= range.min && dist < range.max);
-
-                if (shouldShow) {
-                    // Show marker
-                    if (layer._icon) {
-                        layer._icon.style.display = "";
-                    }
-                    if (layer.setOpacity) {
-                        layer.setOpacity(1);
-                    }
-                    kept++;
-                } else {
-                    // Hide marker
-                    if (layer._icon) {
-                        layer._icon.style.display = "none";
-                    }
-                    if (layer.setOpacity) {
-                        layer.setOpacity(0);
-                    }
-                    hidden++;
+                var portCode = layer.options.port.code;
+                if (!filteredPortCodes.includes(portCode)) {
+                    markersToRemove.push(layer);
                 }
             }
         });
 
-        console.log("[DistFilter] Total:", total, "Kept:", kept, "Hidden:", hidden);
+        markersToRemove.forEach(function(marker) {
+            map.removeLayer(marker);
+        });
 
-        // Update button text
-        var inner = btn.querySelector(".btn-content-wrapper");
-        if (inner) inner.textContent = range.label === "All" ? "DISTANCE" : range.label;
+        if (markersToRemove.length > 0) {
+            console.log("[DistFilter] Removed", markersToRemove.length, "out-of-range markers");
+        }
     }
 
-    function applyFilter(range, btn) {
-        // First click "Show all ports" to ensure all markers are on the map
-        clickShowAll();
+    function startMarkerFilter() {
+        if (markerFilterInterval) {
+            clearInterval(markerFilterInterval);
+        }
+        markerFilterInterval = setInterval(removeOutOfRangeMarkers, 300);
+        console.log("[DistFilter] Started marker filter interval");
+    }
 
-        // Wait for markers to appear, then filter
-        var attempts = 0;
-        var maxAttempts = 30;
+    function stopMarkerFilter() {
+        if (markerFilterInterval) {
+            clearInterval(markerFilterInterval);
+            markerFilterInterval = null;
+            console.log("[DistFilter] Stopped marker filter interval");
+        }
+        filteredPortCodes = null;
+        _activeDistanceFilter = null;
+        _activeVesselCoords = null;
+    }
 
-        var check = setInterval(function() {
-            attempts++;
-            var map = getLeafletMap();
-            var markerCount = 0;
+    async function applyDistanceFilter(range, btn) {
+        var rs = getStore("route");
+        if (!rs) {
+            console.log("[DistFilter] No route store");
+            return;
+        }
 
-            if (map) {
-                map.eachLayer(function(layer) {
-                    if (layer.options && layer.options.port) markerCount++;
-                });
+        var selectedVessel = rs.selectedVessel;
+        if (!selectedVessel) {
+            console.log("[DistFilter] No vessel selected");
+            return;
+        }
+
+        if (btn) {
+            var inner = btn.querySelector(".btn-content-wrapper");
+            if (inner) inner.textContent = "Loading...";
+        }
+
+        console.log("[DistFilter] Fetching vessel port coords for:", selectedVessel.current_port_code);
+        var vesselCoords = await fetchPortCoords(selectedVessel.current_port_code);
+        if (!vesselCoords) {
+            console.log("[DistFilter] Could not get vessel coordinates");
+            if (btn) {
+                var inner2 = btn.querySelector(".btn-content-wrapper");
+                if (inner2) inner2.textContent = "ERROR";
             }
+            return;
+        }
+        console.log("[DistFilter] Vessel coords:", vesselCoords);
 
-            console.log("[DistFilter] Attempt", attempts, "markers:", markerCount);
-
-            if (markerCount > 5) {
-                clearInterval(check);
-                // Give a bit more time for rendering
-                setTimeout(function() {
-                    filterByDistance(range, btn);
-                }, 200);
-            } else if (attempts >= maxAttempts) {
-                clearInterval(check);
-                console.log("[DistFilter] Timeout - trying filter anyway");
-                filterByDistance(range, btn);
+        console.log("[DistFilter] Fetching all reachable ports...");
+        var allPorts = await fetchVesselPorts(selectedVessel.id);
+        if (!allPorts || allPorts.length === 0) {
+            console.log("[DistFilter] No ports returned from API");
+            if (btn) {
+                var inner3 = btn.querySelector(".btn-content-wrapper");
+                if (inner3) inner3.textContent = "ERROR";
             }
-        }, 100);
+            return;
+        }
+        console.log("[DistFilter] Total ports from API:", allPorts.length);
+
+        var filteredPorts = filterPortsByDistance(allPorts, range, vesselCoords);
+        console.log("[DistFilter] Filtered to", filteredPorts.length, "ports for range:", range.label);
+
+        if (filteredPorts.length === 0) {
+            console.log("[DistFilter] No ports in this distance range!");
+            if (btn) {
+                var inner4 = btn.querySelector(".btn-content-wrapper");
+                if (inner4) inner4.textContent = "0 PORTS";
+            }
+            return;
+        }
+
+        _activeDistanceFilter = range;
+        _activeVesselCoords = vesselCoords;
+        filteredPortCodes = filteredPorts.map(function(p) { return p.code; });
+
+        rs.$patch(function(state) {
+            state.routeSelection.activePorts = filteredPorts;
+            state.routeSelection.isMinified = true;
+            state.routeSelection.doingDryOps = false;
+            state.routeSelection.metropolroute = false;
+            state.routeSelection.routeWasSuggested = false;
+            state.routeSelection.routeCreationStep = 2;
+        });
+
+        console.log("[DistFilter] Applied! routeCreationStep=2, activePorts count:", filteredPorts.length);
+
+        startMarkerFilter();
+
+        if (btn) {
+            var inner5 = btn.querySelector(".btn-content-wrapper");
+            if (inner5) inner5.textContent = range.label === "All" ? "DISTANCE" : range.label;
+        }
+
+        var mapStore = getStore("mapStore");
+        if (mapStore && mapStore.map) {
+            var bounds = [];
+            filteredPorts.forEach(function(p) {
+                bounds.push([parseFloat(p.lat), parseFloat(p.lon)]);
+            });
+            if (bounds.length > 0) {
+                try {
+                    mapStore.map.fitBounds(bounds, { padding: [50, 50] });
+                } catch (e) {
+                    console.log("[DistFilter] fitBounds error:", e);
+                }
+            }
+        }
+
+        setTimeout(removeOutOfRangeMarkers, 100);
+        setTimeout(removeOutOfRangeMarkers, 500);
+        setTimeout(removeOutOfRangeMarkers, 1000);
     }
 
     function createDropdown(btn) {
@@ -188,11 +252,11 @@
 
         var dropdown = document.createElement("div");
         dropdown.id = "rebel-dist-dropdown";
-        dropdown.style.cssText = "position:absolute;bottom:100%;left:0;background:#1a1a2e;border:1px solid #3a3a5e;border-radius:4px;min-width:120px;z-index:9999;margin-bottom:4px;";
+        dropdown.style.cssText = "position:absolute;bottom:100%;left:50%;transform:translateX(-50%);background:#1a1a2e;border:1px solid #3a3a5e;border-radius:4px;min-width:90px;max-width:110px;z-index:9999;margin-bottom:4px;";
 
         RANGES.forEach(function(range) {
             var item = document.createElement("div");
-            item.style.cssText = "padding:8px 12px;cursor:pointer;color:#fff;font-size:13px;";
+            item.style.cssText = "padding:6px 10px;cursor:pointer;color:#fff;font-size:12px;text-align:center;white-space:nowrap;";
             item.textContent = range.label;
             item.onmouseenter = function() { item.style.background = "#2a2a4e"; };
             item.onmouseleave = function() { item.style.background = "transparent"; };
@@ -200,7 +264,7 @@
                 e.stopPropagation();
                 dropdown.remove();
                 dropdownOpen = false;
-                applyFilter(range, btn);
+                applyDistanceFilter(range, btn);
             };
             dropdown.appendChild(item);
         });
@@ -246,12 +310,13 @@
     function reset() {
         injected = false;
         dropdownOpen = false;
+        stopMarkerFilter();
     }
 
     var obs = new MutationObserver(function() {
         var popup = document.querySelector("#createRoutePopup");
         if (popup && !document.getElementById("rebel-dist-btn")) inject();
-        if (!popup) reset();
+        if (!popup && injected) reset();
     });
     obs.observe(document.body, { childList: true, subtree: true });
 

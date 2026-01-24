@@ -1,19 +1,24 @@
 // ==UserScript==
-// @name        Shipping Manager - VIP Vessel Shop
+// @name        ShippingManager - VIP Vessel Shop (RebelShipMenu)
 // @description Quick access to purchase all VIP vessels as much as you have points for ;)
-// @version     2.12
+// @version     2.24
 // @author      https://github.com/justonlyforyou/
-// @order       20
+// @order       997
 // @match       https://shippingmanager.cc/*
+// @grant       none
 // @run-at      document-end
 // @enabled     false
+// @RequireRebelShipMenu true
 // ==/UserScript==
+/* globals addSubMenu */
 
 (function() {
     'use strict';
 
+    var POINTS_ICON_URL = '/images/icons/points_icon.svg';
+
     // VIP Vessels data (IDs 59-63)
-    const VIP_VESSELS = [
+    var VIP_VESSELS = [
         { id: 59, name: 'Starliner', type: 'Container', points: 2500 },
         { id: 60, name: 'MS Sundown', type: 'Tanker', points: 3500 },
         { id: 61, name: 'MS Anaconda', type: 'Container', points: 4500 },
@@ -24,13 +29,13 @@
     // Get Pinia stores from Vue app
     function getStores() {
         try {
-            const appEl = document.querySelector('#app');
+            var appEl = document.querySelector('#app');
             if (!appEl || !appEl.__vue_app__) {
                 console.error('[VIPVessel] Vue app not found');
                 return null;
             }
-            const app = appEl.__vue_app__;
-            const pinia = app._context.provides.pinia || app.config.globalProperties.$pinia;
+            var app = appEl.__vue_app__;
+            var pinia = app._context.provides.pinia || app.config.globalProperties.$pinia;
             if (!pinia || !pinia._s) {
                 console.error('[VIPVessel] Pinia store not found');
                 return null;
@@ -47,190 +52,48 @@
         }
     }
 
-    // RebelShip Menu Logo SVG (simple ship icon)
-    const REBELSHIP_LOGO = '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><path d="M20 21c-1.39 0-2.78-.47-4-1.32-2.44 1.71-5.56 1.71-8 0C6.78 20.53 5.39 21 4 21H2v2h2c1.38 0 2.74-.35 4-.99 2.52 1.29 5.48 1.29 8 0 1.26.65 2.62.99 4 .99h2v-2h-2zM3.95 19H4c1.6 0 3.02-.88 4-2 .98 1.12 2.4 2 4 2s3.02-.88 4-2c.98 1.12 2.4 2 4 2h.05l1.89-6.68c.08-.26.06-.54-.06-.78s-.34-.42-.6-.5L20 10.62V6c0-1.1-.9-2-2-2h-3V1H9v3H6c-1.1 0-2 .9-2 2v4.62l-1.29.42c-.26.08-.48.26-.6.5s-.15.52-.06.78L3.95 19zM6 6h12v3.97L12 8 6 9.97V6z"/></svg>';
-
-    // Wait for messaging icon using MutationObserver
-    function waitForMessagingIcon(callback) {
-        var messagingIcon = document.querySelector('div.messaging.cursor-pointer') || document.querySelector('.messaging');
-        if (messagingIcon) { callback(messagingIcon); return; }
-        var observer = new MutationObserver(function(mutations, obs) {
-            var icon = document.querySelector('div.messaging.cursor-pointer') || document.querySelector('.messaging');
-            if (icon) { obs.disconnect(); callback(icon); }
-        });
-        observer.observe(document.body, { childList: true, subtree: true });
-        setTimeout(function() { observer.disconnect(); }, 5000);
-    }
-
-    function getOrCreateRebelShipMenu(callback) {
-        var existingDropdown = document.getElementById('rebelship-dropdown');
-        if (existingDropdown) { if (callback) callback(existingDropdown); return existingDropdown; }
-
-        if (window._rebelshipMenuCreating) { setTimeout(function() { getOrCreateRebelShipMenu(callback); }, 100); return null; }
-        window._rebelshipMenuCreating = true;
-
-        existingDropdown = document.getElementById('rebelship-dropdown');
-        if (existingDropdown) { window._rebelshipMenuCreating = false; if (callback) callback(existingDropdown); return existingDropdown; }
-
-        waitForMessagingIcon(function(messagingIcon) {
-            var container = document.createElement('div');
-            container.id = 'rebelship-menu';
-            container.style.cssText = 'position:relative;display:inline-block;vertical-align:middle;margin-right:4px !important;z-index:999999;';
-
-            var btn = document.createElement('button');
-            btn.id = 'rebelship-menu-btn';
-            btn.innerHTML = REBELSHIP_LOGO;
-            btn.title = 'RebelShip Menu';
-            btn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:28px;height:28px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:white;border:none;border-radius:6px;cursor:pointer;box-shadow:0 2px 4px rgba(0,0,0,0.2);';
-
-            var dropdown = document.createElement('div');
-            dropdown.id = 'rebelship-dropdown';
-            dropdown.className = 'rebelship-dropdown';
-            dropdown.style.cssText = 'display:none;position:fixed;background:#1f2937;border:1px solid #374151;border-radius:4px;min-width:200px;z-index:999999;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
-
-            container.appendChild(btn);
-            document.body.appendChild(dropdown);
-
-            btn.addEventListener('click', function(e) {
-                e.stopPropagation();
-                if (dropdown.style.display === 'block') {
-                    dropdown.style.display = 'none';
-                } else {
-                    var rect = btn.getBoundingClientRect();
-                    dropdown.style.top = (rect.bottom + 4) + 'px';
-                    dropdown.style.right = (window.innerWidth - rect.right) + 'px';
-                    dropdown.style.display = 'block';
-                }
-            });
-
-            document.addEventListener('click', function(e) {
-                if (!container.contains(e.target) && !dropdown.contains(e.target)) {
-                    dropdown.style.display = 'none';
-                }
-            });
-
-            if (messagingIcon.parentNode) {
-                messagingIcon.parentNode.insertBefore(container, messagingIcon);
-            }
-
-            window._rebelshipMenuCreating = false;
-            if (callback) callback(dropdown);
-        });
-        return null;
-    }
-
-    function addMenuItem(label, hasSubmenu, onClick, scriptOrder) {
-        function doAddItem(dropdown) {
-            if (dropdown.querySelector('[data-rebelship-item="' + label + '"]')) {
-                return dropdown.querySelector('[data-rebelship-item="' + label + '"]');
-            }
-
-            var item = document.createElement('div');
-            item.dataset.rebelshipItem = label;
-            item.dataset.order = scriptOrder;
-            item.style.cssText = 'position:relative;';
-
-            var itemBtn = document.createElement('div');
-            itemBtn.style.cssText = 'padding:10px 12px;cursor:pointer;color:#fff;font-size:13px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #374151;';
-            itemBtn.innerHTML = '<span>' + label + '</span>' + (hasSubmenu ? '<span style="font-size:14px;">&#9664;</span>' : '');
-
-            itemBtn.addEventListener('mouseenter', function() { itemBtn.style.background = '#374151'; });
-            itemBtn.addEventListener('mouseleave', function() { itemBtn.style.background = 'transparent'; });
-
-            if (!hasSubmenu && onClick) {
-                itemBtn.addEventListener('click', onClick);
-            }
-
-            item.appendChild(itemBtn);
-
-            var items = dropdown.querySelectorAll('[data-rebelship-item]');
-            var insertBefore = null;
-            for (var i = 0; i < items.length; i++) {
-                var existingOrder = parseInt(items[i].dataset.order, 10);
-                if (scriptOrder < existingOrder) {
-                    insertBefore = items[i];
-                    break;
-                }
-            }
-            if (insertBefore) {
-                dropdown.insertBefore(item, insertBefore);
-            } else {
-                dropdown.appendChild(item);
-            }
-            return item;
-        }
-
-        var dropdown = document.getElementById('rebelship-dropdown');
-        if (dropdown) { return doAddItem(dropdown); }
-        getOrCreateRebelShipMenu(function(dd) { doAddItem(dd); });
-        return null;
-    }
-
-    // Create VIP Vessel submenu
+    // Register submenu with all VIP vessels
     function createVIPVesselMenu() {
-        const menuItem = addMenuItem('Buy VIP Vessel', true, null, 20);
-        if (!menuItem) return;
-
-        // Check if submenu already exists
-        if (menuItem.querySelector('.vip-submenu')) return;
-
-        // Create submenu
-        const submenu = document.createElement('div');
-        submenu.className = 'vip-submenu';
-        submenu.style.cssText = 'display:none;position:absolute;left:0;top:0;transform:translateX(-100%);background:#1f2937;border:1px solid #374151;border-radius:4px;min-width:200px;z-index:99999;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
-
-        VIP_VESSELS.forEach(vessel => {
-            const vesselItem = document.createElement('div');
-            vesselItem.style.cssText = 'padding:10px 12px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #374151;';
-            vesselItem.innerHTML = '<span style="color:#fff;font-weight:500;">' + vessel.name + '</span><span style="color:#fbbf24;font-size:11px;">' + vessel.points.toLocaleString() + ' pts</span>';
-            vesselItem.addEventListener('mouseenter', () => vesselItem.style.background = '#374151');
-            vesselItem.addEventListener('mouseleave', () => vesselItem.style.background = 'transparent');
-            vesselItem.addEventListener('click', () => {
-                var dropdown = document.getElementById('rebelship-dropdown'); if (dropdown) dropdown.style.display = 'none';
-                openVesselInGameModal(vessel.id);
-            });
-            submenu.appendChild(vesselItem);
+        var subItems = VIP_VESSELS.map(function(vessel) {
+            return {
+                label: vessel.name,
+                price: vessel.points.toLocaleString(),
+                icon: POINTS_ICON_URL,
+                onClick: function() {
+                    openVesselInGameModal(vessel.id);
+                }
+            };
         });
-
-        menuItem.appendChild(submenu);
-
-        // Show submenu on hover
-        menuItem.addEventListener('mouseenter', () => submenu.style.display = 'block');
-        menuItem.addEventListener('mouseleave', () => submenu.style.display = 'none');
-
-        console.log('[VIPVessel] Menu item added');
+        addSubMenu('Buy VIP Vessel', subItems, 997);
+        console.log('[VIPVessel] Submenu registered with ' + subItems.length + ' vessels');
     }
 
     // Fetch vessel data and open game modal
-    async function openVesselInGameModal(vesselId) {
-        const stores = getStores();
+    function openVesselInGameModal(vesselId) {
+        var stores = getStores();
         if (!stores) {
             alert('Failed to access game stores. Try refreshing the page.');
             return;
         }
 
-        try {
-            console.log('[VIPVessel] Fetching vessel data for ID:', vesselId);
-
-            const response = await fetch('/api/vessel/show-acquirable-vessel', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ vessel_id: vesselId }),
-                credentials: 'include'
-            });
-
-            const data = await response.json();
-
+        fetch('/api/vessel/show-acquirable-vessel', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ vessel_id: vesselId }),
+            credentials: 'include'
+        })
+        .then(function(response) { return response.json(); })
+        .then(function(data) {
             if (!data.data || !data.data.vessels_for_sale) {
                 alert('Failed to load vessel data');
                 return;
             }
 
-            const vesselData = data.data.vessels_for_sale;
-            const vipInfo = VIP_VESSELS.find(v => v.id === vesselId);
+            var vesselData = data.data.vessels_for_sale;
+            var vipInfo = VIP_VESSELS.find(function(v) { return v.id === vesselId; });
 
             // Build full product object matching game's expected structure
-            const product = {
+            var product = {
                 id: vesselId,
                 name: vesselData.name,
                 sku: 'vip_vessel',
@@ -274,13 +137,11 @@
                 product: product,
                 componentProps: { vip_vessel: vesselData, product: product }
             });
-
-            console.log('[VIPVessel] Modal opened for:', vesselData.name);
-
-        } catch (err) {
+        })
+        .catch(function(err) {
             console.error('[VIPVessel] Error:', err);
             alert('Error loading vessel: ' + err.message);
-        }
+        });
     }
 
     // Initialize
@@ -289,7 +150,7 @@
     }
 
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => setTimeout(init, 2000));
+        document.addEventListener('DOMContentLoaded', function() { setTimeout(init, 2000); });
     } else {
         setTimeout(init, 2000);
     }

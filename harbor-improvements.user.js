@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         Shipping Manager - Game Bug-Fix: Move down harbor details button
+// @name         ShippingManager - Game Bug-Fix: Move down harbor details button
 // @namespace    https://rebelship.org/
 // @version      2.7
 // @description  Just a simple repositioning of the details button on harbor menu.
