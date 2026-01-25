@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name        ShippingManager - VIP Vessel Shop (RebelShipMenu)
 // @description Quick access to purchase all VIP vessels as much as you have points for ;)
-// @version     2.24
+// @version     2.25
 // @author      https://github.com/justonlyforyou/
-// @order       997
+// @order        8
 // @match       https://shippingmanager.cc/*
 // @grant       none
 // @run-at      document-end
@@ -150,8 +150,8 @@
     }
 
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', function() { setTimeout(init, 2000); });
+        document.addEventListener('DOMContentLoaded', init);
     } else {
-        setTimeout(init, 2000);
+        init();
     }
 })();

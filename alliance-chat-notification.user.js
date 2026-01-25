@@ -3,7 +3,7 @@
 // @description Shows a red dot on Alliance button when there are unread messages
 // @version     2.14
 // @author      https://github.com/justonlyforyou/
-// @order       2
+// @order        51
 // @match       https://shippingmanager.cc/*
 // @run-at      document-end
 // @grant       none

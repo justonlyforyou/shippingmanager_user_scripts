@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name        ShippingManager - Export your messages (RebelShipMenu)
 // @description Export all DM's as CSV or JSON
-// @version     1.24
+// @version     1.25
 // @author      https://github.com/justonlyforyou/
-// @order       996
+// @order        11
 // @match       https://shippingmanager.cc/*
 // @grant       none
 // @run-at      document-end
@@ -310,8 +310,8 @@
     }
 
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', function() { setTimeout(init, 2000); });
+        document.addEventListener('DOMContentLoaded', init);
     } else {
-        setTimeout(init, 2000);
+        init();
     }
 })();

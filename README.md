@@ -22,6 +22,7 @@ A collection of user scripts for [Shipping Manager](https://shippingmanager.cc/)
    - [Bunker Price Display](#bunker-price-displayuserjs---bunker-prices)
    - [Forecast Calendar](#forecast-calendaruserjs---forecast-calendar)
    - [Demand Summary](#demand-summaryuserjs---demand-summary)
+   - [API Stats Monitor](#api-statsuserjs---api-stats-monitor)
    - [Distance Filter](#enable-distance-filteruserjs---distance-filter)
    - [Map Unlock](#map-unlockuserjs---premium-features)
    - [Fast Delivery](#fast-deliveryuserjs---fast-delivery)
@@ -75,7 +76,7 @@ Previous versions of these scripts worked with Tampermonkey, but the current arc
 | Script | Version | Description |
 |--------|---------|-------------|
 | rebelship-header-optimizer.user.js | 3.51 | Header UI optimization, mobile layout, resize handling |
-| departmanager.user.js | 3.25 | Auto-Bunker, Auto-Depart, Route Settings, Min Utilization |
+| departmanager.user.js | 3.27 | Auto-Bunker, Auto-Depart, Route Settings, Min Utilization |
 | auto-repair.user.js | 2.36 | Auto-repair at wear threshold |
 | auto-happy-stuff.user.js | 1.36 | Auto salary adjustment for crew/management morale |
 | auto-coop-tickets-display.user.js | 5.35 | Co-Op display in header, Auto-COOP sending |
@@ -87,9 +88,10 @@ Previous versions of these scripts worked with Tampermonkey, but the current arc
 | bunker-price-display.user.js | 3.20 | Fuel/CO2 prices and fill level in header |
 | forecast-calendar.user.js | 3.27 | Page-flip calendar with price forecasts |
 | demand-summary.user.js | 4.43 | Port demand with capacity overview |
-| enable-distance-filter.user.js | 9.18 | Filter ports by distance |
+| api-stats.user.js | 1.6 | Monitor and analyze API call patterns |
+| enable-distance-filter.user.js | 9.19 | Filter ports by distance |
 | map-unlock.user.js | 1.10 | Premium Map Themes, Tanker Ops, Metropolis, Zoom |
-| fast-delivery.user.js | 1.9 | Fast vessel delivery via drydock bug |
+| fast-delivery.user.js | 1.10 | Fast vessel delivery via drydock bug |
 | depart-all-loop.user.js | 2.6 | Clicks Depart All until all departed |
 | alliance-chat-notification.user.js | 2.14 | Red dot for unread alliance messages |
 | alliance-search.user.js | 3.46 | Search all open alliances |
@@ -362,9 +364,35 @@ Shows port demand with capacity overview.
 
 ---
 
+### api-stats.user.js - API Stats Monitor
+
+**Version:** 1.6 | **Run-at:** document-start
+
+Monitors all API calls to shippingmanager.cc in the background. Useful for debugging, rate limit monitoring, and understanding game API patterns.
+
+**Access:** RebelShip Menu > **"API Stats"** or press **Alt+A**
+
+#### Features
+
+- Intercepts all fetch and XHR requests to track API usage
+- Shows call counts per endpoint over configurable time ranges (5/15/30/60 min)
+- Color-coded endpoints: GET (blue), POST (green), PUT (orange), DELETE (red)
+- Persists data across sessions via RebelShipBridge storage
+- Auto-cleanup of calls older than 61 minutes
+- Debounced saving to minimize storage overhead
+
+#### Use Cases
+
+- Monitor how often scripts are calling specific endpoints
+- Identify potential rate limiting issues (game limits: 1000 req/15min global, 45 msg/min for messages)
+- Debug script behavior by seeing which API calls are made
+- Understand game API structure
+
+---
+
 ### enable-distance-filter.user.js - Distance Filter
 
-**Version:** 9.18
+**Version:** 9.19
 
 Filters destination ports by distance when creating new routes.
 

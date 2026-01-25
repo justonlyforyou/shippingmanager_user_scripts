@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         ShippingManager - Fuel / CO2 Price Forecast Calendar (RebelShipMenu)
 // @namespace    http://tampermonkey.net/
-// @version      3.27
+// @version      3.28
 // @description  Embedded forecast calendar with page-flip navigation
 // @author       https://github.com/justonlyforyou/
-// @order        18
+// @order        13
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-end
@@ -717,10 +717,9 @@
         addMenuItem('Bunker Forecast', openForecast, 18);
     }
 
-    // Wait for page to be ready (delay to ensure game UI is loaded)
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', function() { setTimeout(init, 2000); });
+        document.addEventListener('DOMContentLoaded', init);
     } else {
-        setTimeout(init, 2000);
+        init();
     }
 })();

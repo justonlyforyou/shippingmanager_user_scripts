@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         ShippingManager - Auto Repair
 // @namespace    https://rebelship.org/
-// @version      2.36
+// @version      2.41
 // @description  Auto-repair vessels when wear reaches threshold
 // @author       https://github.com/justonlyforyou/
-// @order        21
+// @order        7
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-end
@@ -28,7 +28,7 @@
     var settings = {
         enabled: false,
         wearThreshold: 5,      // Repair when wear >= this %
-        minCashAfterRepair: 0,  // Keep at least this much cash
+        minCashAfterRepair: 1000000,  // Keep at least this much cash (min 1M)
         notifyIngame: true,    // Show in-game toast notifications
         notifySystem: false    // Send system/push notifications
     };
@@ -72,7 +72,7 @@
                 settings = {
                     enabled: record.enabled !== undefined ? record.enabled : false,
                     wearThreshold: record.wearThreshold !== undefined ? record.wearThreshold : 5,
-                    minCashAfterRepair: record.minCashAfterRepair !== undefined ? record.minCashAfterRepair : 0,
+                    minCashAfterRepair: record.minCashAfterRepair !== undefined ? Math.max(record.minCashAfterRepair, 1000000) : 1000000,
                     notifyIngame: record.notifyIngame !== undefined ? record.notifyIngame : true,
                     notifySystem: record.notifySystem !== undefined ? record.notifySystem : false
                 };
@@ -264,9 +264,7 @@
             clearInterval(monitorInterval);
         }
         monitorInterval = setInterval(runRepairCheck, CHECK_INTERVAL_MS);
-        log('Monitoring started (15 min interval)');
-        // Run immediately on start
-        runRepairCheck();
+        log('Monitoring started (15 min interval) - waiting for first interval');
     }
 
     function stopMonitoring() {
@@ -547,10 +545,10 @@
                     <label style="display:block;margin-bottom:8px;font-size:14px;font-weight:700;color:#01125d;">\
                         Minimum Cash Balance\
                     </label>\
-                    <input type="number" id="yf-mincash" min="0" step="1000" value="' + settings.minCashAfterRepair + '"\
+                    <input type="number" id="yf-mincash" min="1000000" step="100000" value="' + settings.minCashAfterRepair + '"\
                            class="redesign" style="width:100%;height:2.5rem;padding:0 1rem;background:#ebe9ea;border:0;border-radius:7px;color:#01125d;font-size:16px;font-family:Lato,sans-serif;text-align:center;box-sizing:border-box;">\
                     <div style="font-size:12px;color:#626b90;margin-top:6px;">\
-                        Keep at least this much cash after repairs\
+                        Keep at least this much cash after repairs (minimum $1,000,000)\
                     </div>\
                 </div>\
                 <div style="margin-bottom:24px;">\
@@ -594,8 +592,8 @@
                 alert('Wear threshold must be between 1 and 99');
                 return;
             }
-            if (isNaN(minCash) || minCash < 0) {
-                alert('Minimum cash must be 0 or greater');
+            if (isNaN(minCash) || minCash < 1000000) {
+                alert('Minimum cash must be at least $1,000,000');
                 return;
             }
 
@@ -642,16 +640,17 @@
         }
 
         uiInitialized = true;
-        addMenuItem('Auto Repair', openSettingsModal, 21);
-        log('Menu item added');
     }
 
     async function init() {
-        log('Initializing v2.34...');
+        log('Initializing v2.41...');
+
+        // Register menu immediately - no DOM needed for IPC call
+        addMenuItem('Auto Repair', openSettingsModal, 21);
+        initUI();
 
         await loadSettings();
         setupRepairModalWatcher();
-        initUI();
 
         if (settings.enabled) {
             setTimeout(startMonitoring, 3000);
@@ -668,13 +667,10 @@
         });
     };
 
-    // Wait for page ready - wait 2s for Vue to load
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', function() {
-            setTimeout(init, 2000);
-        });
+        document.addEventListener('DOMContentLoaded', init);
     } else {
-        setTimeout(init, 2000);
+        init();
     }
 
     // Register for background job system

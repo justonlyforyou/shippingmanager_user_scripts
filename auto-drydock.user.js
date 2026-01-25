@@ -2,8 +2,8 @@
 // @name         ShippingManager - Auto Drydock
 // @namespace    http://tampermonkey.net/
 // @description  Automatic drydock management with bug prevention and moor option
-// @version      1.1
-// @order        25
+// @version      1.5
+// @order        4
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
 // @grant        none
@@ -27,7 +27,7 @@
     // Default settings
     var DEFAULT_SETTINGS = {
         autoDrydockEnabled: false,
-        autoDrydockThreshold: 200,
+        autoDrydockThreshold: 75,
         autoDrydockMinCash: 1000000,
         autoDrydockSpeed: 'minimum',
         autoDrydockType: 'major',
@@ -995,18 +995,19 @@
         }
 
         uiInitialized = true;
-        if (typeof addMenuItem === 'function') {
-            addMenuItem('Auto Drydock', openSettingsModal, 25);
-        }
-        log('Menu item added');
     }
 
     async function init() {
-        log('Initializing v1.1...');
+        log('Initializing v1.5...');
+
+        // Register menu immediately - no DOM needed for IPC call
+        if (typeof addMenuItem === 'function') {
+            addMenuItem('Auto Drydock', openSettingsModal, 25);
+        }
+        initUI();
 
         await loadSettings();
         setupDrydockModalWatcher();
-        initUI();
 
         if (settingsCache && settingsCache.autoDrydockEnabled) {
             setTimeout(startAutoRun, 3000);
@@ -1023,13 +1024,10 @@
         });
     };
 
-    // Wait for page ready
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', function() {
-            setTimeout(init, 2000);
-        });
+        document.addEventListener('DOMContentLoaded', init);
     } else {
-        setTimeout(init, 2000);
+        init();
     }
 
     // Register for background job system

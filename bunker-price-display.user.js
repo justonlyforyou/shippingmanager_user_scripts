@@ -4,7 +4,7 @@
 // @version      3.20
 // @description  Shows current fuel and CO2 bunker prices with fill levels
 // @author       https://github.com/justonlyforyou/
-// @order        3
+// @order        53
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-end

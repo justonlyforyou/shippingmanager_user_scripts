@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         ShippingManager - Smuggler's Eye
 // @namespace    https://rebelship.org/
-// @version      1.1
+// @version      1.6
 // @description  Auto-adjust cargo prices: 4% instant markup, gradual increase, max guards on pirate routes
 // @author       https://github.com/justonlyforyou/
-// @order        24
+// @order        14
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-end
@@ -128,17 +128,25 @@
         }
     }
 
-    // ========== AUTOPRICE CACHE ==========
+    // ========== AUTOPRICE CACHE (Shared with DepartManager) ==========
     async function loadAutoPriceCache() {
-        var cached = await dbGet('autoPriceCache');
-        if (cached) {
-            autoPriceCacheData = cached;
+        try {
+            var result = await window.RebelShipBridge.storage.get('DepartManager', 'data', 'autoPriceCache');
+            if (result) {
+                autoPriceCacheData = JSON.parse(result);
+            }
+        } catch (e) {
+            console.error('[SmugglersEye] loadAutoPriceCache error:', e);
         }
         return autoPriceCacheData;
     }
 
     async function saveAutoPriceCache() {
-        await dbSet('autoPriceCache', autoPriceCacheData);
+        try {
+            await window.RebelShipBridge.storage.set('DepartManager', 'data', 'autoPriceCache', JSON.stringify(autoPriceCacheData));
+        } catch (e) {
+            console.error('[SmugglersEye] saveAutoPriceCache error:', e);
+        }
     }
 
     function getAutoprice(routeId, vesselType) {
@@ -791,10 +799,11 @@
         settingsContent.innerHTML = '\
             <div style="padding:20px;max-width:400px;margin:0 auto;font-family:Lato,sans-serif;color:#01125d;">\
                 <div style="margin-bottom:20px;">\
-                    <label style="display:flex;align-items:center;cursor:pointer;font-weight:700;font-size:16px;">\
+                    <label style="display:flex;align-items:flex-start;cursor:pointer;font-weight:700;font-size:16px;">\
                         <input type="checkbox" id="se-enabled" ' + (settings.enabled ? 'checked' : '') + '\
-                               style="width:20px;height:20px;margin-right:12px;accent-color:#0db8f4;cursor:pointer;">\
-                        <span>Enable Smuggler\'s Eye</span>\
+                               style="width:20px;height:20px;margin-right:12px;margin-top:2px;flex-shrink:0;accent-color:#0db8f4;cursor:pointer;">\
+                        <span style="text-align:left;"><span>Enable Smuggler\'s Eye</span>\
+                        <span style="display:block;font-size:12px;color:#626b90;margin-top:4px;font-weight:400;">This feature runs exclusively in the background. It does not interact with Create Route or Edit Route dialogs and will not modify any sliders or settings there.</span></span>\
                     </label>\
                 </div>\
                 <div id="se-options-wrapper" style="margin-bottom:20px;' + (settings.enabled ? '' : 'opacity:0.5;pointer-events:none;') + '">\
@@ -964,18 +973,19 @@
         }
 
         uiInitialized = true;
-        addMenuItem("Smuggler's Eye", openSettingsModal, 24);
-        log('Menu item added');
     }
 
     async function init() {
-        log('Initializing v1.0...');
+        log('Initializing v1.6...');
+
+        // Register menu immediately - no DOM needed for IPC call
+        addMenuItem("Smuggler's Eye", openSettingsModal, 24);
+        initUI();
 
         await loadSettings();
         await loadAutoPriceCache();
         await loadGradualIncreaseData();
         setupModalWatcher();
-        initUI();
 
         if (settings.enabled) {
             setTimeout(startMonitoring, 3000);
@@ -992,13 +1002,10 @@
         });
     };
 
-    // Wait for page ready
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', function() {
-            setTimeout(init, 2000);
-        });
+        document.addEventListener('DOMContentLoaded', init);
     } else {
-        setTimeout(init, 2000);
+        init();
     }
 
     // Register for background job system

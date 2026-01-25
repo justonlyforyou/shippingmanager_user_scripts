@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name        ShippingManager - Open Alliance Search
 // @description Search all open alliances
-// @version     3.46
+// @version     3.47
 // @author      https://github.com/justonlyforyou/
-// @order       9
+// @order        1
 // @match       https://shippingmanager.cc/*
 // @grant       none
 // @run-at      document-end
@@ -895,16 +895,16 @@
 
     // Initialize (async)
     async function init() {
-        // Check index state
+        // Add menu item immediately for fast UI response
+        addMenuItem('Alliance Search', function() {
+            openAllianceSearchModal();
+        }, 10);
+
+        // Check index state in background
         await checkIndexReady();
 
         // Setup navigation watcher to close modal on navigation
         setupNavigationWatcher();
-
-        // Add menu item (native browser menu via bridge)
-        addMenuItem('Alliance Search', function() {
-            openAllianceSearchModal();
-        }, 10);
 
         // Start background download if needed
         startBackgroundDownload();
@@ -913,8 +913,8 @@
     }
 
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', function() { setTimeout(init, 500); });
+        document.addEventListener('DOMContentLoaded', init);
     } else {
-        setTimeout(init, 500);
+        init();
     }
 })();

@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         ShippingManager - Game Bug-Using: Fast Delivery for built vessels
 // @namespace    https://rebelship.org/
-// @version      1.9
+// @version      1.10
 // @description  Fast delivery for built vessels via drydock exploit. Sends pending vessels in drydock, for resetting the delivery time with the maintenance end ;)
 // @author       https://github.com/justonlyforyou/
-// @order        5
+// @order        57
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-end
@@ -410,92 +410,175 @@
     }
 
     // ============================================
-    // CONFIRMATION MODAL (using routeResearch like forecast/auto-repair)
+    // CONFIRMATION MODAL (Custom modal like auto-repair)
     // ============================================
+    var isFDModalOpen = false;
+
+    function injectFDModalStyles() {
+        if (document.getElementById('fd-modal-styles')) return;
+
+        var style = document.createElement('style');
+        style.id = 'fd-modal-styles';
+        style.textContent = [
+            '@keyframes fd-fade-in{0%{opacity:0}to{opacity:1}}',
+            '@keyframes fd-fade-out{0%{opacity:1}to{opacity:0}}',
+            '@keyframes fd-drop-down{0%{transform:translateY(-10px)}to{transform:translateY(0)}}',
+            '@keyframes fd-push-up{0%{transform:translateY(0)}to{transform:translateY(-10px)}}',
+            '#fd-modal-wrapper{align-items:flex-start;display:flex;height:100vh;justify-content:center;left:0;overflow:hidden;position:absolute;top:0;width:100vw;z-index:9999}',
+            '#fd-modal-wrapper #fd-modal-background{animation:fd-fade-in .15s linear forwards;background-color:rgba(0,0,0,.5);height:100%;left:0;opacity:0;position:absolute;top:0;width:100%}',
+            '#fd-modal-wrapper.hide #fd-modal-background{animation:fd-fade-out .15s linear forwards}',
+            '#fd-modal-wrapper #fd-modal-content-wrapper{animation:fd-drop-down .15s linear forwards,fd-fade-in .15s linear forwards;height:100%;max-width:700px;opacity:0;position:relative;width:1140px;z-index:9001}',
+            '#fd-modal-wrapper.hide #fd-modal-content-wrapper{animation:fd-push-up .15s linear forwards,fd-fade-out .15s linear forwards}',
+            '@media screen and (min-width:1200px){#fd-modal-wrapper #fd-modal-content-wrapper{max-width:460px}}',
+            '@media screen and (min-width:992px) and (max-width:1199px){#fd-modal-wrapper #fd-modal-content-wrapper{max-width:460px}}',
+            '@media screen and (min-width:769px) and (max-width:991px){#fd-modal-wrapper #fd-modal-content-wrapper{max-width:460px}}',
+            '@media screen and (max-width:768px){#fd-modal-wrapper #fd-modal-content-wrapper{max-width:100%}}',
+            '#fd-modal-wrapper #fd-modal-container{background-color:#fff;height:100vh;overflow:hidden;position:absolute;width:100%}',
+            '#fd-modal-container .modal-header{align-items:center;background:#626b90;border-radius:0;color:#fff;display:flex;height:31px;justify-content:space-between;text-align:left;width:100%;border:0!important;padding:0 .5rem!important}',
+            '#fd-modal-container .header-title{font-weight:700;text-transform:uppercase;width:90%}',
+            '#fd-modal-container .header-icon{cursor:pointer;height:1.2rem;margin:0 .5rem}',
+            '#fd-modal-container .header-icon.closeModal{height:19px;width:19px}',
+            '#fd-modal-container #fd-modal-content{height:calc(100% - 31px);max-width:inherit;overflow:hidden;display:flex;flex-direction:column}',
+            '#fd-modal-container #fd-central-container{background-color:#e9effd;margin:0;overflow-x:hidden;overflow-y:auto;width:100%;flex:1;padding:10px 15px}',
+            '#fd-modal-wrapper.hide{pointer-events:none}'
+        ].join('');
+        document.head.appendChild(style);
+    }
+
+    function closeFDModal() {
+        if (!isFDModalOpen) return;
+        log('Closing FD modal');
+        isFDModalOpen = false;
+        var modalWrapper = document.getElementById('fd-modal-wrapper');
+        if (modalWrapper) {
+            modalWrapper.classList.add('hide');
+        }
+        isProcessing = false;
+        updateButtonStates();
+    }
+
     function showConfirmationModal(vesselIds, totalCost, cash) {
-        const modalStore = getModalStore();
-        if (!modalStore) {
-            log('Modal store not found');
-            isProcessing = false;
-            updateButtonStates();
-            return;
+        // Close any open game modal first
+        var modalStore = getModalStore();
+        if (modalStore && modalStore.closeAll) {
+            modalStore.closeAll();
         }
 
-        const vesselCount = vesselIds.length;
-        const canAfford = cash >= totalCost;
+        injectFDModalStyles();
 
-        // Open routeResearch modal
-        modalStore.open('routeResearch');
+        var existing = document.getElementById('fd-modal-wrapper');
+        if (existing) {
+            existing.remove();
+        }
 
-        setTimeout(() => {
-            // Change title
-            if (modalStore.modalSettings) {
-                modalStore.modalSettings.title = 'Fast Delivery';
-                modalStore.modalSettings.navigation = [];
-                modalStore.modalSettings.controls = [];
-            }
+        var headerEl = document.querySelector('header');
+        var headerHeight = headerEl ? headerEl.offsetHeight : 89;
 
-            const centralContainer = document.getElementById('central-container');
-            if (!centralContainer) {
-                log('central-container not found');
-                isProcessing = false;
-                updateButtonStates();
-                return;
-            }
+        var modalWrapper = document.createElement('div');
+        modalWrapper.id = 'fd-modal-wrapper';
 
-            // Build confirmation using game-native styling (same as yard-foreman)
-            centralContainer.innerHTML = `
-                <div style="padding:20px;max-width:400px;margin:0 auto;font-family:Lato,sans-serif;color:#01125d;">
-                    <div style="margin-bottom:16px;font-size:14px;color:#626b90;line-height:1.5;">
-                        By triggering drydock immediately after build, delivery time is reduced to 60 minutes (the drydock duration).
-                        This is a known game exploit.
-                    </div>
+        var modalBackground = document.createElement('div');
+        modalBackground.id = 'fd-modal-background';
+        modalBackground.onclick = function() { closeFDModal(); };
 
-                    <div style="background:#ebe9ea;border-radius:8px;padding:16px;margin-bottom:16px;">
-                        <div style="display:flex;justify-content:space-between;margin-bottom:10px;">
-                            <span style="font-size:14px;color:#626b90;">Vessels</span>
-                            <span style="font-size:14px;font-weight:700;color:#01125d;">${vesselCount}</span>
-                        </div>
-                        <div style="display:flex;justify-content:space-between;margin-bottom:10px;">
-                            <span style="font-size:14px;color:#626b90;">Total Drydock Cost</span>
-                            <span style="font-size:14px;font-weight:700;color:#01125d;">$${totalCost.toLocaleString()}</span>
-                        </div>
-                        <div style="display:flex;justify-content:space-between;">
-                            <span style="font-size:14px;color:#626b90;">Your Cash</span>
-                            <span style="font-size:14px;font-weight:700;color:#01125d;">$${cash.toLocaleString()}</span>
-                        </div>
-                    </div>
+        var modalContentWrapper = document.createElement('div');
+        modalContentWrapper.id = 'fd-modal-content-wrapper';
 
-                    ${!canAfford ? `
-                        <div style="background:#fee2e2;border-radius:8px;padding:12px;margin-bottom:16px;color:#dc2626;font-size:13px;font-weight:500;">
-                            Not enough cash to afford drydock!
-                        </div>
-                    ` : ''}
+        var modalContainer = document.createElement('div');
+        modalContainer.id = 'fd-modal-container';
+        modalContainer.className = 'font-lato';
+        modalContainer.style.top = headerHeight + 'px';
+        modalContainer.style.height = 'calc(100vh - ' + headerHeight + 'px)';
+        modalContainer.style.maxHeight = 'calc(100vh - ' + headerHeight + 'px)';
 
-                    <div style="display:flex;gap:12px;justify-content:center;margin-top:24px;">
-                        <button id="fast-delivery-cancel" style="padding:10px 24px;background:linear-gradient(90deg,#d7d8db,#95969b);border:0;border-radius:6px;color:#393939;cursor:pointer;font-size:16px;font-weight:500;font-family:Lato,sans-serif;">
-                            Cancel
-                        </button>
-                        <button id="fast-delivery-confirm" ${!canAfford ? 'disabled' : ''} style="padding:10px 24px;background:${canAfford ? 'linear-gradient(180deg,#f59e0b,#d97706)' : '#9ca3af'};border:0;border-radius:6px;color:#fff;cursor:${canAfford ? 'pointer' : 'not-allowed'};font-size:16px;font-weight:500;font-family:Lato,sans-serif;opacity:${canAfford ? '1' : '0.6'};">
-                            Activate Fast Delivery
-                        </button>
-                    </div>
-                </div>
-            `;
+        var modalHeader = document.createElement('div');
+        modalHeader.className = 'modal-header';
 
-            // Event handlers
-            document.getElementById('fast-delivery-cancel').addEventListener('click', () => {
-                modalStore.closeAll();
-                isProcessing = false;
-                updateButtonStates();
-            });
+        var headerTitle = document.createElement('span');
+        headerTitle.className = 'header-title';
+        headerTitle.textContent = 'Fast Delivery';
 
-            document.getElementById('fast-delivery-confirm').addEventListener('click', async () => {
-                if (!canAfford) return;
-                await executeFastDelivery(vesselIds);
-                modalStore.closeAll();
-            });
-        }, 150);
+        var closeIcon = document.createElement('img');
+        closeIcon.className = 'header-icon closeModal';
+        closeIcon.src = '/images/icons/close_icon_new.svg';
+        closeIcon.onclick = function() { closeFDModal(); };
+        closeIcon.onerror = function() {
+            this.style.display = 'none';
+            var fallback = document.createElement('span');
+            fallback.textContent = 'X';
+            fallback.style.cssText = 'cursor:pointer;font-weight:bold;padding:0 .5rem;';
+            fallback.onclick = function() { closeFDModal(); };
+            this.parentNode.appendChild(fallback);
+        };
+
+        modalHeader.appendChild(headerTitle);
+        modalHeader.appendChild(closeIcon);
+
+        var modalContent = document.createElement('div');
+        modalContent.id = 'fd-modal-content';
+
+        var centralContainer = document.createElement('div');
+        centralContainer.id = 'fd-central-container';
+
+        var vesselCount = vesselIds.length;
+        var canAfford = cash >= totalCost;
+
+        var contentHtml = '<div style="padding:20px;max-width:400px;margin:0 auto;font-family:Lato,sans-serif;color:#01125d;">' +
+            '<div style="margin-bottom:16px;font-size:14px;color:#626b90;line-height:1.5;">' +
+                'By triggering drydock immediately after build, delivery time is reduced to 60 minutes (the drydock duration). ' +
+                'This is a known game exploit.' +
+            '</div>' +
+            '<div style="background:#ebe9ea;border-radius:8px;padding:16px;margin-bottom:16px;">' +
+                '<div style="display:flex;justify-content:space-between;margin-bottom:10px;">' +
+                    '<span style="font-size:14px;color:#626b90;">Vessels</span>' +
+                    '<span style="font-size:14px;font-weight:700;color:#01125d;">' + vesselCount + '</span>' +
+                '</div>' +
+                '<div style="display:flex;justify-content:space-between;margin-bottom:10px;">' +
+                    '<span style="font-size:14px;color:#626b90;">Total Drydock Cost</span>' +
+                    '<span style="font-size:14px;font-weight:700;color:#01125d;">$' + totalCost.toLocaleString() + '</span>' +
+                '</div>' +
+                '<div style="display:flex;justify-content:space-between;">' +
+                    '<span style="font-size:14px;color:#626b90;">Your Cash</span>' +
+                    '<span style="font-size:14px;font-weight:700;color:#01125d;">$' + cash.toLocaleString() + '</span>' +
+                '</div>' +
+            '</div>';
+
+        if (!canAfford) {
+            contentHtml += '<div style="background:#fee2e2;border-radius:8px;padding:12px;margin-bottom:16px;color:#dc2626;font-size:13px;font-weight:500;">' +
+                'Not enough cash to afford drydock!' +
+            '</div>';
+        }
+
+        contentHtml += '<div style="display:flex;gap:12px;justify-content:center;margin-top:24px;">' +
+            '<button id="fast-delivery-cancel" style="padding:10px 24px;background:linear-gradient(90deg,#d7d8db,#95969b);border:0;border-radius:6px;color:#393939;cursor:pointer;font-size:16px;font-weight:500;font-family:Lato,sans-serif;">' +
+                'Cancel' +
+            '</button>' +
+            '<button id="fast-delivery-confirm"' + (!canAfford ? ' disabled' : '') + ' style="padding:10px 24px;background:' + (canAfford ? 'linear-gradient(180deg,#f59e0b,#d97706)' : '#9ca3af') + ';border:0;border-radius:6px;color:#fff;cursor:' + (canAfford ? 'pointer' : 'not-allowed') + ';font-size:16px;font-weight:500;font-family:Lato,sans-serif;opacity:' + (canAfford ? '1' : '0.6') + ';">' +
+                'Activate Fast Delivery' +
+            '</button>' +
+        '</div></div>';
+
+        centralContainer.innerHTML = contentHtml;
+
+        modalContent.appendChild(centralContainer);
+        modalContainer.appendChild(modalHeader);
+        modalContainer.appendChild(modalContent);
+        modalContentWrapper.appendChild(modalContainer);
+        modalWrapper.appendChild(modalBackground);
+        modalWrapper.appendChild(modalContentWrapper);
+        document.body.appendChild(modalWrapper);
+
+        isFDModalOpen = true;
+
+        document.getElementById('fast-delivery-cancel').addEventListener('click', function() {
+            closeFDModal();
+        });
+
+        document.getElementById('fast-delivery-confirm').addEventListener('click', async function() {
+            if (!canAfford) return;
+            await executeFastDelivery(vesselIds);
+            closeFDModal();
+        });
     }
 
     async function executeFastDelivery(vesselIds) {

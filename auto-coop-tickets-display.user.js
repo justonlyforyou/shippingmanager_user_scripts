@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name        ShippingManager - Auto Co-Op & Co-Op Header Display
 // @description Shows open Co-Op tickets, auto-sends COOP vessels to alliance members
-// @version     5.35
+// @version     5.38
 // @author      https://github.com/justonlyforyou/
-// @order       22
+// @order        3
 // @match       https://shippingmanager.cc/*
 // @grant       none
 // @run-at      document-end
@@ -741,16 +741,18 @@
             return;
         }
         uiInitialized = true;
-        if (typeof addMenuItem === 'function') {
-            addMenuItem('Auto CO-OP', openSettingsModal, 22);
-        }
     }
 
     function init() {
-        // Load settings then initialize
+        // Register menu immediately - no DOM needed for IPC call
+        if (typeof addMenuItem === 'function') {
+            addMenuItem('Auto CO-OP', openSettingsModal, 22);
+        }
+        initUI();
+
+        // Load settings in background then continue initialization
         loadSettings().then(function() {
             setupCoopModalWatcher();
-            initUI();
             updateCoopDisplay();
 
             // Update display every 15 minutes (Android background job compatible)
@@ -780,11 +782,10 @@
         setTimeout(updateCoopDisplay, 250);
     });
 
-    // Wait for page ready
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', function() { setTimeout(init, 2000); });
+        document.addEventListener('DOMContentLoaded', init);
     } else {
-        setTimeout(init, 1000);
+        init();
     }
 
     // Register for background job system

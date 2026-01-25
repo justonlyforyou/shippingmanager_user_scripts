@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name        ShippingManager - Auto Marketing & Reputation Header Display
 // @description Shows reputation in header, auto-renews campaigns when expired with the most expensive possible one.
-// @version     5.26
+// @version     5.29
 // @author      joseywales - Pimped by https://github.com/justonlyforyou/
-// @order       24
+// @order        6
 // @match       https://shippingmanager.cc/*
 // @grant       none
 // @run-at      document-end
@@ -649,13 +649,15 @@
             return;
         }
         uiInitialized = true;
-        addMenuItem('Auto Reputation', openSettingsModal, 24);
     }
 
     async function init() {
+        // Register menu immediately - no DOM needed for IPC call
+        addMenuItem('Auto Reputation', openSettingsModal, 24);
+        initUI();
+
         await loadSettingsAsync();
         setupReputationModalWatcher();
-        initUI();
 
         setTimeout(function() {
             updateReputation();
@@ -671,8 +673,8 @@
     });
 
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', function() { setTimeout(init, 2000); });
+        document.addEventListener('DOMContentLoaded', init);
     } else {
-        setTimeout(init, 2000);
+        init();
     }
 })();

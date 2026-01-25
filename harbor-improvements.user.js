@@ -4,7 +4,7 @@
 // @version      2.7
 // @description  Just a simple repositioning of the details button on harbor menu.
 // @author       https://github.com/justonlyforyou/
-// @order        11
+// @order        61
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-end

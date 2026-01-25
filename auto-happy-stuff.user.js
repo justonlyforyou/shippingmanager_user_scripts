@@ -2,9 +2,9 @@
 // @name         ShippingManager - Auto Happy Staff & Stuff Header Display
 // @namespace    http://tampermonkey.net/
 // @description  Automatically manages staff salaries to maintain crew and management morale at target levels
-// @version      1.36
+// @version      1.40
 // @author       https://github.com/justonlyforyou/
-// @order        23
+// @order        5
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-end
@@ -551,7 +551,6 @@
         }
         console.log('[AutoHappyStaff] Starting monitoring (interval: ' + CHECK_INTERVAL + 'ms)');
         monitoringInterval = setInterval(checkAndAdjustMorale, CHECK_INTERVAL);
-        checkAndAdjustMorale();
     }
 
     function stopMonitoring() {
@@ -872,10 +871,12 @@
     async function init() {
         console.log('[AutoHappyStaff] Initializing...');
 
+        // Register menu immediately for fast UI response
+        initUI();
+
         var settings = await loadSettingsAsync();
         requestNotificationPermission();
         setupHappyModalWatcher();
-        initUI();
 
         setTimeout(function() {
             createMoraleDisplay();
@@ -911,11 +912,9 @@
     });
 
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', function() {
-            setTimeout(init, 2000);
-        });
+        document.addEventListener('DOMContentLoaded', init);
     } else {
-        setTimeout(init, 2000);
+        init();
     }
 
     // Register for background job system

@@ -2,9 +2,9 @@
 // @name         ShippingManager - Depart Manager
 // @namespace    https://rebelship.org/
 // @description  Unified departure management: Auto bunker rebuy, auto-depart, route settings
-// @version      3.25
+// @version      3.32
 // @author       https://github.com/justonlyforyou/
-// @order        20
+// @order        10
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-end
@@ -99,6 +99,8 @@
         systemNotifications: false
     };
 
+    var DEBUG_MODE = false;
+
     function log(msg, level) {
         level = level || 'info';
         var prefix = '[Depart Manager]';
@@ -106,7 +108,7 @@
             console.error(prefix, msg);
         } else if (level === 'warn') {
             console.warn(prefix, msg);
-        } else {
+        } else if (DEBUG_MODE) {
             console.log(prefix, msg);
         }
     }
@@ -2402,10 +2404,45 @@
     }
 
     function rsOpenSettingsModal() {
-        // Just inject content into the existing modal - don't open a new one
-        // This keeps the bottom-nav with other buttons intact
+        var bottomNav = document.getElementById('bottom-nav');
+        var hasRouteModal = bottomNav && bottomNav.querySelector('#assigned-page-btn');
 
-        // Remove active state from other tabs
+        if (!hasRouteModal) {
+            // Route modal not open - need to open it first
+            var modalStore = getModalStore();
+            if (!modalStore) {
+                log('Modal store not found', 'error');
+                return;
+            }
+
+            // Open the routes modal - game handles transition from current modal
+            modalStore.open('routes', { initialPage: 'assigned' });
+
+            // Wait for modal to fully load with tabs, then add our Settings tab and activate it
+            var attempts = 0;
+            var waitForModal = setInterval(function() {
+                attempts++;
+                var nav = document.getElementById('bottom-nav');
+                var hasAssigned = nav && nav.querySelector('#assigned-page-btn');
+
+                if (hasAssigned) {
+                    clearInterval(waitForModal);
+                    // Add Settings tab if not already there
+                    rsAddSettingsButton();
+                    // Now activate it
+                    rsActivateSettingsTab();
+                } else if (attempts > 20) {
+                    clearInterval(waitForModal);
+                    log('Failed to wait for route modal tabs', 'error');
+                }
+            }, 100);
+        } else {
+            // Modal already open - just activate the Settings tab
+            rsActivateSettingsTab();
+        }
+    }
+
+    function rsActivateSettingsTab() {
         var bottomNav = document.getElementById('bottom-nav');
         if (bottomNav) {
             // Remove selected-page class from all tabs
@@ -2568,31 +2605,158 @@
     }
 
     // ============================================
-    // SETTINGS MODAL UI (Long scrollable, game style)
+    // SETTINGS MODAL UI (Custom modal like auto-repair)
     // ============================================
+    var isDMSettingsModalOpen = false;
+    var dmModalListenerAttached = false;
+
+    function injectDMModalStyles() {
+        if (document.getElementById('dm-modal-styles')) return;
+
+        var style = document.createElement('style');
+        style.id = 'dm-modal-styles';
+        style.textContent = [
+            '@keyframes dm-fade-in{0%{opacity:0}to{opacity:1}}',
+            '@keyframes dm-fade-out{0%{opacity:1}to{opacity:0}}',
+            '@keyframes dm-drop-down{0%{transform:translateY(-10px)}to{transform:translateY(0)}}',
+            '@keyframes dm-push-up{0%{transform:translateY(0)}to{transform:translateY(-10px)}}',
+            '#dm-modal-wrapper{align-items:flex-start;display:flex;height:100vh;justify-content:center;left:0;overflow:hidden;position:absolute;top:0;width:100vw;z-index:9999}',
+            '#dm-modal-wrapper #dm-modal-background{animation:dm-fade-in .15s linear forwards;background-color:rgba(0,0,0,.5);height:100%;left:0;opacity:0;position:absolute;top:0;width:100%}',
+            '#dm-modal-wrapper.hide #dm-modal-background{animation:dm-fade-out .15s linear forwards}',
+            '#dm-modal-wrapper #dm-modal-content-wrapper{animation:dm-drop-down .15s linear forwards,dm-fade-in .15s linear forwards;height:100%;max-width:700px;opacity:0;position:relative;width:1140px;z-index:9001}',
+            '#dm-modal-wrapper.hide #dm-modal-content-wrapper{animation:dm-push-up .15s linear forwards,dm-fade-out .15s linear forwards}',
+            '@media screen and (min-width:1200px){#dm-modal-wrapper #dm-modal-content-wrapper{max-width:460px}}',
+            '@media screen and (min-width:992px) and (max-width:1199px){#dm-modal-wrapper #dm-modal-content-wrapper{max-width:460px}}',
+            '@media screen and (min-width:769px) and (max-width:991px){#dm-modal-wrapper #dm-modal-content-wrapper{max-width:460px}}',
+            '@media screen and (max-width:768px){#dm-modal-wrapper #dm-modal-content-wrapper{max-width:100%}}',
+            '#dm-modal-wrapper #dm-modal-container{background-color:#fff;height:100vh;overflow:hidden;position:absolute;width:100%}',
+            '#dm-modal-container .modal-header{align-items:center;background:#626b90;border-radius:0;color:#fff;display:flex;height:31px;justify-content:space-between;text-align:left;width:100%;border:0!important;padding:0 .5rem!important}',
+            '#dm-modal-container .header-title{font-weight:700;text-transform:uppercase;width:90%}',
+            '#dm-modal-container .header-icon{cursor:pointer;height:1.2rem;margin:0 .5rem}',
+            '#dm-modal-container .header-icon.closeModal{height:19px;width:19px}',
+            '#dm-modal-container #dm-modal-content{height:calc(100% - 31px);max-width:inherit;overflow:hidden;display:flex;flex-direction:column}',
+            '#dm-modal-container #dm-central-container{background-color:#e9effd;margin:0;overflow-x:hidden;overflow-y:auto;width:100%;flex:1;padding:10px 15px}',
+            '#dm-modal-wrapper.hide{pointer-events:none}'
+        ].join('');
+        document.head.appendChild(style);
+    }
+
+    function closeDMSettingsModal() {
+        if (!isDMSettingsModalOpen) return;
+        log('Closing DM settings modal');
+        isDMSettingsModalOpen = false;
+        var modalWrapper = document.getElementById('dm-modal-wrapper');
+        if (modalWrapper) {
+            modalWrapper.classList.add('hide');
+        }
+    }
+
+    function setupDMModalWatcher() {
+        if (dmModalListenerAttached) return;
+        dmModalListenerAttached = true;
+
+        window.addEventListener('rebelship-menu-click', function() {
+            if (isDMSettingsModalOpen) {
+                log('RebelShip menu clicked, closing DM modal');
+                closeDMSettingsModal();
+            }
+        });
+    }
+
     function openSettingsModal() {
+        // Close any open game modal first
         var modalStore = getModalStore();
-        if (!modalStore) {
-            log('Modal store not found', 'error');
-            return;
+        if (modalStore && modalStore.closeAll) {
+            modalStore.closeAll();
         }
 
-        var settings = getSettings();
-        modalStore.open('routeResearch');
+        injectDMModalStyles();
 
-        setTimeout(function() {
-            if (modalStore.modalSettings) {
-                modalStore.modalSettings.title = 'Depart Manager Settings';
-                modalStore.modalSettings.navigation = [];
-                modalStore.modalSettings.controls = [];
+        var existing = document.getElementById('dm-modal-wrapper');
+        if (existing) {
+            var contentCheck = existing.querySelector('#dm-settings-content');
+            if (contentCheck) {
+                existing.classList.remove('hide');
+                isDMSettingsModalOpen = true;
+                updateDMSettingsContent();
+                return;
             }
+            existing.remove();
+        }
 
-            var centralContainer = document.getElementById('central-container');
-            if (!centralContainer) return;
+        var headerEl = document.querySelector('header');
+        var headerHeight = headerEl ? headerEl.offsetHeight : 89;
 
-            var pendingCount = getPendingRouteSettingsCount();
+        var modalWrapper = document.createElement('div');
+        modalWrapper.id = 'dm-modal-wrapper';
 
-            var html = '<div style="padding:20px 2px;max-width:900px;margin:0 auto;font-family:Lato,sans-serif;color:#01125d;overflow-y:auto;max-height:80vh;">';
+        var modalBackground = document.createElement('div');
+        modalBackground.id = 'dm-modal-background';
+        modalBackground.onclick = function() { closeDMSettingsModal(); };
+
+        var modalContentWrapper = document.createElement('div');
+        modalContentWrapper.id = 'dm-modal-content-wrapper';
+
+        var modalContainer = document.createElement('div');
+        modalContainer.id = 'dm-modal-container';
+        modalContainer.className = 'font-lato';
+        modalContainer.style.top = headerHeight + 'px';
+        modalContainer.style.height = 'calc(100vh - ' + headerHeight + 'px)';
+        modalContainer.style.maxHeight = 'calc(100vh - ' + headerHeight + 'px)';
+
+        var modalHeader = document.createElement('div');
+        modalHeader.className = 'modal-header';
+
+        var headerTitle = document.createElement('span');
+        headerTitle.className = 'header-title';
+        headerTitle.textContent = 'Depart Manager Settings';
+
+        var closeIcon = document.createElement('img');
+        closeIcon.className = 'header-icon closeModal';
+        closeIcon.src = '/images/icons/close_icon_new.svg';
+        closeIcon.onclick = function() { closeDMSettingsModal(); };
+        closeIcon.onerror = function() {
+            this.style.display = 'none';
+            var fallback = document.createElement('span');
+            fallback.textContent = 'X';
+            fallback.style.cssText = 'cursor:pointer;font-weight:bold;padding:0 .5rem;';
+            fallback.onclick = function() { closeDMSettingsModal(); };
+            this.parentNode.appendChild(fallback);
+        };
+
+        modalHeader.appendChild(headerTitle);
+        modalHeader.appendChild(closeIcon);
+
+        var modalContent = document.createElement('div');
+        modalContent.id = 'dm-modal-content';
+
+        var centralContainer = document.createElement('div');
+        centralContainer.id = 'dm-central-container';
+
+        var settingsContent = document.createElement('div');
+        settingsContent.id = 'dm-settings-content';
+        centralContainer.appendChild(settingsContent);
+
+        modalContent.appendChild(centralContainer);
+        modalContainer.appendChild(modalHeader);
+        modalContainer.appendChild(modalContent);
+        modalContentWrapper.appendChild(modalContainer);
+        modalWrapper.appendChild(modalBackground);
+        modalWrapper.appendChild(modalContentWrapper);
+        document.body.appendChild(modalWrapper);
+
+        isDMSettingsModalOpen = true;
+        updateDMSettingsContent();
+    }
+
+    function updateDMSettingsContent() {
+        var settingsContent = document.getElementById('dm-settings-content');
+        if (!settingsContent) return;
+
+        var settings = getSettings();
+        var pendingCount = getPendingRouteSettingsCount();
+
+        var html = '<div style="padding:20px 2px;max-width:900px;margin:0 auto;font-family:Lato,sans-serif;color:#01125d;">';
 
             // === FUEL & CO2 SETTINGS (side by side) ===
             html += '<div style="display:flex;gap:8px;margin-bottom:16px;">';
@@ -2790,9 +2954,9 @@
 
             html += '</div>';
 
-            centralContainer.innerHTML = html;
+        settingsContent.innerHTML = html;
 
-            document.getElementById('dm-run-depart').addEventListener('click', async function() {
+        document.getElementById('dm-run-depart').addEventListener('click', async function() {
                 this.disabled = true;
                 this.textContent = 'Running...';
                 await autoDepartVessels(true);
@@ -2800,9 +2964,10 @@
                 this.disabled = false;
             });
 
-            document.getElementById('dm-open-route-settings').addEventListener('click', function() {
-                rsOpenSettingsModal();
-            });
+        document.getElementById('dm-open-route-settings').addEventListener('click', function() {
+            closeDMSettingsModal();
+            rsOpenSettingsModal();
+        });
 
             // Visibility toggle functions
             function updateFuelVisibility() {
@@ -2869,8 +3034,8 @@
 
                 saveSettings(newSettings);
                 notify('Settings saved');
+                closeDMSettingsModal();
             });
-        }, 150);
     }
 
     // ============================================
@@ -2972,49 +3137,43 @@
         }
 
         uiInitialized = true;
-        addMenuItem(SCRIPT_NAME, openSettingsModal, 20);
-        log('Menu item added');
     }
 
     async function init() {
         try {
+            // Register menu immediately - no DOM needed for IPC call
+            addMenuItem(SCRIPT_NAME, openSettingsModal, 20);
+            initUI();
+
             // Load data from IndexedDB or migrate from localStorage
             await loadStorage();
 
             requestNotificationPermission();
-            initUI();
             rsWatchRoutesModal();
+            setupDMModalWatcher();
             startUIObserver();
 
             setTimeout(cleanupStalePendingSettings, 3000);
 
-            // Initialize auto-price cache before first periodic check
-            setTimeout(async function() {
-                try {
-                    await initAutoPriceCache();
-                } catch (e) {
-                    log('initAutoPriceCache failed: ' + e.message, 'error');
-                }
+            // Initialize auto-price cache in background - don't block UI
+            initAutoPriceCache().catch(function(e) {
+                log('initAutoPriceCache failed: ' + e.message, 'error');
+            });
 
-                // Check if we missed checks (Android background reload scenario)
-                var lastCheck = getLastCheckTime();
-                var timeSinceLastCheck = Date.now() - lastCheck;
-                var needsCatchup = lastCheck > 0 && timeSinceLastCheck > CATCHUP_THRESHOLD;
+            // Check if we missed checks (Android background reload scenario)
+            var lastCheck = getLastCheckTime();
+            var timeSinceLastCheck = Date.now() - lastCheck;
+            var needsCatchup = lastCheck > 0 && timeSinceLastCheck > CATCHUP_THRESHOLD;
 
-                if (needsCatchup) {
-                    var missedMinutes = Math.floor(timeSinceLastCheck / 60000);
-                    log('CATCH-UP: ' + missedMinutes + ' minutes since last check - running immediate check');
-                } else if (lastCheck > 0) {
-                    var secsSince = Math.floor(timeSinceLastCheck / 1000);
-                    log('Last check was ' + secsSince + 's ago - normal startup');
-                } else {
-                    log('First run or no previous check recorded');
-                }
+            // Start monitoring immediately
+            startMonitoring();
 
-                // ALWAYS start monitoring, even if cache init fails
-                startMonitoring();
+            // Only run immediate check if we missed the threshold (catch-up scenario)
+            if (needsCatchup) {
+                var missedMinutes = Math.floor(timeSinceLastCheck / 60000);
+                log('CATCH-UP: ' + missedMinutes + ' minutes since last check - running immediate check');
                 periodicCheck();
-            }, 5000);
+            }
 
         } catch (err) {
             log('init() error: ' + err.message, 'error');
@@ -3022,11 +3181,9 @@
     }
 
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', function() {
-            setTimeout(init, 2000);
-        });
+        document.addEventListener('DOMContentLoaded', init);
     } else {
-        setTimeout(init, 2000);
+        init();
     }
 
     // Register for background job system

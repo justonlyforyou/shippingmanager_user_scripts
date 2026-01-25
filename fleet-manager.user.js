@@ -4,7 +4,7 @@
 // @version      4.15
 // @description  Mass Moor and Resume vessels with checkbox selection
 // @author       https://github.com/justonlyforyou/
-// @order        4
+// @order        60
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-end

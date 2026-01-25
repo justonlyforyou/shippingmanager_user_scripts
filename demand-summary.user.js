@@ -2,9 +2,9 @@
 // @name         ShippingManager - Demand Summary
 // @namespace    https://rebelship.org/
 // @description  Shows port demand with vessel capacity allocation overview
-// @version      4.43
+// @version      4.47
 // @author       https://github.com/justonlyforyou/
-// @order        12
+// @order        9
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-end
@@ -761,7 +761,7 @@
         let html = '<div id="demand-summary-wrapper" data-rebelship-modal="demand-summary" style="padding:8px 2px;font-family:Lato,sans-serif;color:#01125d;height:100%;display:flex;flex-direction:column;box-sizing:border-box;">';
 
         // Header with last collect time
-        html += '<div style="font-size:11px;color:#626b90;margin-bottom:2px;">';
+        html += '<div style="font-size:11px;color:#626b90;margin-bottom:2px;text-align:center;">';
         html += 'Last collected: ' + formatTimestamp(cache ? cache.timestamp : null);
         html += '</div>';
 
@@ -774,7 +774,7 @@
         } else {
             // Summary
             const portsWithVessels = cache.ports.filter(p => vesselsByDest[p.code]);
-            html += '<div style="margin-bottom:6px;font-size:11px;color:#626b90;">';
+            html += '<div style="margin-bottom:6px;font-size:11px;color:#626b90;text-align:center;">';
             html += cache.ports.length + ' ports cached | ' + portsWithVessels.length + ' ports with vessels en route';
             html += '</div>';
 
@@ -1087,19 +1087,20 @@
         }
 
         uiInitialized = true;
-        addMenuItem('Demand Summary', openDemandModal, 12);
         setupBackButtonInterceptor();
-        log('Menu item added');
     }
 
     async function init() {
         log('Initializing...');
 
+        // Register menu immediately - no DOM needed for IPC call
+        addMenuItem('Demand Summary', openDemandModal, 12);
+        initUI();
+
         // Load cache into memory for sync access
         await loadCache();
 
         setupDemandModalWatcher();
-        initUI();
         initMapMarkerHover();
 
         log('Script loaded');
@@ -1354,10 +1355,8 @@
     }
 
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', function() {
-            setTimeout(init, 2000);
-        });
+        document.addEventListener('DOMContentLoaded', init);
     } else {
-        setTimeout(init, 2000);
+        init();
     }
 })();

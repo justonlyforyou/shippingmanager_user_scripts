@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name        ShippingManager - Vessel Shopping Cart
 // @description Add vessels to cart and bulk purchase them
-// @version     4.22
+// @version     4.23
 // @author      https://github.com/justonlyforyou/
-// @order       12
+// @order        63
 // @match       https://shippingmanager.cc/*
 // @grant       none
 // @run-at      document-end
@@ -911,6 +911,9 @@
     style.textContent = '@keyframes slideDown { from { opacity: 0; transform: translate(-50%, -20px); } to { opacity: 1; transform: translate(-50%, 0); } }';
     document.head.appendChild(style);
 
-    // Init after delay (page needs to load Vue app)
-    setTimeout(init, 2000);
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
 })();

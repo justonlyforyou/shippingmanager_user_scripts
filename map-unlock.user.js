@@ -3,7 +3,7 @@
 // @description Unlocks premium map themes, tanker ops, metropolis and extended zoom
 // @version     1.10
 // @author      https://github.com/justonlyforyou/
-// @order       15
+// @order        62
 // @match       https://shippingmanager.cc/*
 // @grant       none
 // @run-at      document-end

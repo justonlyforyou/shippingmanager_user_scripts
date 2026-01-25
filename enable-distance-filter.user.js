@@ -2,8 +2,8 @@
 // @name         ShippingManager - Distance Filter for Route Planner
 // @namespace    http://tampermonkey.net/
 // @description  Filter ports by distance when creating new routes!
-// @version      9.18
-// @order        10
+// @version      9.19
+// @order        55
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
 // @grant        none
@@ -16,10 +16,6 @@
     var API_BASE = 'https://shippingmanager.cc/api';
     var injected = false;
     var dropdownOpen = false;
-    var _activeDistanceFilter = null;
-    var _activeVesselCoords = null;
-    var filteredPortCodes = null;
-    var markerFilterInterval = null;
 
     var RANGES = [
         { label: "All", min: 0, max: 999999 },
@@ -104,52 +100,6 @@
         });
     }
 
-    function removeOutOfRangeMarkers() {
-        if (!filteredPortCodes || filteredPortCodes.length === 0) return;
-
-        var mapStore = getStore("mapStore");
-        if (!mapStore || !mapStore.map) return;
-
-        var map = mapStore.map;
-        var markersToRemove = [];
-
-        map.eachLayer(function(layer) {
-            if (layer.options && layer.options.port) {
-                var portCode = layer.options.port.code;
-                if (!filteredPortCodes.includes(portCode)) {
-                    markersToRemove.push(layer);
-                }
-            }
-        });
-
-        markersToRemove.forEach(function(marker) {
-            map.removeLayer(marker);
-        });
-
-        if (markersToRemove.length > 0) {
-            console.log("[DistFilter] Removed", markersToRemove.length, "out-of-range markers");
-        }
-    }
-
-    function startMarkerFilter() {
-        if (markerFilterInterval) {
-            clearInterval(markerFilterInterval);
-        }
-        markerFilterInterval = setInterval(removeOutOfRangeMarkers, 300);
-        console.log("[DistFilter] Started marker filter interval");
-    }
-
-    function stopMarkerFilter() {
-        if (markerFilterInterval) {
-            clearInterval(markerFilterInterval);
-            markerFilterInterval = null;
-            console.log("[DistFilter] Stopped marker filter interval");
-        }
-        filteredPortCodes = null;
-        _activeDistanceFilter = null;
-        _activeVesselCoords = null;
-    }
-
     async function applyDistanceFilter(range, btn) {
         var rs = getStore("route");
         if (!rs) {
@@ -204,10 +154,6 @@
             return;
         }
 
-        _activeDistanceFilter = range;
-        _activeVesselCoords = vesselCoords;
-        filteredPortCodes = filteredPorts.map(function(p) { return p.code; });
-
         rs.$patch(function(state) {
             state.routeSelection.activePorts = filteredPorts;
             state.routeSelection.isMinified = true;
@@ -218,8 +164,6 @@
         });
 
         console.log("[DistFilter] Applied! routeCreationStep=2, activePorts count:", filteredPorts.length);
-
-        startMarkerFilter();
 
         if (btn) {
             var inner5 = btn.querySelector(".btn-content-wrapper");
@@ -240,10 +184,6 @@
                 }
             }
         }
-
-        setTimeout(removeOutOfRangeMarkers, 100);
-        setTimeout(removeOutOfRangeMarkers, 500);
-        setTimeout(removeOutOfRangeMarkers, 1000);
     }
 
     function createDropdown(btn) {
@@ -310,7 +250,6 @@
     function reset() {
         injected = false;
         dropdownOpen = false;
-        stopMarkerFilter();
     }
 
     var obs = new MutationObserver(function() {
