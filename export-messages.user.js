@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name        ShippingManager - Export your messages (RebelShipMenu)
+// @name        ShippingManager - Export your messages
 // @description Export all DM's as CSV or JSON
 // @version     1.25
 // @author      https://github.com/justonlyforyou/

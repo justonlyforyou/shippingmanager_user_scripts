@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name        ShippingManager - VIP Vessel Shop (RebelShipMenu)
+// @name        ShippingManager - VIP Vessel Shop
 // @description Quick access to purchase all VIP vessels as much as you have points for ;)
 // @version     2.25
 // @author      https://github.com/justonlyforyou/

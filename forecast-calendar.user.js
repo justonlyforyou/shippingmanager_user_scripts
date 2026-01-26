@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         ShippingManager - Fuel / CO2 Price Forecast Calendar (RebelShipMenu)
+// @name         ShippingManager - Fuel / CO2 Price Forecast Calendar
 // @namespace    http://tampermonkey.net/
-// @version      3.28
+// @version      3.38
 // @description  Embedded forecast calendar with page-flip navigation
 // @author       https://github.com/justonlyforyou/
 // @order        13
@@ -93,22 +93,64 @@
      */
     function getTimezoneOffsetHours(timezone) {
         var timezoneOffsets = {
+            // UTC
+            'UTC': 0,
+
             // North America
-            'PST': -8, 'PDT': -7,
-            'MST': -7, 'MDT': -6,
-            'CST': -6, 'CDT': -5,
-            'EST': -5, 'EDT': -4,
+            'HST': -10,                        // Hawaii
+            'AKST': -9, 'AKDT': -8,           // Alaska
+            'PST': -8, 'PDT': -7,             // Pacific
+            'MST': -7, 'MDT': -6,             // Mountain
+            'CST': -6, 'CDT': -5,             // Central
+            'EST': -5, 'EDT': -4,             // Eastern
+            'AST': -4, 'ADT': -3,             // Atlantic
+            'NST': -3.5, 'NDT': -2.5,         // Newfoundland
+
+            // South America
+            'BRT': -3,                         // Brazil
+            'ART': -3,                         // Argentina
+            'CLT': -4, 'CLST': -3,            // Chile
+            'PET': -5,                         // Peru
+            'COT': -5,                         // Colombia
 
             // Europe
-            'GMT': 0, 'BST': 1,
-            'WET': 0, 'WEST': 1,
-            'CET': 1, 'CEST': 2,
-            'EET': 2, 'EEST': 3,
+            'GMT': 0, 'BST': 1,               // UK
+            'WET': 0, 'WEST': 1,              // Western Europe
+            'CET': 1, 'CEST': 2,              // Central Europe
+            'EET': 2, 'EEST': 3,              // Eastern Europe
+            'MSK': 3,                          // Moscow
 
-            // Other
-            'UTC': 0,
-            'GMT+1': 1,
-            'GMT+2': 2
+            // Africa
+            'WAT': 1,                          // West Africa
+            'CAT': 2,                          // Central Africa
+            'EAT': 3,                          // East Africa
+            'SAST': 2,                         // South Africa
+
+            // Middle East
+            'TRT': 3,                          // Turkey
+            'GST': 4,                          // Gulf
+            'IRST': 3.5,                       // Iran
+            'IST': 5.5,                        // India
+
+            // Asia
+            'PKT': 5,                          // Pakistan
+            'BST6': 6,                         // Bangladesh
+            'ICT': 7,                          // Indochina
+            'WIB': 7,                          // Indonesia West
+            'WITA': 8,                         // Indonesia Central
+            'WIT': 9,                          // Indonesia East
+            'SGT': 8,                          // Singapore
+            'HKT': 8,                          // Hong Kong
+            'CST8': 8,                         // China
+            'PHT': 8,                          // Philippines
+            'JST': 9,                          // Japan
+            'KST': 9,                          // Korea
+
+            // Australia / Oceania
+            'AWST': 8,                         // Australia Western
+            'ACST': 9.5, 'ACDT': 10.5,        // Australia Central
+            'AEST': 10, 'AEDT': 11,           // Australia Eastern
+            'NZST': 12, 'NZDT': 13            // New Zealand
         };
 
         var normalized = timezone.toUpperCase();
@@ -202,7 +244,6 @@
         // Convert intervals (30-minute intervals, so hours * 2)
         var intervalOffset = Math.round(hoursOffset * 2);
 
-        console.log('[Forecast] Converting CEST to ' + targetTimezone + ': ' + hoursOffset + ' hours (' + intervalOffset + ' intervals)');
 
         var convertedData = forecastData.map(function(dayData) {
             if (!dayData.hourly_intervals || dayData.hourly_intervals.length === 0) {
@@ -478,11 +519,9 @@
 
                 if (conversionResult.success) {
                     daysData = conversionResult.data;
-                    console.log('[Forecast] Data converted from CEST to ' + browserTimezone + ' (offset: ' + conversionResult.hoursOffset + 'h)');
                 } else {
                     daysData = rawData;
                     browserTimezone = 'CEST';
-                    console.log('[Forecast] Using original CEST data (conversion failed)');
                 }
 
                 renderBook();
@@ -704,6 +743,430 @@
         }, 200);
     }
 
+    // ============================================
+    // CHATBOT COMMAND INTEGRATION
+    // ============================================
+
+    var FORECAST_SCRIPT_NAME = 'ForecastCalendar';
+    var FORECAST_STORE_NAME = 'chatbot';
+
+    var forecastCmdSettings = {
+        defaultTimezone: 'UTC',
+        autoPostToday: {
+            enabled: false,
+            time: '08:00'
+        },
+        autoPostTomorrow: {
+            enabled: false,
+            time: '20:00'
+        }
+    };
+
+    var autoPostLastRun = {
+        today: null,
+        tomorrow: null
+    };
+
+    async function loadForecastCmdSettings() {
+        if (!window.RebelShipBridge) return;
+        try {
+            var stored = await window.RebelShipBridge.storage.get(FORECAST_SCRIPT_NAME, FORECAST_STORE_NAME, 'cmdSettings');
+            if (stored) {
+                var parsed = JSON.parse(stored);
+                if (parsed.defaultTimezone) {
+                    forecastCmdSettings.defaultTimezone = parsed.defaultTimezone;
+                }
+                if (parsed.autoPostToday) {
+                    forecastCmdSettings.autoPostToday = parsed.autoPostToday;
+                }
+                if (parsed.autoPostTomorrow) {
+                    forecastCmdSettings.autoPostTomorrow = parsed.autoPostTomorrow;
+                }
+            }
+        } catch (e) {
+            console.error('[Forecast] Failed to load cmd settings:', e);
+        }
+    }
+
+    async function saveForecastCmdSettings() {
+        if (!window.RebelShipBridge) return;
+        try {
+            await window.RebelShipBridge.storage.set(FORECAST_SCRIPT_NAME, FORECAST_STORE_NAME, 'cmdSettings', JSON.stringify(forecastCmdSettings));
+        } catch (e) {
+            console.error('[Forecast] Failed to save cmd settings:', e);
+        }
+    }
+
+    function renderForecastSettings() {
+        var tz = forecastCmdSettings.defaultTimezone;
+        var timezones = [
+            // UTC
+            'UTC',
+            // North America (west to east)
+            'HST', 'AKST', 'AKDT', 'PST', 'PDT', 'MST', 'MDT', 'CST', 'CDT', 'EST', 'EDT', 'AST', 'ADT', 'NST', 'NDT',
+            // South America
+            'BRT', 'ART', 'CLT', 'CLST', 'PET', 'COT',
+            // Europe (west to east)
+            'GMT', 'BST', 'WET', 'WEST', 'CET', 'CEST', 'EET', 'EEST', 'MSK',
+            // Africa
+            'WAT', 'CAT', 'EAT', 'SAST',
+            // Middle East
+            'TRT', 'GST', 'IRST', 'IST',
+            // Asia (west to east)
+            'PKT', 'BST6', 'ICT', 'WIB', 'WITA', 'WIT', 'SGT', 'HKT', 'CST8', 'PHT', 'JST', 'KST',
+            // Australia / Oceania
+            'AWST', 'ACST', 'ACDT', 'AEST', 'AEDT', 'NZST', 'NZDT'
+        ];
+
+        var tzOptions = '';
+        for (var i = 0; i < timezones.length; i++) {
+            var t = timezones[i];
+            tzOptions += '<option value="' + t + '"' + (tz === t ? ' selected' : '') + '>' + t + '</option>';
+        }
+
+        var inputStyle = 'padding:4px 8px;background:#fff;border:1px solid #c0c8e0;border-radius:4px;font-size:12px;';
+        var labelStyle = 'font-size:12px;color:#626b90;';
+        var rowStyle = 'display:flex;align-items:center;gap:8px;margin-top:8px;';
+
+        var todayChecked = forecastCmdSettings.autoPostToday.enabled ? ' checked' : '';
+        var todayTime = forecastCmdSettings.autoPostToday.time;
+        var tomorrowChecked = forecastCmdSettings.autoPostTomorrow.enabled ? ' checked' : '';
+        var tomorrowTime = forecastCmdSettings.autoPostTomorrow.time;
+
+        return '<div style="' + rowStyle + 'margin-top:4px;">' +
+            '<span style="' + labelStyle + '">Default Timezone:</span>' +
+            '<select id="forecast-cmd-timezone" style="' + inputStyle + '" onchange="window.forecastCmdTimezoneChanged(this.value)">' +
+            tzOptions +
+            '</select>' +
+            '</div>' +
+            '<div style="' + rowStyle + '">' +
+            '<input type="checkbox" id="forecast-autopost-today"' + todayChecked + ' onchange="window.forecastAutoPostChanged(\'today\', \'enabled\', this.checked)">' +
+            '<span style="' + labelStyle + '">Auto-post today\'s forecast at</span>' +
+            '<input type="time" id="forecast-autopost-today-time" value="' + todayTime + '" style="' + inputStyle + '" onchange="window.forecastAutoPostChanged(\'today\', \'time\', this.value)">' +
+            '</div>' +
+            '<div style="' + rowStyle + '">' +
+            '<input type="checkbox" id="forecast-autopost-tomorrow"' + tomorrowChecked + ' onchange="window.forecastAutoPostChanged(\'tomorrow\', \'enabled\', this.checked)">' +
+            '<span style="' + labelStyle + '">Auto-post tomorrow\'s forecast at</span>' +
+            '<input type="time" id="forecast-autopost-tomorrow-time" value="' + tomorrowTime + '" style="' + inputStyle + '" onchange="window.forecastAutoPostChanged(\'tomorrow\', \'time\', this.value)">' +
+            '</div>';
+    }
+
+    window.forecastCmdTimezoneChanged = function(value) {
+        forecastCmdSettings.defaultTimezone = value;
+        saveForecastCmdSettings();
+    };
+
+    window.forecastAutoPostChanged = function(which, field, value) {
+        if (which === 'today') {
+            if (field === 'enabled') {
+                forecastCmdSettings.autoPostToday.enabled = value;
+            } else if (field === 'time') {
+                forecastCmdSettings.autoPostToday.time = value;
+            }
+        } else if (which === 'tomorrow') {
+            if (field === 'enabled') {
+                forecastCmdSettings.autoPostTomorrow.enabled = value;
+            } else if (field === 'time') {
+                forecastCmdSettings.autoPostTomorrow.time = value;
+            }
+        }
+        saveForecastCmdSettings();
+    };
+
+    function padLeft(str, len) {
+        str = String(str);
+        while (str.length < len) {
+            str = ' ' + str;
+        }
+        return str;
+    }
+
+    function formatDate(day) {
+        var now = new Date();
+        var month = now.getMonth() + 1;
+        var year = now.getFullYear();
+        var dd = padLeft(day, 2).replace(/ /g, '0');
+        var mm = padLeft(month, 2).replace(/ /g, '0');
+        return dd + '.' + mm + '.' + year;
+    }
+
+    async function handleForecastCommand(args, userId, userName, isDm, sendResponse) {
+        var targetDay = null;
+        var targetTimezone = forecastCmdSettings.defaultTimezone;
+
+        // Parse arguments: [day] [timezone]
+        for (var i = 0; i < args.length; i++) {
+            var arg = args[i].toUpperCase();
+
+            // Check if it's a timezone
+            if (getTimezoneOffsetHours(arg) !== null) {
+                targetTimezone = arg;
+                continue;
+            }
+
+            // Check if it's a day number (1-31)
+            var dayNum = parseInt(args[i], 10);
+            if (!isNaN(dayNum) && dayNum >= 1 && dayNum <= 31) {
+                targetDay = dayNum;
+                continue;
+            }
+
+            // Check for "today" or "tomorrow"
+            if (arg === 'TODAY') {
+                targetDay = new Date().getDate();
+            } else if (arg === 'TOMORROW') {
+                var tomorrow = new Date();
+                tomorrow.setDate(tomorrow.getDate() + 1);
+                targetDay = tomorrow.getDate();
+            }
+        }
+
+        // Default to today if no day specified
+        if (targetDay === null) {
+            targetDay = new Date().getDate();
+        }
+
+        // Fetch forecast data
+        try {
+            var response = await fetch(FORECAST_DATA_URL);
+            if (!response.ok) {
+                await sendResponse('Forecast data unavailable. Try again later.', userId, isDm);
+                return;
+            }
+            var forecastData = await response.json();
+
+            // Convert timezone
+            var converted = convertCESTToTimezone(forecastData, targetTimezone);
+            if (!converted.success) {
+                await sendResponse('Unknown timezone: ' + targetTimezone, userId, isDm);
+                return;
+            }
+
+            // Find the day
+            var dayData = converted.data.find(function(d) { return d.day === targetDay; });
+            if (!dayData || !dayData.hourly_intervals) {
+                await sendResponse('No forecast data for day ' + targetDay, userId, isDm);
+                return;
+            }
+
+            // Build response
+            var lines = [];
+            lines.push(userName + "'s Forecast Service");
+            lines.push('');
+            lines.push('Forecast ' + formatDate(targetDay) + ' (' + targetTimezone + ')');
+            lines.push('');
+            lines.push('TIME   FUEL  CO2');
+            lines.push('-------------------');
+
+            var intervals = dayData.hourly_intervals;
+            for (var j = 0; j < intervals.length; j++) {
+                var interval = intervals[j];
+                if (!interval) continue;
+
+                var time = interval.start_time.substring(0, 5);
+                var fuel = padLeft(interval.fuel_price_per_ton, 5);
+                var co2 = padLeft(interval.co2_price_per_ton, 4);
+
+                lines.push(time + ' ' + fuel + ' ' + co2);
+            }
+
+            lines.push('');
+            lines.push('Fair winds \uD83D\uDEA2');
+
+            await sendResponse(lines.join('\n'), userId, isDm);
+        } catch (e) {
+            console.error('[Forecast] Command error:', e);
+            await sendResponse('Forecast error: ' + e.message, userId, isDm);
+        }
+    }
+
+    async function generateForecastMessage(targetDay, botName) {
+        var targetTimezone = forecastCmdSettings.defaultTimezone;
+
+        try {
+            var response = await fetch(FORECAST_DATA_URL);
+            if (!response.ok) {
+                return null;
+            }
+            var forecastData = await response.json();
+
+            var converted = convertCESTToTimezone(forecastData, targetTimezone);
+            if (!converted.success) {
+                return null;
+            }
+
+            var dayData = converted.data.find(function(d) { return d.day === targetDay; });
+            if (!dayData || !dayData.hourly_intervals) {
+                return null;
+            }
+
+            var lines = [];
+            lines.push(botName + "'s Forecast Service");
+            lines.push('');
+            lines.push('Forecast ' + formatDate(targetDay) + ' (' + targetTimezone + ')');
+            lines.push('');
+            lines.push('TIME   FUEL  CO2');
+            lines.push('-------------------');
+
+            var intervals = dayData.hourly_intervals;
+            for (var j = 0; j < intervals.length; j++) {
+                var interval = intervals[j];
+                if (!interval) continue;
+
+                var time = interval.start_time.substring(0, 5);
+                var fuel = padLeft(interval.fuel_price_per_ton, 5);
+                var co2 = padLeft(interval.co2_price_per_ton, 4);
+
+                lines.push(time + ' ' + fuel + ' ' + co2);
+            }
+
+            lines.push('');
+            lines.push('Fair winds \uD83D\uDEA2');
+
+            return lines.join('\n');
+        } catch (e) {
+            console.error('[Forecast] Generate message error:', e);
+            return null;
+        }
+    }
+
+    async function checkAutoPost() {
+        if (!window.RebelShipChatBot || !window.RebelShipChatBot.sendAllianceMessage) {
+            return;
+        }
+
+        var now = new Date();
+        var currentTime = padLeft(now.getHours(), 2).replace(/ /g, '0') + ':' + padLeft(now.getMinutes(), 2).replace(/ /g, '0');
+        var todayKey = now.toDateString();
+
+        // Check auto-post today
+        if (forecastCmdSettings.autoPostToday.enabled) {
+            var todayPostTime = forecastCmdSettings.autoPostToday.time;
+            if (currentTime === todayPostTime && autoPostLastRun.today !== todayKey) {
+                autoPostLastRun.today = todayKey;
+                var todayDay = now.getDate();
+                var message = await generateForecastMessage(todayDay, 'Forecast Bot');
+                if (message) {
+                    console.log('[Forecast] Auto-posting today\'s forecast');
+                    await window.RebelShipChatBot.sendAllianceMessage(message);
+                }
+            }
+        }
+
+        // Check auto-post tomorrow
+        if (forecastCmdSettings.autoPostTomorrow.enabled) {
+            var tomorrowPostTime = forecastCmdSettings.autoPostTomorrow.time;
+            if (currentTime === tomorrowPostTime && autoPostLastRun.tomorrow !== todayKey) {
+                autoPostLastRun.tomorrow = todayKey;
+                var tomorrowDate = new Date(now);
+                tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+                var tomorrowDay = tomorrowDate.getDate();
+                var tomorrowMessage = await generateForecastMessage(tomorrowDay, 'Forecast Bot');
+                if (tomorrowMessage) {
+                    console.log('[Forecast] Auto-posting tomorrow\'s forecast');
+                    await window.RebelShipChatBot.sendAllianceMessage(tomorrowMessage);
+                }
+            }
+        }
+    }
+
+    function startAutoPostTimer() {
+        setInterval(checkAutoPost, 60000);
+    }
+
+    // Background job for Android BackgroundScriptService
+    function registerBackgroundJob() {
+        window.rebelshipBackgroundJobs = window.rebelshipBackgroundJobs || [];
+
+        var alreadyRegistered = window.rebelshipBackgroundJobs.some(function(job) {
+            return job.name === 'ForecastAutoPost';
+        });
+        if (alreadyRegistered) {
+            return;
+        }
+
+        window.rebelshipBackgroundJobs.push({
+            name: 'ForecastAutoPost',
+            run: async function() {
+                if (!window.RebelShipChatBot || !window.RebelShipChatBot.sendAllianceMessage) {
+                    return { skipped: true, reason: 'ChatBot not available' };
+                }
+
+                await loadForecastCmdSettings();
+
+                var now = new Date();
+                var currentTime = padLeft(now.getHours(), 2).replace(/ /g, '0') + ':' + padLeft(now.getMinutes(), 2).replace(/ /g, '0');
+                var todayKey = now.toDateString();
+                var results = { todayPosted: false, tomorrowPosted: false };
+
+                // Check auto-post today
+                if (forecastCmdSettings.autoPostToday.enabled) {
+                    var todayPostTime = forecastCmdSettings.autoPostToday.time;
+                    if (currentTime === todayPostTime && autoPostLastRun.today !== todayKey) {
+                        autoPostLastRun.today = todayKey;
+                        var todayDay = now.getDate();
+                        var message = await generateForecastMessage(todayDay, 'Forecast Bot');
+                        if (message) {
+                            await window.RebelShipChatBot.sendAllianceMessage(message);
+                            results.todayPosted = true;
+                        }
+                    }
+                }
+
+                // Check auto-post tomorrow
+                if (forecastCmdSettings.autoPostTomorrow.enabled) {
+                    var tomorrowPostTime = forecastCmdSettings.autoPostTomorrow.time;
+                    if (currentTime === tomorrowPostTime && autoPostLastRun.tomorrow !== todayKey) {
+                        autoPostLastRun.tomorrow = todayKey;
+                        var tomorrowDate = new Date(now);
+                        tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+                        var tomorrowDay = tomorrowDate.getDate();
+                        var tomorrowMessage = await generateForecastMessage(tomorrowDay, 'Forecast Bot');
+                        if (tomorrowMessage) {
+                            await window.RebelShipChatBot.sendAllianceMessage(tomorrowMessage);
+                            results.tomorrowPosted = true;
+                        }
+                    }
+                }
+
+                return results;
+            }
+        });
+    }
+
+    async function registerChatBotCommands() {
+        if (!window.RebelShipChatBot || !window.RebelShipChatBot.registerCommand) {
+            return;
+        }
+
+        // Load saved settings first
+        await loadForecastCmdSettings();
+
+        window.RebelShipChatBot.registerCommand('forecast', handleForecastCommand, {
+            minRole: 'all',
+            description: 'Fuel/CO2 price forecast',
+            usage: '!forecast [day] [timezone]\n' +
+                   '!forecast - Today\'s forecast\n' +
+                   '!forecast 25 - Day 25 forecast\n' +
+                   '!forecast PST - Today in PST timezone\n' +
+                   '!forecast tomorrow EST - Tomorrow in EST\n' +
+                   'Timezones: CEST, CET, UTC, EST, EDT, CST, CDT, MST, MDT, PST, PDT',
+            renderSettings: renderForecastSettings
+        });
+
+        window.RebelShipChatBot.registerCommand('fc', handleForecastCommand, {
+            minRole: 'all',
+            description: 'Shortcut for !forecast',
+            usage: 'Same as !forecast - see !help forecast'
+        });
+
+        // Start auto-post timer
+        startAutoPostTimer();
+
+        // Register background job for Android
+        registerBackgroundJob();
+    }
+
     function init() {
         // Inject CSS
         var style = document.createElement('style');
@@ -715,6 +1178,9 @@
 
         // Use global addMenuItem from RebelShipMenu
         addMenuItem('Bunker Forecast', openForecast, 18);
+
+        // Register ChatBot commands (with delay to ensure ChatBot is loaded)
+        setTimeout(registerChatBotCommands, 1000);
     }
 
     if (document.readyState === 'loading') {

@@ -2,14 +2,14 @@
 // @name         ShippingManager - API Stats Monitor
 // @namespace    http://tampermonkey.net/
 // @description  Monitor all API calls to shippingmanager.cc in the background
-// @version      1.6
+// @version      1.7
 // @order        2
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-start
 // @RequireRebelShipMenu true
-// @enabled      true
+// @enabled      false
 // ==/UserScript==
 /* globals addMenuItem, XMLHttpRequest */
 
@@ -194,14 +194,13 @@
         header.appendChild(closeBtn);
 
         var filters = document.createElement('div');
-        filters.style.cssText = 'padding:12px 20px;border-bottom:1px solid #3a3a5e;display:flex;gap:8px;align-items:center;';
-        filters.innerHTML = '<span style="font-size:13px;color:#626b90;">Time Range:</span>';
+        filters.style.cssText = 'padding:12px 2px;border-bottom:1px solid #3a3a5e;display:flex;flex-wrap:wrap;gap:6px;align-items:center;';
 
         [1, 5, 10, 15, 30, 45, 60].forEach(function(mins) {
             var btn = document.createElement('button');
             btn.textContent = mins + 'm';
             btn.id = 'api-stats-filter-' + mins;
-            btn.style.cssText = 'padding:6px 14px;border:1px solid #3a3a5e;border-radius:4px;cursor:pointer;font-size:13px;' +
+            btn.style.cssText = 'padding:4px 8px;border:1px solid #3a3a5e;border-radius:4px;cursor:pointer;font-size:12px;' +
                 (currentFilter === mins ? 'background:#4a90d9;color:#fff;' : 'background:#2a2a4e;color:#aaa;');
             btn.onclick = function() {
                 currentFilter = mins;
@@ -216,15 +215,11 @@
             filters.appendChild(btn);
         });
 
-        var spacer = document.createElement('div');
-        spacer.style.cssText = 'flex:1;';
-        filters.appendChild(spacer);
-
         var refreshBtn = document.createElement('button');
         refreshBtn.textContent = 'Refresh';
-        refreshBtn.style.cssText = 'padding:6px 14px;border:1px solid #3a3a5e;border-radius:4px;cursor:pointer;font-size:13px;background:#2a2a4e;color:#aaa;';
+        refreshBtn.style.cssText = 'padding:4px 8px;border:1px solid #3a3a5e;border-radius:4px;cursor:pointer;font-size:12px;background:#2a2a4e;color:#aaa;';
         refreshBtn.onclick = async function() {
-            refreshBtn.textContent = 'Loading...';
+            refreshBtn.textContent = '...';
             await loadFromDb();
             updateModalContent();
             refreshBtn.textContent = 'Refresh';

@@ -2,7 +2,7 @@
 // @name         ShippingManager - Depart Manager
 // @namespace    https://rebelship.org/
 // @description  Unified departure management: Auto bunker rebuy, auto-depart, route settings
-// @version      3.32
+// @version      3.36
 // @author       https://github.com/justonlyforyou/
 // @order        10
 // @match        https://shippingmanager.cc/*
@@ -593,16 +593,8 @@
     }
 
     async function getBunkerData() {
-        var userStore = getUserStore();
-        if (userStore && userStore.user && userStore.settings) {
-            return {
-                cash: userStore.user.cash,
-                fuel: userStore.user.fuel / 1000,
-                co2: userStore.user.co2 / 1000,
-                maxFuel: userStore.settings.max_fuel / 1000,
-                maxCO2: userStore.settings.max_co2 / 1000
-            };
-        }
+        // Always fetch from API to get fresh data
+        // Vue store can be stale after purchases/departures
         return await fetchBunkerStateAPI();
     }
 
@@ -1493,12 +1485,19 @@
         var removed = 0;
 
         for (var i = 0; i < pendingIds.length; i++) {
-            var vesselId = parseInt(pendingIds[i]);
+            var pendingKey = pendingIds[i];
+            var vesselId = parseInt(pendingKey);
             var vessel = vesselMap.get(vesselId);
-            var pending = storage.pendingRouteSettings[vesselId];
+            var pending = storage.pendingRouteSettings[pendingKey];
+
+            if (!pending) {
+                delete storage.pendingRouteSettings[pendingKey];
+                removed++;
+                continue;
+            }
 
             if (!vessel || !vessel.route_origin || !vessel.route_destination) {
-                delete storage.pendingRouteSettings[vesselId];
+                delete storage.pendingRouteSettings[pendingKey];
                 removed++;
                 continue;
             }
@@ -1514,14 +1513,13 @@
             }
 
             if (speedMatch && guardsMatch && pricesMatch) {
-                delete storage.pendingRouteSettings[vesselId];
+                delete storage.pendingRouteSettings[pendingKey];
                 removed++;
             }
         }
 
         if (removed > 0) {
             saveStorage(storage);
-            log('Cleaned up ' + removed + ' stale pending entries');
         }
     }
 
@@ -2756,13 +2754,13 @@
         var settings = getSettings();
         var pendingCount = getPendingRouteSettingsCount();
 
-        var html = '<div style="padding:20px 2px;max-width:900px;margin:0 auto;font-family:Lato,sans-serif;color:#01125d;">';
+        var html = '<div style="padding:10px 0;width:100%;font-family:Lato,sans-serif;color:#01125d;">';
 
             // === FUEL & CO2 SETTINGS (side by side) ===
-            html += '<div style="display:flex;gap:8px;margin-bottom:16px;">';
+            html += '<div class="dm-flex-row" style="display:flex;gap:8px;margin-bottom:16px;">';
             // === FUEL SETTINGS ===
-            html += '<div style="flex:1;background:#fff;border-radius:8px;padding:16px;border:1px solid #ddd;">';
-            html += '<div style="font-weight:700;font-size:16px;margin-bottom:12px;color:#0db8f4;">Fuel Auto-Rebuy</div>';
+            html += '<div class="dm-flex-box" style="flex:1;background:#fff;border-radius:8px;padding:10px;border:1px solid #ddd;">';
+            html += '<div style="font-weight:700;font-size:14px;margin-bottom:10px;color:#0db8f4;">Fuel Auto-Rebuy</div>';
             // Basic Mode Checkbox
             html += '<div style="margin-bottom:12px;">';
             html += '<label style="display:flex;align-items:center;cursor:pointer;">';
@@ -2822,8 +2820,8 @@
             html += '</div>';
 
             // === CO2 SETTINGS ===
-            html += '<div style="flex:1;background:#fff;border-radius:8px;padding:16px;border:1px solid #ddd;">';
-            html += '<div style="font-weight:700;font-size:16px;margin-bottom:12px;color:#0db8f4;">CO2 Auto-Rebuy</div>';
+            html += '<div class="dm-flex-box" style="flex:1;background:#fff;border-radius:8px;padding:10px;border:1px solid #ddd;">';
+            html += '<div style="font-weight:700;font-size:14px;margin-bottom:10px;color:#0db8f4;">CO2 Auto-Rebuy</div>';
             // Basic Mode Checkbox
             html += '<div style="margin-bottom:12px;">';
             html += '<label style="display:flex;align-items:center;cursor:pointer;">';
@@ -2890,7 +2888,7 @@
             html += '</div>'; // Close flex container
 
             // === AUTO-DEPART SETTINGS ===
-            html += '<div style="background:#fff;border-radius:8px;padding:16px;margin-bottom:16px;border:1px solid #ddd;">';
+            html += '<div style="background:#fff;border-radius:8px;padding:10px;margin-bottom:12px;border:1px solid #ddd;">';
             html += '<div style="font-weight:700;font-size:16px;margin-bottom:12px;color:#0db8f4;">Auto-Depart</div>';
             html += '<div style="margin-bottom:12px;">';
             html += '<label style="display:flex;align-items:center;cursor:pointer;">';

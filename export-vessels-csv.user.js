@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name        ShippingManager - Export all your vessels details (RebelShipMenu)
+// @name        ShippingManager - Export all your vessels details
 // @description Export all your vessels with details as CSV
 // @version     1.19
 // @author      https://github.com/justonlyforyou/

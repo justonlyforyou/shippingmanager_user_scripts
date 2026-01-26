@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Smuggler's Eye
 // @namespace    https://rebelship.org/
-// @version      1.6
+// @version      1.8
 // @description  Auto-adjust cargo prices: 4% instant markup, gradual increase, max guards on pirate routes
 // @author       https://github.com/justonlyforyou/
 // @order        14
@@ -122,7 +122,6 @@
     async function saveSettings() {
         try {
             await dbSet('settings', settings);
-            log('Settings saved');
         } catch (e) {
             console.error('[SmugglersEye] Failed to save settings:', e);
         }
@@ -186,7 +185,23 @@
     }
 
     // ========== PENDING ROUTE SETTINGS (Shared) ==========
-    async function savePendingRouteSettings(vesselId, data) {
+    // Collect pending changes in memory to avoid race conditions
+    var pendingChangesBuffer = {};
+
+    function bufferPendingRouteSettings(vesselId, data) {
+        pendingChangesBuffer[vesselId] = {
+            name: data.name,
+            speed: data.speed,
+            guards: data.guards,
+            prices: data.prices,
+            savedAt: Date.now()
+        };
+    }
+
+    async function flushPendingRouteSettings() {
+        var vesselIds = Object.keys(pendingChangesBuffer);
+        if (vesselIds.length === 0) return;
+
         var storage = await dbGetShared();
         if (!storage) {
             storage = { settings: {}, drydockVessels: {}, pendingRouteSettings: {} };
@@ -194,15 +209,14 @@
         if (!storage.pendingRouteSettings) {
             storage.pendingRouteSettings = {};
         }
-        storage.pendingRouteSettings[vesselId] = {
-            name: data.name,
-            speed: data.speed,
-            guards: data.guards,
-            prices: data.prices,
-            savedAt: Date.now()
-        };
+
+        for (var i = 0; i < vesselIds.length; i++) {
+            var vesselId = vesselIds[i];
+            storage.pendingRouteSettings[vesselId] = pendingChangesBuffer[vesselId];
+        }
+
         await dbSetShared(storage);
-        log('Saved pending route settings for ' + data.name);
+        pendingChangesBuffer = {};
     }
 
     // ========== HIJACKING RISK CACHE ==========
@@ -330,11 +344,8 @@
         }
 
         if (needsFetch.length === 0) {
-            log('Auto-price cache valid for all ' + vesselsWithRoutes.length + ' routes');
             return;
         }
-
-        log('Fetching auto-prices for ' + needsFetch.length + ' routes...');
 
         var batchSize = 5;
         for (var j = 0; j < needsFetch.length; j += batchSize) {
@@ -352,7 +363,6 @@
         }
 
         await saveAutoPriceCache();
-        log('Auto-price cache updated for ' + needsFetch.length + ' routes');
     }
 
     async function applySmugglersEyeToVessel(vessel) {
@@ -468,12 +478,10 @@
 
         if (needsUpdate) {
             if (vessel.status === 'port') {
-                log(vessel.name + ": Applying changes directly");
                 await updateRouteData(vessel.id, vessel.route_speed, newGuards, newPrices);
                 return { updated: true, pending: false };
             } else {
-                log(vessel.name + ": Saving pending changes (enroute)");
-                await savePendingRouteSettings(vessel.id, {
+                bufferPendingRouteSettings(vessel.id, {
                     name: vessel.name,
                     speed: vessel.route_speed,
                     guards: newGuards,
@@ -518,6 +526,8 @@
                 });
 
                 return Promise.all(promises).then(function() {
+                    return flushPendingRouteSettings();
+                }).then(function() {
                     if (result.updated > 0 || result.pending > 0) {
                         var msg = "Smuggler's Eye: " + result.updated + ' direct, ' + result.pending + ' pending';
                         log(msg);
@@ -547,7 +557,6 @@
         monitorInterval = setInterval(function() {
             runSmugglersEye(false);
         }, CHECK_INTERVAL_MS);
-        log('Monitoring started (15 min interval)');
         runSmugglersEye(false);
     }
 
@@ -687,7 +696,6 @@
 
     function closeModal() {
         if (!isModalOpen) return;
-        log('Closing modal');
         isModalOpen = false;
         var modalWrapper = document.getElementById('smuggler-modal-wrapper');
         if (modalWrapper) {
@@ -946,7 +954,6 @@
                     stopMonitoring();
                 }
 
-                log('Settings saved');
                 showToast("Smuggler's Eye settings saved");
                 closeModal();
             });
@@ -976,8 +983,6 @@
     }
 
     async function init() {
-        log('Initializing v1.6...');
-
         // Register menu immediately - no DOM needed for IPC call
         addMenuItem("Smuggler's Eye", openSettingsModal, 24);
         initUI();
