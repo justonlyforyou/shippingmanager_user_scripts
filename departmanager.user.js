@@ -2,7 +2,7 @@
 // @name         ShippingManager - Depart Manager
 // @namespace    https://rebelship.org/
 // @description  Unified departure management: Auto bunker rebuy, auto-depart, route settings
-// @version      3.36
+// @version      3.37
 // @author       https://github.com/justonlyforyou/
 // @order        10
 // @match        https://shippingmanager.cc/*
@@ -150,10 +150,10 @@
         return getStorage().settings;
     }
 
-    function saveSettings(settings) {
+    async function saveSettings(settings) {
         var storage = getStorage();
         storage.settings = settings;
-        saveStorage(storage);
+        await saveStorage(storage);
         log('Settings saved');
     }
 
@@ -2992,7 +2992,7 @@
             document.getElementById('dm-co2-basic').addEventListener('change', updateCO2Visibility);
             document.getElementById('dm-co2-intel').addEventListener('change', updateCO2Visibility);
 
-            document.getElementById('dm-save').addEventListener('click', function() {
+            document.getElementById('dm-save').addEventListener('click', async function() {
                 var fuelBasic = document.getElementById('dm-fuel-basic').checked;
                 var fuelIntel = document.getElementById('dm-fuel-intel').checked;
                 var co2Basic = document.getElementById('dm-co2-basic').checked;
@@ -3030,7 +3030,7 @@
                     systemNotifications: false
                 };
 
-                saveSettings(newSettings);
+                await saveSettings(newSettings);
                 notify('Settings saved');
                 closeDMSettingsModal();
             });

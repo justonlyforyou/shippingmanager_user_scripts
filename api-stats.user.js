@@ -2,7 +2,7 @@
 // @name         ShippingManager - API Stats Monitor
 // @namespace    http://tampermonkey.net/
 // @description  Monitor all API calls to shippingmanager.cc in the background
-// @version      1.7
+// @version      1.8
 // @order        2
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
@@ -85,11 +85,16 @@
         });
     }
 
+    function isApiUrl(url) {
+        if (!url) return false;
+        return url.indexOf('/api/') !== -1 || url.indexOf('/api?') !== -1;
+    }
+
     function interceptFetch() {
         var originalFetch = window.fetch;
         window.fetch = function(input) {
             var url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
-            if (url.indexOf('shippingmanager.cc/api') !== -1 || url.indexOf('/api/') === 0) {
+            if (isApiUrl(url)) {
                 recordApiCall(url);
             }
             return originalFetch.apply(this, arguments);
@@ -99,7 +104,7 @@
     function interceptXHR() {
         var originalOpen = XMLHttpRequest.prototype.open;
         XMLHttpRequest.prototype.open = function(method, url) {
-            if (url && (url.indexOf('shippingmanager.cc/api') !== -1 || url.indexOf('/api/') === 0)) {
+            if (isApiUrl(url)) {
                 this._apiStatsUrl = url;
             }
             return originalOpen.apply(this, arguments);
@@ -127,9 +132,11 @@
 
     function getFilteredStats(minutes) {
         var cutoff = Date.now() - (minutes * 60 * 1000);
+        var now = Date.now();
         var filtered = apiCalls.filter(function(call) {
             return call.timestamp >= cutoff;
         });
+        log('getFilteredStats(' + minutes + 'min): total=' + apiCalls.length + ', filtered=' + filtered.length + ', cutoff=' + Math.round((now - cutoff) / 60000) + 'min ago');
 
         var stats = {};
         filtered.forEach(function(call) {
@@ -204,6 +211,7 @@
                 (currentFilter === mins ? 'background:#4a90d9;color:#fff;' : 'background:#2a2a4e;color:#aaa;');
             btn.onclick = function() {
                 currentFilter = mins;
+                log('Filter changed to ' + mins + ' minutes, apiCalls.length=' + apiCalls.length);
                 updateModalContent();
                 document.querySelectorAll('[id^="api-stats-filter-"]').forEach(function(b) {
                     b.style.background = '#2a2a4e';

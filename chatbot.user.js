@@ -2,7 +2,7 @@
 // @name         ShippingManager - ChatBot
 // @namespace    http://tampermonkey.net/
 // @description  Automated chatbot for alliance chat and DMs with command system
-// @version      2.12
+// @version      2.13
 // @order        60
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
@@ -736,7 +736,7 @@
             '#chatbot-modal-wrapper{align-items:flex-start;display:flex;height:100vh;justify-content:center;left:0;overflow:hidden;position:absolute;top:0;width:100vw;z-index:9999}',
             '#chatbot-modal-wrapper #chatbot-modal-background{animation:chatbot-fade-in .15s linear forwards;background-color:rgba(0,0,0,.5);height:100%;left:0;opacity:0;position:absolute;top:0;width:100%}',
             '#chatbot-modal-wrapper.hide #chatbot-modal-background{animation:chatbot-fade-out .15s linear forwards}',
-            '#chatbot-modal-wrapper #chatbot-modal-content-wrapper{animation:chatbot-drop-down .15s linear forwards,chatbot-fade-in .15s linear forwards;height:100%;max-width:500px;opacity:0;position:relative;width:1140px;z-index:9001}',
+            '#chatbot-modal-wrapper #chatbot-modal-content-wrapper{animation:chatbot-drop-down .15s linear forwards,chatbot-fade-in .15s linear forwards;height:100%;max-width:500px;opacity:0;position:relative;width:100%;z-index:9001}',
             '#chatbot-modal-wrapper.hide #chatbot-modal-content-wrapper{animation:chatbot-push-up .15s linear forwards,chatbot-fade-out .15s linear forwards}',
             '#chatbot-modal-wrapper #chatbot-modal-container{background-color:#fff;height:100vh;overflow:hidden;position:absolute;width:100%}',
             '#chatbot-modal-container .modal-header{align-items:center;background:#626b90;border-radius:0;color:#fff;display:flex;height:31px;justify-content:space-between;text-align:left;width:100%;border:0!important;padding:0 .5rem!important}',
@@ -744,8 +744,10 @@
             '#chatbot-modal-container .header-icon{cursor:pointer;height:1.2rem;margin:0 .5rem}',
             '#chatbot-modal-container .header-icon.closeModal{height:19px;width:19px}',
             '#chatbot-modal-container #chatbot-modal-content{height:calc(100% - 31px);max-width:inherit;overflow:hidden;display:flex;flex-direction:column}',
-            '#chatbot-modal-container #chatbot-central-container{background-color:#e9effd;margin:0;overflow-x:hidden;overflow-y:auto;width:100%;flex:1;padding:10px 15px}',
-            '#chatbot-modal-wrapper.hide{pointer-events:none}'
+            '#chatbot-modal-container #chatbot-central-container{background-color:#e9effd;margin:0;overflow-x:hidden;overflow-y:auto;width:100%;flex:1;padding:10px 15px;-webkit-overflow-scrolling:touch}',
+            '#chatbot-modal-wrapper.hide{pointer-events:none}',
+            '#chatbot-modal-wrapper input[type="text"],#chatbot-modal-wrapper input[type="number"],#chatbot-modal-wrapper textarea,#chatbot-modal-wrapper select{font-size:16px!important;min-height:44px;-webkit-appearance:none}',
+            '@media(max-width:768px){#chatbot-modal-wrapper #chatbot-modal-content-wrapper{max-width:100%}}'
         ].join('');
         document.head.appendChild(style);
     }
