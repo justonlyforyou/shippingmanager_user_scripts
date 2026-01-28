@@ -2,7 +2,7 @@
 // @name         ShippingManager - Depart Manager
 // @namespace    https://rebelship.org/
 // @description  Unified departure management: Auto bunker rebuy, auto-depart, route settings
-// @version      3.37
+// @version      3.39
 // @author       https://github.com/justonlyforyou/
 // @order        10
 // @match        https://shippingmanager.cc/*
@@ -23,6 +23,7 @@
     var AUTOPRICE_CACHE_TTL = 4 * 60 * 60 * 1000; // 4 hours
     var CHECK_INTERVAL = 60 * 1000; // 60 seconds
     var CATCHUP_THRESHOLD = 2 * 60 * 1000; // 2 minutes - if more time passed, run immediate catch-up
+    var RETRY_DELAYS = [500, 500, 500, 1000]; // 4 retries: 3x 500ms, then 1x 1000ms
     var API_BASE = 'https://shippingmanager.cc/api';
 
     // Legacy key for Android settings sync
@@ -40,16 +41,11 @@
     // REBELSHIPBRIDGE STORAGE HELPERS
     // ============================================
     async function dbGet(key) {
-        try {
-            var result = await window.RebelShipBridge.storage.get(SCRIPT_NAME_BRIDGE, STORE_NAME, key);
-            if (result) {
-                return JSON.parse(result);
-            }
-            return null;
-        } catch (e) {
-            log('dbGet error: ' + e.message, 'error');
-            return null;
+        var result = await window.RebelShipBridge.storage.get(SCRIPT_NAME_BRIDGE, STORE_NAME, key);
+        if (result) {
+            return JSON.parse(result);
         }
+        return null;
     }
 
     async function dbSet(key, value) {
@@ -113,6 +109,11 @@
         }
     }
 
+    function sleep(ms) {
+        return new Promise(function(resolve) {
+            setTimeout(resolve, ms);
+        });
+    }
 
     // ============================================
     // STORAGE - Unified storage for all features (IndexedDB with in-memory cache)
@@ -184,12 +185,18 @@
     // ============================================
     // LOAD DATA FROM REBELSHIPBRIDGE STORAGE
     // ============================================
-    async function loadStorage() {
+    async function loadStorage(retryCount) {
+        retryCount = retryCount || 0;
         try {
             var dbData = await dbGet('storage');
             if (dbData) {
                 storageCache = dbData;
                 log('Loaded storage from RebelShipBridge');
+            } else {
+                // DB empty (first run) - initialize schema with defaults and save
+                storageCache = getDefaultStorage();
+                await dbSet('storage', storageCache);
+                log('First run: initialized storage with defaults and saved to DB');
             }
             var lastCheckData = await dbGet('lastCheckTime');
             if (typeof lastCheckData === 'number') {
@@ -200,7 +207,14 @@
                 autoPriceCacheData = cacheData;
             }
         } catch (err) {
-            log('loadStorage error: ' + err.message, 'error');
+            if (retryCount < RETRY_DELAYS.length) {
+                var delay = RETRY_DELAYS[retryCount];
+                log('DB read failed, retry ' + (retryCount + 1) + '/' + RETRY_DELAYS.length + ' in ' + delay + 'ms: ' + err.message, 'warn');
+                await sleep(delay);
+                return loadStorage(retryCount + 1);
+            }
+            log('DB read failed after ' + RETRY_DELAYS.length + ' retries: ' + err.message, 'error');
+            throw err;
         }
     }
 

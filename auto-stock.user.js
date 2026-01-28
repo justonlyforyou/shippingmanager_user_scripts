@@ -2,7 +2,7 @@
 // @name         ShippingManager - Auto Stock
 // @namespace    http://tampermonkey.net/
 // @description  IPO Alerts and Investments tabs in Finance modal
-// @version      2.8
+// @version      2.9
 // @order        61
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
@@ -314,26 +314,26 @@
 
             if (purchasedIpoIds.has(ipo.id)) continue;
             if (ipo.stock > settings.maxStockPrice) continue;
-            if (!ipo.stockForSale || ipo.stockForSale <= 0) continue;
+            if (!ipo.stock_for_sale || ipo.stock_for_sale <= 0) continue;
 
             var currentCash = await getUserCash();
             if (currentCash === null) break;
             availableCash = currentCash - settings.minCashReserve;
             if (availableCash <= 0) break;
 
-            var sharesToBuy = Math.min(ipo.stockForSale, Math.floor(availableCash / ipo.stock));
+            var sharesToBuy = Math.min(ipo.stock_for_sale, Math.floor(availableCash / ipo.stock));
             if (sharesToBuy <= 0) continue;
 
             var totalCost = sharesToBuy * ipo.stock;
 
-            log('Auto-Buy: Purchasing ' + sharesToBuy + ' shares of ' + ipo.companyName + ' @ $' + ipo.stock);
+            log('Auto-Buy: Purchasing ' + sharesToBuy + ' shares of ' + ipo.company_name + ' @ $' + ipo.stock);
 
             var result = await purchaseStock(ipo.id, sharesToBuy);
             if (result && result.data && !result.error) {
                 purchasedIpoIds.add(ipo.id);
-                log('Auto-Buy: SUCCESS - Bought ' + sharesToBuy + ' shares of ' + ipo.companyName);
+                log('Auto-Buy: SUCCESS - Bought ' + sharesToBuy + ' shares of ' + ipo.company_name);
 
-                var buyMsg = 'Bought ' + formatNumber(sharesToBuy) + ' shares of ' + ipo.companyName + ' for ' + formatMoney(totalCost);
+                var buyMsg = 'Bought ' + formatNumber(sharesToBuy) + ' shares of ' + ipo.company_name + ' for ' + formatMoney(totalCost);
                 if (settings.inAppAlerts) {
                     showToast(buyMsg, 'success');
                 }

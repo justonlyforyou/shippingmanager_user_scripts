@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Fuel / CO2 Price Forecast Calendar
 // @namespace    http://tampermonkey.net/
-// @version      3.38
+// @version      3.39
 // @description  Embedded forecast calendar with page-flip navigation
 // @author       https://github.com/justonlyforyou/
 // @order        13
@@ -767,6 +767,29 @@
         tomorrow: null
     };
 
+    async function loadAutoPostLastRun() {
+        if (!window.RebelShipBridge) return;
+        try {
+            var stored = await window.RebelShipBridge.storage.get(FORECAST_SCRIPT_NAME, FORECAST_STORE_NAME, 'autoPostLastRun');
+            if (stored) {
+                var parsed = JSON.parse(stored);
+                autoPostLastRun.today = parsed.today;
+                autoPostLastRun.tomorrow = parsed.tomorrow;
+            }
+        } catch (e) {
+            console.error('[Forecast] Failed to load autoPostLastRun:', e);
+        }
+    }
+
+    async function saveAutoPostLastRun() {
+        if (!window.RebelShipBridge) return;
+        try {
+            await window.RebelShipBridge.storage.set(FORECAST_SCRIPT_NAME, FORECAST_STORE_NAME, 'autoPostLastRun', JSON.stringify(autoPostLastRun));
+        } catch (e) {
+            console.error('[Forecast] Failed to save autoPostLastRun:', e);
+        }
+    }
+
     async function loadForecastCmdSettings() {
         if (!window.RebelShipBridge) return;
         try {
@@ -1044,6 +1067,7 @@
             var todayPostTime = forecastCmdSettings.autoPostToday.time;
             if (currentTime === todayPostTime && autoPostLastRun.today !== todayKey) {
                 autoPostLastRun.today = todayKey;
+                await saveAutoPostLastRun();
                 var todayDay = now.getDate();
                 var message = await generateForecastMessage(todayDay, 'Forecast Bot');
                 if (message) {
@@ -1058,6 +1082,7 @@
             var tomorrowPostTime = forecastCmdSettings.autoPostTomorrow.time;
             if (currentTime === tomorrowPostTime && autoPostLastRun.tomorrow !== todayKey) {
                 autoPostLastRun.tomorrow = todayKey;
+                await saveAutoPostLastRun();
                 var tomorrowDate = new Date(now);
                 tomorrowDate.setDate(tomorrowDate.getDate() + 1);
                 var tomorrowDay = tomorrowDate.getDate();
@@ -1093,6 +1118,7 @@
                 }
 
                 await loadForecastCmdSettings();
+                await loadAutoPostLastRun();
 
                 var now = new Date();
                 var currentTime = padLeft(now.getHours(), 2).replace(/ /g, '0') + ':' + padLeft(now.getMinutes(), 2).replace(/ /g, '0');
@@ -1104,6 +1130,7 @@
                     var todayPostTime = forecastCmdSettings.autoPostToday.time;
                     if (currentTime === todayPostTime && autoPostLastRun.today !== todayKey) {
                         autoPostLastRun.today = todayKey;
+                        await saveAutoPostLastRun();
                         var todayDay = now.getDate();
                         var message = await generateForecastMessage(todayDay, 'Forecast Bot');
                         if (message) {
@@ -1118,6 +1145,7 @@
                     var tomorrowPostTime = forecastCmdSettings.autoPostTomorrow.time;
                     if (currentTime === tomorrowPostTime && autoPostLastRun.tomorrow !== todayKey) {
                         autoPostLastRun.tomorrow = todayKey;
+                        await saveAutoPostLastRun();
                         var tomorrowDate = new Date(now);
                         tomorrowDate.setDate(tomorrowDate.getDate() + 1);
                         var tomorrowDay = tomorrowDate.getDate();
@@ -1139,8 +1167,9 @@
             return;
         }
 
-        // Load saved settings first
+        // Load saved settings and auto-post state
         await loadForecastCmdSettings();
+        await loadAutoPostLastRun();
 
         window.RebelShipChatBot.registerCommand('forecast', handleForecastCommand, {
             minRole: 'all',

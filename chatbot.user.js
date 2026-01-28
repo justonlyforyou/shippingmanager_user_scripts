@@ -2,7 +2,7 @@
 // @name         ShippingManager - ChatBot
 // @namespace    http://tampermonkey.net/
 // @description  Automated chatbot for alliance chat and DMs with command system
-// @version      2.13
+// @version      2.15
 // @order        60
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
@@ -55,12 +55,10 @@
     var DEFAULT_SETTINGS = {
         enabled: false,
         commandPrefix: '!',
-        dmEnabled: true,
-        allianceChatEnabled: true,
         notifyIngame: true,
         notifySystem: false,
         commands: {
-            help: { enabled: true, minRole: 'all' }
+            help: { enabled: true, minRole: 'all', dmEnabled: true, allianceEnabled: true }
         },
         registeredCommandSettings: {},
         customCommands: []
@@ -425,6 +423,12 @@
     async function executeCommand(command, args, userId, userName, isDm) {
         // Built-in: help (with optional subcommand)
         if (command === 'help' && settings.commands.help && settings.commands.help.enabled) {
+            // Check per-command DM/Alliance setting
+            var helpDmEnabled = settings.commands.help.dmEnabled !== false;
+            var helpAllianceEnabled = settings.commands.help.allianceEnabled !== false;
+            if (isDm && !helpDmEnabled) return false;
+            if (!isDm && !helpAllianceEnabled) return false;
+
             var hasRole = await hasMinRole(userId, settings.commands.help.minRole);
             if (hasRole) {
                 await handleHelpCommand(args, userId, isDm);
@@ -441,6 +445,12 @@
             if (cmdSettings && cmdSettings.enabled === false) {
                 return false;
             }
+
+            // Check per-command DM/Alliance setting
+            var regDmEnabled = cmdSettings ? cmdSettings.dmEnabled !== false : true;
+            var regAllianceEnabled = cmdSettings ? cmdSettings.allianceEnabled !== false : true;
+            if (isDm && !regDmEnabled) return false;
+            if (!isDm && !regAllianceEnabled) return false;
 
             // Use settings minRole if configured, otherwise use command's default
             var effectiveMinRole = (cmdSettings && cmdSettings.minRole) ? cmdSettings.minRole : regCmd.minRole;
@@ -461,6 +471,12 @@
         for (var i = 0; i < settings.customCommands.length; i++) {
             var custom = settings.customCommands[i];
             if (custom.name.toLowerCase() === command && custom.enabled !== false) {
+                // Check per-command DM/Alliance setting
+                var customDmEnabled = custom.dmEnabled !== false;
+                var customAllianceEnabled = custom.allianceEnabled !== false;
+                if (isDm && !customDmEnabled) return false;
+                if (!isDm && !customAllianceEnabled) return false;
+
                 var hasCustomRole = await hasMinRole(userId, custom.minRole || 'all');
                 if (hasCustomRole) {
                     await sendResponse(custom.outputText, userId, isDm);
@@ -619,7 +635,6 @@
     // ============================================
 
     async function processDmChats() {
-        if (!settings.dmEnabled) return;
         var chats = await fetchDmChats();
         for (var i = 0; i < chats.length; i++) {
             var chat = chats[i];
@@ -652,7 +667,6 @@
     }
 
     async function processAllianceChat() {
-        if (!settings.allianceChatEnabled) return;
         var chatFeed = await fetchAllianceChatFeed();
         for (var i = 0; i < chatFeed.length; i++) {
             var item = chatFeed[i];
@@ -858,6 +872,8 @@
         for (var i = 0; i < settings.customCommands.length; i++) {
             var cmd = settings.customCommands[i];
             var outputLen = (cmd.outputText || '').length;
+            var customDmChecked = cmd.dmEnabled !== false ? 'checked' : '';
+            var customAllianceChecked = cmd.allianceEnabled !== false ? 'checked' : '';
             customCmdsHtml += '<div class="custom-cmd-item" data-idx="' + i + '" style="margin-bottom:12px;padding:12px;background:#d0d8f0;border-radius:6px;">' +
                 '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
                     '<div style="display:flex;align-items:center;gap:8px;">' +
@@ -870,7 +886,7 @@
                     '<textarea class="cmd-output" placeholder="Response text (max 1000 chars, use Shift+Enter for line breaks)" maxlength="1000" style="width:100%;min-height:60px;padding:8px;background:#fff;border:1px solid #c0c8e0;border-radius:4px;font-size:13px;resize:vertical;box-sizing:border-box;">' + (cmd.outputText || '').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</textarea>' +
                     '<div style="text-align:right;font-size:11px;color:#626b90;margin-top:2px;"><span class="cmd-char-count">' + outputLen + '</span> / 1000</div>' +
                 '</div>' +
-                '<div style="display:flex;align-items:center;gap:12px;">' +
+                '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">' +
                     '<span style="font-size:12px;color:#626b90;">Min Role:</span>' +
                     '<select class="cmd-role" style="padding:5px 8px;background:#fff;border:1px solid #c0c8e0;border-radius:4px;font-size:12px;">' +
                         '<option value="all"' + (cmd.minRole === 'all' ? ' selected' : '') + '>All Members</option>' +
@@ -879,6 +895,12 @@
                         '<option value="coo"' + (cmd.minRole === 'coo' ? ' selected' : '') + '>COO</option>' +
                         '<option value="ceo"' + (cmd.minRole === 'ceo' ? ' selected' : '') + '>CEO</option>' +
                     '</select>' +
+                    '<label style="display:flex;align-items:center;margin-left:8px;font-size:11px;">' +
+                        '<input type="checkbox" class="cmd-dm" ' + customDmChecked + ' style="width:14px;height:14px;margin-right:4px;accent-color:#0db8f4;">DM' +
+                    '</label>' +
+                    '<label style="display:flex;align-items:center;font-size:11px;">' +
+                        '<input type="checkbox" class="cmd-alliance" ' + customAllianceChecked + ' style="width:14px;height:14px;margin-right:4px;accent-color:#0db8f4;">Alliance' +
+                    '</label>' +
                 '</div>' +
             '</div>';
         }
@@ -898,10 +920,13 @@
                 var isEnabled = cmdSettings ? cmdSettings.enabled !== false : true;
                 var currentRole = (cmdSettings && cmdSettings.minRole) ? cmdSettings.minRole : regCmd.minRole;
 
-                registeredCmdsHtml += '<div style="display:flex;gap:8px;align-items:center;">' +
+                var regDmEnabled = cmdSettings ? cmdSettings.dmEnabled !== false : true;
+                var regAllianceEnabled = cmdSettings ? cmdSettings.allianceEnabled !== false : true;
+
+                registeredCmdsHtml += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">' +
                     '<input type="checkbox" class="reg-cmd-enabled" data-cmd="' + cmdName + '" ' + (isEnabled ? 'checked' : '') +
                     ' style="width:18px;height:18px;accent-color:#0db8f4;">' +
-                    '<span style="font-size:13px;width:80px;">!' + cmdName + '</span>' +
+                    '<span style="font-size:13px;width:60px;">!' + cmdName + '</span>' +
                     '<select class="reg-cmd-role" data-cmd="' + cmdName + '" style="padding:6px;background:#ebe9ea;border:0;border-radius:4px;font-size:12px;">' +
                         '<option value="all"' + (currentRole === 'all' ? ' selected' : '') + '>All</option>' +
                         '<option value="member"' + (currentRole === 'member' ? ' selected' : '') + '>Member</option>' +
@@ -909,6 +934,14 @@
                         '<option value="coo"' + (currentRole === 'coo' ? ' selected' : '') + '>COO</option>' +
                         '<option value="ceo"' + (currentRole === 'ceo' ? ' selected' : '') + '>CEO</option>' +
                     '</select>' +
+                    '<label style="display:flex;align-items:center;margin-left:8px;font-size:11px;">' +
+                        '<input type="checkbox" class="reg-cmd-dm" data-cmd="' + cmdName + '" ' + (regDmEnabled ? 'checked' : '') +
+                        ' style="width:14px;height:14px;margin-right:4px;accent-color:#0db8f4;">DM' +
+                    '</label>' +
+                    '<label style="display:flex;align-items:center;font-size:11px;">' +
+                        '<input type="checkbox" class="reg-cmd-alliance" data-cmd="' + cmdName + '" ' + (regAllianceEnabled ? 'checked' : '') +
+                        ' style="width:14px;height:14px;margin-right:4px;accent-color:#0db8f4;">Alliance' +
+                    '</label>' +
                     '<span style="font-size:11px;color:#626b90;margin-left:4px;">' + (regCmd.description || '') + '</span>' +
                 '</div>';
 
@@ -936,27 +969,12 @@
                            style="width:60px;padding:8px;background:#ebe9ea;border:0;border-radius:4px;text-align:center;font-size:16px;">\
                 </div>\
                 <div style="margin-bottom:16px;">\
-                    <div style="font-weight:700;font-size:14px;margin-bottom:8px;">Message Sources</div>\
-                    <div style="display:flex;gap:20px;">\
-                        <label style="display:flex;align-items:center;cursor:pointer;">\
-                            <input type="checkbox" id="cb-dm" ' + (settings.dmEnabled ? 'checked' : '') + '\
-                                   style="width:18px;height:18px;margin-right:8px;accent-color:#0db8f4;">\
-                            <span style="font-size:13px;">DMs</span>\
-                        </label>\
-                        <label style="display:flex;align-items:center;cursor:pointer;">\
-                            <input type="checkbox" id="cb-alliance" ' + (settings.allianceChatEnabled ? 'checked' : '') + '\
-                                   style="width:18px;height:18px;margin-right:8px;accent-color:#0db8f4;">\
-                            <span style="font-size:13px;">Alliance Chat</span>\
-                        </label>\
-                    </div>\
-                </div>\
-                <div style="margin-bottom:16px;">\
                     <div style="font-weight:700;font-size:14px;margin-bottom:8px;">Built-in Commands</div>\
                     <div style="display:flex;flex-direction:column;gap:8px;">\
-                        <div style="display:flex;gap:8px;align-items:center;">\
+                        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">\
                             <input type="checkbox" id="cb-cmd-help" ' + (settings.commands.help.enabled ? 'checked' : '') + '\
                                    style="width:18px;height:18px;accent-color:#0db8f4;">\
-                            <span style="font-size:13px;width:80px;">!help</span>\
+                            <span style="font-size:13px;width:60px;">!help</span>\
                             <select id="cb-cmd-help-role" style="padding:6px;background:#ebe9ea;border:0;border-radius:4px;font-size:12px;">\
                                 <option value="all"' + (settings.commands.help.minRole === 'all' ? ' selected' : '') + '>All</option>\
                                 <option value="member"' + (settings.commands.help.minRole === 'member' ? ' selected' : '') + '>Member</option>\
@@ -964,6 +982,14 @@
                                 <option value="coo"' + (settings.commands.help.minRole === 'coo' ? ' selected' : '') + '>COO</option>\
                                 <option value="ceo"' + (settings.commands.help.minRole === 'ceo' ? ' selected' : '') + '>CEO</option>\
                             </select>\
+                            <label style="display:flex;align-items:center;margin-left:8px;font-size:11px;">\
+                                <input type="checkbox" id="cb-cmd-help-dm" ' + (settings.commands.help.dmEnabled !== false ? 'checked' : '') + '\
+                                       style="width:14px;height:14px;margin-right:4px;accent-color:#0db8f4;">DM\
+                            </label>\
+                            <label style="display:flex;align-items:center;font-size:11px;">\
+                                <input type="checkbox" id="cb-cmd-help-alliance" ' + (settings.commands.help.allianceEnabled !== false ? 'checked' : '') + '\
+                                       style="width:14px;height:14px;margin-right:4px;accent-color:#0db8f4;">Alliance\
+                            </label>\
                         </div>\
                     </div>\
                 </div>\
@@ -1020,7 +1046,7 @@
         });
 
         document.getElementById('cb-add-cmd').addEventListener('click', function() {
-            settings.customCommands.push({ name: '', outputText: '', minRole: 'all', enabled: true });
+            settings.customCommands.push({ name: '', outputText: '', minRole: 'all', enabled: true, dmEnabled: true, allianceEnabled: true });
             updateSettingsContent();
         });
 
@@ -1047,10 +1073,10 @@
             var wasEnabled = settings.enabled;
             settings.enabled = document.getElementById('cb-enabled').checked;
             settings.commandPrefix = document.getElementById('cb-prefix').value || '!';
-            settings.dmEnabled = document.getElementById('cb-dm').checked;
-            settings.allianceChatEnabled = document.getElementById('cb-alliance').checked;
             settings.commands.help.enabled = document.getElementById('cb-cmd-help').checked;
             settings.commands.help.minRole = document.getElementById('cb-cmd-help-role').value;
+            settings.commands.help.dmEnabled = document.getElementById('cb-cmd-help-dm').checked;
+            settings.commands.help.allianceEnabled = document.getElementById('cb-cmd-help-alliance').checked;
             settings.notifyIngame = document.getElementById('cb-notify-ingame').checked;
             settings.notifySystem = document.getElementById('cb-notify-system').checked;
 
@@ -1062,17 +1088,23 @@
                 var nameInput = item.querySelector('.cmd-name');
                 var outputInput = item.querySelector('.cmd-output');
                 var roleSelect = item.querySelector('.cmd-role');
+                var dmCheckbox = item.querySelector('.cmd-dm');
+                var allianceCheckbox = item.querySelector('.cmd-alliance');
                 var name = nameInput ? nameInput.value.trim() : '';
                 var output = outputInput ? outputInput.value : '';
                 var role = roleSelect ? roleSelect.value : 'all';
+                var dmEnabledVal = dmCheckbox ? dmCheckbox.checked : true;
+                var allianceEnabledVal = allianceCheckbox ? allianceCheckbox.checked : true;
                 if (name) {
-                    settings.customCommands.push({ name: name, outputText: output, minRole: role, enabled: true });
+                    settings.customCommands.push({ name: name, outputText: output, minRole: role, enabled: true, dmEnabled: dmEnabledVal, allianceEnabled: allianceEnabledVal });
                 }
             });
 
             // Collect registered command settings
             var regCmdCheckboxes = document.querySelectorAll('.reg-cmd-enabled');
             var regCmdRoles = document.querySelectorAll('.reg-cmd-role');
+            var regCmdDms = document.querySelectorAll('.reg-cmd-dm');
+            var regCmdAlliances = document.querySelectorAll('.reg-cmd-alliance');
             settings.registeredCommandSettings = {};
             regCmdCheckboxes.forEach(function(cb) {
                 var cbCmdName = cb.getAttribute('data-cmd');
@@ -1087,6 +1119,20 @@
                     settings.registeredCommandSettings[selCmdName] = {};
                 }
                 settings.registeredCommandSettings[selCmdName].minRole = sel.value;
+            });
+            regCmdDms.forEach(function(cb) {
+                var cbCmdName = cb.getAttribute('data-cmd');
+                if (!settings.registeredCommandSettings[cbCmdName]) {
+                    settings.registeredCommandSettings[cbCmdName] = {};
+                }
+                settings.registeredCommandSettings[cbCmdName].dmEnabled = cb.checked;
+            });
+            regCmdAlliances.forEach(function(cb) {
+                var cbCmdName = cb.getAttribute('data-cmd');
+                if (!settings.registeredCommandSettings[cbCmdName]) {
+                    settings.registeredCommandSettings[cbCmdName] = {};
+                }
+                settings.registeredCommandSettings[cbCmdName].allianceEnabled = cb.checked;
             });
 
             enabled = settings.enabled;
