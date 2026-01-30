@@ -2,7 +2,7 @@
 // @name         ShippingManager - Demand Summary
 // @namespace    https://rebelship.org/
 // @description  Shows port demand with vessel capacity allocation overview
-// @version      4.80
+// @version      4.81
 // @author       https://github.com/justonlyforyou/
 // @order        9
 // @match        https://shippingmanager.cc/*
@@ -533,6 +533,12 @@
     let isDemandModalOpen = false;
     let modalListenerAttached = false;
 
+    function escapeHtml(text) {
+        var div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
     function formatNumber(num) {
         if (num >= 1000000) {
             return (num / 1000000).toFixed(1) + 'M';
@@ -650,7 +656,7 @@
         // My Alliance
         if (portRanking.myAlliance) {
             html += '<div style="margin-bottom:8px;">';
-            html += '<div style="font-size:16px;font-weight:bold;color:#4ade80;">#' + portRanking.myAlliance.rank + ' ' + portRanking.myAlliance.name + '</div>';
+            html += '<div style="font-size:16px;font-weight:bold;color:#4ade80;">#' + portRanking.myAlliance.rank + ' ' + escapeHtml(portRanking.myAlliance.name) + '</div>';
             html += '<div style="font-size:11px;color:#9ca3af;margin-top:2px;">TEU: ' + formatNumber(portRanking.myAlliance.teu) + ' | BBL: ' + formatNumber(portRanking.myAlliance.bbl) + '</div>';
             html += '</div>';
         } else {
@@ -665,7 +671,7 @@
                 var ally = portRanking.topAlliances[i];
                 var rankColor = i === 0 ? '#ffd700' : (i === 1 ? '#c0c0c0' : (i === 2 ? '#cd7f32' : '#fff'));
                 html += '<div style="margin-bottom:4px;">';
-                html += '<div style="color:' + rankColor + ';font-weight:bold;">#' + ally.rank + ' ' + ally.name + '</div>';
+                html += '<div style="color:' + rankColor + ';font-weight:bold;">#' + ally.rank + ' ' + escapeHtml(ally.name) + '</div>';
                 html += '<div style="font-size:10px;color:#9ca3af;margin-left:16px;">TEU: ' + formatNumber(ally.teu) + ' | BBL: ' + formatNumber(ally.bbl) + '</div>';
                 html += '</div>';
             }
@@ -1753,7 +1759,7 @@
                 html += '<div style="margin-top:6px;font-size:10px;color:#9ca3af;">Top 3:</div>';
                 for (var i = 0; i < Math.min(3, portRanking.topAlliances.length); i++) {
                     var ally = portRanking.topAlliances[i];
-                    html += '<div style="font-size:11px;margin-left:8px;">' + ally.rank + '. ' + ally.name + '</div>';
+                    html += '<div style="font-size:11px;margin-left:8px;">' + ally.rank + '. ' + escapeHtml(ally.name) + '</div>';
                 }
             }
             html += '</div>';

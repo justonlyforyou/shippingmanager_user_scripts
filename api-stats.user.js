@@ -2,7 +2,7 @@
 // @name         ShippingManager - API Stats Monitor
 // @namespace    http://tampermonkey.net/
 // @description  Monitor all API calls to shippingmanager.cc in the background
-// @version      1.8
+// @version      1.9
 // @order        2
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
@@ -168,6 +168,12 @@
         };
     }
 
+    function escapeHtml(text) {
+        var div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
     function formatTime(timestamp) {
         var d = new Date(timestamp);
         var h = d.getHours().toString().padStart(2, '0');
@@ -286,7 +292,7 @@
         stats.endpoints.forEach(function(ep, idx) {
             var bgColor = idx % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)';
             table += '<tr style="background:' + bgColor + ';">';
-            table += '<td style="padding:8px 12px;border-bottom:1px solid #2a2a4e;word-break:break-all;color:#aaa;">' + ep.url + '</td>';
+            table += '<td style="padding:8px 12px;border-bottom:1px solid #2a2a4e;word-break:break-all;color:#aaa;">' + escapeHtml(ep.url) + '</td>';
             table += '<td style="padding:8px 12px;border-bottom:1px solid #2a2a4e;text-align:center;color:#4a90d9;font-weight:700;">' + ep.count + '</td>';
             table += '<td style="padding:8px 12px;border-bottom:1px solid #2a2a4e;text-align:center;color:#626b90;">' + formatTime(ep.lastCall) + '</td>';
             table += '</tr>';

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Vessel Shopping Cart
 // @description Add vessels to cart and bulk purchase them
-// @version     4.24
+// @version     4.25
 // @author      https://github.com/justonlyforyou/
 // @order        63
 // @match       https://shippingmanager.cc/*
@@ -822,8 +822,8 @@
                     if (data.error) {
                         failCount++;
                         var errorMsg = data.error.replace(/_/g, ' ');
-                        errors.push(vesselName + ': ' + errorMsg);
-                        statusEl.innerHTML = '<span style="color:#ef4444;">' + errorMsg + '</span>';
+                        errors.push(escapeHtml(vesselName) + ': ' + escapeHtml(errorMsg));
+                        statusEl.innerHTML = '<span style="color:#ef4444;">' + escapeHtml(errorMsg) + '</span>';
                         console.error('[VesselCart] Failed:', data);
                     } else if (data.success || data.data) {
                         successCount++;

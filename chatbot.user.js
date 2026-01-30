@@ -2,7 +2,7 @@
 // @name         ShippingManager - ChatBot
 // @namespace    http://tampermonkey.net/
 // @description  Automated chatbot for alliance chat and DMs with command system
-// @version      2.15
+// @version      2.16
 // @order        60
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
@@ -409,6 +409,12 @@
             return sendAllianceMessage(message);
         }
     };
+
+    function escapeHtml(text) {
+        var div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
 
     function parseCommand(message) {
         if (!settings) return null;
@@ -878,7 +884,7 @@
                 '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
                     '<div style="display:flex;align-items:center;gap:8px;">' +
                         '<span style="font-size:12px;color:#626b90;">Command:</span>' +
-                        '<input type="text" value="' + (cmd.name || '') + '" placeholder="e.g. status" class="cmd-name" style="width:120px;padding:6px 8px;background:#fff;border:1px solid #c0c8e0;border-radius:4px;font-size:13px;">' +
+                        '<input type="text" value="' + escapeHtml(cmd.name || '') + '" placeholder="e.g. status" class="cmd-name" style="width:120px;padding:6px 8px;background:#fff;border:1px solid #c0c8e0;border-radius:4px;font-size:13px;">' +
                     '</div>' +
                     '<button class="cmd-delete" style="padding:4px 10px;background:#dc3545;color:#fff;border:0;border-radius:4px;cursor:pointer;font-size:12px;">Remove</button>' +
                 '</div>' +
