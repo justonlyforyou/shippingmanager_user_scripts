@@ -87,7 +87,7 @@ Previous versions of these scripts worked with Tampermonkey, but the current arc
 | vessel-cart.user.js | 4.22 | Shopping cart for vessel purchase/build |
 | bunker-price-display.user.js | 3.20 | Fuel/CO2 prices and fill level in header |
 | forecast-calendar.user.js | 3.27 | Page-flip calendar with price forecasts |
-| demand-summary.user.js | 4.78 | Port demand with capacity overview, alliance ranking |
+| demand-summary.user.js | 4.79 | Port demand with capacity overview, alliance ranking |
 | api-stats.user.js | 1.6 | Monitor and analyze API call patterns |
 | enable-distance-filter.user.js | 9.19 | Filter ports by distance |
 | map-unlock.user.js | 1.10 | Premium Map Themes, Tanker Ops, Metropolis, Zoom |
@@ -348,7 +348,7 @@ Visual page-flip calendar with fuel and CO2 price forecasts.
 
 ### demand-summary.user.js - Demand Summary
 
-**Version:** 4.78
+**Version:** 4.79
 
 Shows port demand with capacity overview and alliance rankings.
 

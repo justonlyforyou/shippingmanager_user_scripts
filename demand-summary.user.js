@@ -2,7 +2,7 @@
 // @name         ShippingManager - Demand Summary
 // @namespace    https://rebelship.org/
 // @description  Shows port demand with vessel capacity allocation overview
-// @version      4.78
+// @version      4.79
 // @author       https://github.com/justonlyforyou/
 // @order        9
 // @match        https://shippingmanager.cc/*
@@ -19,9 +19,9 @@
     const SCRIPT_NAME = 'DemandSummary';
     const STORE_NAME = 'data';
     const COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
-    const RANKING_COOLDOWN_MS = 0; // DEBUG: disabled for testing
-    const RANKING_BATCH_SIZE = 20; // Ports per batch - avoid too many parallel requests
-    const RANKING_BATCH_DELAY_MS = 200; // Delay between batches
+    const RANKING_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes
+    const RANKING_BATCH_SIZE = 5; // Ports per batch
+    const RANKING_BATCH_DELAY_MS = 1500; // Delay between batches
     const API_BASE = 'https://shippingmanager.cc/api';
 
     // ========== REBELSHIPBRIDGE STORAGE ==========
