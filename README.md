@@ -76,18 +76,18 @@ Previous versions of these scripts worked with Tampermonkey, but the current arc
 | Script | Version | Description |
 |--------|---------|-------------|
 | rebelship-header-optimizer.user.js | 3.51 | Header UI optimization, mobile layout, resize handling |
-| departmanager.user.js | 3.27 | Auto-Bunker, Auto-Depart, Route Settings, Min Utilization |
+| departmanager.user.js | 3.43 | Auto-Bunker, Auto-Depart, Route Settings, Min Utilization |
 | auto-repair.user.js | 2.36 | Auto-repair at wear threshold |
 | auto-happy-stuff.user.js | 1.36 | Auto salary adjustment for crew/management morale |
 | auto-coop-tickets-display.user.js | 5.35 | Co-Op display in header, Auto-COOP sending |
 | auto-marketing-reputation-display.user.js | 5.26 | Reputation in header, auto campaign renewal |
-| auto-drydock.user.js | 1.1 | Auto-drydock at hours threshold, drydock bug prevention |
-| smugglers-eye.user.js | 1.1 | Price optimization: 4% markup, gradual increase, max guards |
+| auto-drydock.user.js | 1.6 | Auto-drydock at hours threshold, drydock bug prevention |
+| smugglers-eye.user.js | 1.9 | Price optimization: 4% markup, gradual increase, max guards |
 | fleet-manager.user.js | 4.15 | Mass Moor/Resume with checkboxes |
 | vessel-cart.user.js | 4.22 | Shopping cart for vessel purchase/build |
 | bunker-price-display.user.js | 3.20 | Fuel/CO2 prices and fill level in header |
 | forecast-calendar.user.js | 3.27 | Page-flip calendar with price forecasts |
-| demand-summary.user.js | 4.43 | Port demand with capacity overview |
+| demand-summary.user.js | 4.78 | Port demand with capacity overview, alliance ranking |
 | api-stats.user.js | 1.6 | Monitor and analyze API call patterns |
 | enable-distance-filter.user.js | 9.19 | Filter ports by distance |
 | map-unlock.user.js | 1.10 | Premium Map Themes, Tanker Ops, Metropolis, Zoom |
@@ -128,7 +128,7 @@ Previous versions of these scripts worked with Tampermonkey, but the current arc
 
 ### departmanager.user.js - Depart Manager
 
-**Version:** 3.25 | **Background Job:** Yes
+**Version:** 3.43 | **Background Job:** Yes
 
 The main automation script for departure and route management.
 
@@ -215,7 +215,7 @@ Shows reputation in header and auto-renews expired marketing campaigns.
 
 ### auto-drydock.user.js - Auto Drydock
 
-**Version:** 1.1 | **Background Job:** Yes
+**Version:** 1.6 | **Background Job:** Yes
 
 Automatically sends vessels to drydock when antifouling hours drop below threshold. Also prevents the drydock bug by saving and restoring route settings.
 
@@ -248,7 +248,7 @@ Every 15 minutes:
 
 ### smugglers-eye.user.js - Smuggler's Eye
 
-**Version:** 1.1 | **Background Job:** Yes
+**Version:** 1.9 | **Background Job:** Yes
 
 Automatic price optimization system for cargo routes.
 
@@ -348,19 +348,26 @@ Visual page-flip calendar with fuel and CO2 price forecasts.
 
 ### demand-summary.user.js - Demand Summary
 
-**Version:** 4.43
+**Version:** 4.78
 
-Shows port demand with capacity overview.
+Shows port demand with capacity overview and alliance rankings.
 
 **Access:** RebelShip Menu > **"Demand Summary"**
 
 #### Features
 
-- Lists all ports with current cargo demand
+- Lists all 360 ports with current cargo demand (TEU/BBL)
 - Shows your fleet capacity allocated to each port
-- Highlights undersupplied and oversupplied routes
-- Sortable columns
-- Quick navigation to port details
+- Alliance ranking per port (collect via button)
+- Filter by: All, With Vessels, No Vessels, Container, Tanker
+- Sortable columns (click headers)
+- Mobile-optimized compact table layout
+- Export data as JSON
+
+#### Tooltips
+
+- **Harbor Map:** Hover over port markers (desktop) or long-press (mobile) to see demand, vessels, and ranking info
+- **Rank Column:** Click on any rank cell (desktop) or long-press (mobile) to see detailed alliance rankings including top 3 alliances with TEU/BBL stats
 
 ---
 

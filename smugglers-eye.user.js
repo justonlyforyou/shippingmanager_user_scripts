@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Smuggler's Eye
 // @namespace    https://rebelship.org/
-// @version      1.8
+// @version      1.9
 // @description  Auto-adjust cargo prices: 4% instant markup, gradual increase, max guards on pirate routes
 // @author       https://github.com/justonlyforyou/
 // @order        14
@@ -72,7 +72,10 @@
     }
 
     // ========== SHARED STORAGE (DepartManager) ==========
-    async function dbGetShared() {
+    var RETRY_DELAYS = [500, 1000, 2000, 4000];
+
+    async function dbGetShared(retryCount) {
+        retryCount = retryCount || 0;
         try {
             var result = await window.RebelShipBridge.storage.get('DepartManager', 'data', 'storage');
             if (result) {
@@ -80,17 +83,30 @@
             }
             return null;
         } catch (e) {
-            console.error('[SmugglersEye] dbGetShared error:', e);
+            if (retryCount < RETRY_DELAYS.length) {
+                var delay = RETRY_DELAYS[retryCount];
+                console.warn('[SmugglersEye] dbGetShared retry ' + (retryCount + 1) + '/' + RETRY_DELAYS.length + ' in ' + delay + 'ms');
+                await new Promise(function(r) { setTimeout(r, delay); });
+                return dbGetShared(retryCount + 1);
+            }
+            console.error('[SmugglersEye] dbGetShared FAILED after retries:', e);
             return null;
         }
     }
 
-    async function dbSetShared(storage) {
+    async function dbSetShared(storage, retryCount) {
+        retryCount = retryCount || 0;
         try {
             await window.RebelShipBridge.storage.set('DepartManager', 'data', 'storage', JSON.stringify(storage));
             return true;
         } catch (e) {
-            console.error('[SmugglersEye] dbSetShared error:', e);
+            if (retryCount < RETRY_DELAYS.length) {
+                var delay = RETRY_DELAYS[retryCount];
+                console.warn('[SmugglersEye] dbSetShared retry ' + (retryCount + 1) + '/' + RETRY_DELAYS.length + ' in ' + delay + 'ms');
+                await new Promise(function(r) { setTimeout(r, delay); });
+                return dbSetShared(storage, retryCount + 1);
+            }
+            console.error('[SmugglersEye] dbSetShared FAILED after retries:', e);
             return false;
         }
     }
@@ -203,8 +219,10 @@
         if (vesselIds.length === 0) return;
 
         var storage = await dbGetShared();
+        // CRITICAL: Never create default storage with settings:{} - that corrupts DepartManager!
         if (!storage) {
-            storage = { settings: {}, drydockVessels: {}, pendingRouteSettings: {} };
+            console.error('[SmugglersEye] Cannot save pending routes - storage unavailable after retries');
+            return;
         }
         if (!storage.pendingRouteSettings) {
             storage.pendingRouteSettings = {};
@@ -215,8 +233,10 @@
             storage.pendingRouteSettings[vesselId] = pendingChangesBuffer[vesselId];
         }
 
-        await dbSetShared(storage);
-        pendingChangesBuffer = {};
+        var success = await dbSetShared(storage);
+        if (success) {
+            pendingChangesBuffer = {};
+        }
     }
 
     // ========== HIJACKING RISK CACHE ==========

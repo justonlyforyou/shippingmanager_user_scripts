@@ -2,7 +2,7 @@
 // @name         ShippingManager - Depart Manager
 // @namespace    https://rebelship.org/
 // @description  Unified departure management: Auto bunker rebuy, auto-depart, route settings
-// @version      3.39
+// @version      3.43
 // @author       https://github.com/justonlyforyou/
 // @order        10
 // @match        https://shippingmanager.cc/*
@@ -31,6 +31,7 @@
 
     // In-memory cache (loaded from Bridge storage)
     var storageCache = null;
+    var dbConnectionVerified = false; // TRUE after successful DB read (even if empty)
     var lastCheckTimeCache = 0;
     var autoPriceCacheData = {};
 
@@ -43,7 +44,12 @@
     async function dbGet(key) {
         var result = await window.RebelShipBridge.storage.get(SCRIPT_NAME_BRIDGE, STORE_NAME, key);
         if (result) {
-            return JSON.parse(result);
+            var parsed = JSON.parse(result);
+            // Check for error responses from the Bridge
+            if (parsed && parsed.error) {
+                throw new Error('[DB] Bridge returned error: ' + parsed.error);
+            }
+            return parsed;
         }
         return null;
     }
@@ -128,18 +134,25 @@
     }
 
     function getStorage() {
-        if (storageCache) {
-            return {
-                settings: Object.assign({}, DEFAULT_SETTINGS, storageCache.settings || {}),
-                pendingRouteSettings: storageCache.pendingRouteSettings || {},
-                priceChangedAt: storageCache.priceChangedAt || {},
-                lastGradualIncrease: storageCache.lastGradualIncrease || {}
-            };
+        if (!storageCache) {
+            // FATAL: storageCache must be initialized before use
+            // This prevents silent fallback to defaults which would overwrite user settings
+            throw new Error('[Depart Manager] FATAL: storageCache is null - storage not loaded!');
         }
-        return getDefaultStorage();
+        return {
+            settings: Object.assign({}, DEFAULT_SETTINGS, storageCache.settings || {}),
+            pendingRouteSettings: storageCache.pendingRouteSettings || {},
+            priceChangedAt: storageCache.priceChangedAt || {},
+            lastGradualIncrease: storageCache.lastGradualIncrease || {}
+        };
     }
 
     async function saveStorage(storage) {
+        // Only save if DB connection was verified during loadStorage
+        if (!dbConnectionVerified) {
+            console.error('[Depart Manager] BLOCKED SAVE: DB connection not verified');
+            return;
+        }
         storageCache = storage;
         var success = await dbSet('storage', storage);
         if (success) {
@@ -188,16 +201,24 @@
     async function loadStorage(retryCount) {
         retryCount = retryCount || 0;
         try {
+            // dbGet throws on DB errors, returns null if key doesn't exist
             var dbData = await dbGet('storage');
+
+            // If we get here without throwing, DB connection is working
+            dbConnectionVerified = true;
+
             if (dbData) {
+                if (typeof dbData !== 'object') {
+                    throw new Error('Invalid storage format: expected object, got ' + typeof dbData);
+                }
                 storageCache = dbData;
-                log('Loaded storage from RebelShipBridge');
+                log('DB OK: loaded ' + Object.keys(dbData.settings || {}).length + ' settings');
             } else {
-                // DB empty (first run) - initialize schema with defaults and save
+                // null = key doesn't exist = first run = DB works, just empty
                 storageCache = getDefaultStorage();
-                await dbSet('storage', storageCache);
-                log('First run: initialized storage with defaults and saved to DB');
+                log('DB OK: first run, using defaults');
             }
+
             var lastCheckData = await dbGet('lastCheckTime');
             if (typeof lastCheckData === 'number') {
                 lastCheckTimeCache = lastCheckData;
@@ -209,11 +230,12 @@
         } catch (err) {
             if (retryCount < RETRY_DELAYS.length) {
                 var delay = RETRY_DELAYS[retryCount];
-                log('DB read failed, retry ' + (retryCount + 1) + '/' + RETRY_DELAYS.length + ' in ' + delay + 'ms: ' + err.message, 'warn');
+                log('DB ERROR, retry ' + (retryCount + 1) + '/' + RETRY_DELAYS.length + ' in ' + delay + 'ms: ' + err.message, 'warn');
                 await sleep(delay);
                 return loadStorage(retryCount + 1);
             }
-            log('DB read failed after ' + RETRY_DELAYS.length + ' retries: ' + err.message, 'error');
+            // All retries failed - DB is not accessible
+            console.error('[Depart Manager] FATAL: DB not accessible after ' + RETRY_DELAYS.length + ' retries: ' + err.message);
             throw err;
         }
     }
@@ -3157,7 +3179,8 @@
             addMenuItem(SCRIPT_NAME, openSettingsModal, 20);
             initUI();
 
-            // Load data from IndexedDB or migrate from localStorage
+            // Load data from RebelShipBridge storage
+            // If this fails, script MUST NOT continue - would overwrite settings with defaults
             await loadStorage();
 
             requestNotificationPermission();
@@ -3188,7 +3211,11 @@
             }
 
         } catch (err) {
-            log('init() error: ' + err.message, 'error');
+            // DON'T just log and continue - STOP the script
+            console.error('[Depart Manager] FATAL: init() failed: ' + err.message);
+            console.error('[Depart Manager] Script will NOT function - storage unavailable');
+            // EXIT - don't start monitoring with broken storage
+            return;
         }
     }
 

@@ -2,7 +2,7 @@
 // @name         ShippingManager - Demand Summary
 // @namespace    https://rebelship.org/
 // @description  Shows port demand with vessel capacity allocation overview
-// @version      4.52
+// @version      4.78
 // @author       https://github.com/justonlyforyou/
 // @order        9
 // @match        https://shippingmanager.cc/*
@@ -19,30 +19,80 @@
     const SCRIPT_NAME = 'DemandSummary';
     const STORE_NAME = 'data';
     const COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
-    const RANKING_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes
-    const RANKING_DELAY_MS = 2000; // 2 seconds between ranking API calls
+    const RANKING_COOLDOWN_MS = 0; // DEBUG: disabled for testing
+    const RANKING_BATCH_SIZE = 20; // Ports per batch - avoid too many parallel requests
+    const RANKING_BATCH_DELAY_MS = 200; // Delay between batches
     const API_BASE = 'https://shippingmanager.cc/api';
 
     // ========== REBELSHIPBRIDGE STORAGE ==========
-    async function dbGet(key) {
+    var RETRY_DELAYS = [500, 1000, 2000, 4000];
+
+    async function dbGet(key, retryCount) {
+        retryCount = retryCount || 0;
+        if (!window.RebelShipBridge) {
+            console.error('[' + SCRIPT_NAME + '] FATAL: RebelShipBridge not found!');
+            return null;
+        }
+        if (!window.RebelShipBridge.storage) {
+            console.error('[' + SCRIPT_NAME + '] FATAL: RebelShipBridge.storage not found!');
+            return null;
+        }
         try {
+            console.log('[' + SCRIPT_NAME + '] dbGet(' + key + ') calling storage.get...');
             var result = await window.RebelShipBridge.storage.get(SCRIPT_NAME, STORE_NAME, key);
+            console.log('[' + SCRIPT_NAME + '] dbGet(' + key + ') raw result: ' + (result ? result.substring(0, 100) + '...' : 'NULL'));
             if (result) {
-                return JSON.parse(result);
+                var parsed = JSON.parse(result);
+                console.log('[' + SCRIPT_NAME + '] dbGet(' + key + ') parsed OK');
+                return parsed;
             }
+            console.log('[' + SCRIPT_NAME + '] dbGet(' + key + ') returned null/empty');
             return null;
         } catch (e) {
-            console.error('[' + SCRIPT_NAME + '] dbGet error:', e);
+            console.error('[' + SCRIPT_NAME + '] dbGet(' + key + ') ERROR: ' + e.message);
+            if (retryCount < RETRY_DELAYS.length) {
+                var delay = RETRY_DELAYS[retryCount];
+                console.log('[' + SCRIPT_NAME + '] dbGet retry ' + (retryCount + 1) + '/' + RETRY_DELAYS.length + ' in ' + delay + 'ms');
+                await new Promise(function(r) { setTimeout(r, delay); });
+                return dbGet(key, retryCount + 1);
+            }
+            console.error('[' + SCRIPT_NAME + '] dbGet FAILED after all retries: ' + e.message);
             return null;
         }
     }
 
-    async function dbSet(key, value) {
+    async function dbSet(key, value, retryCount) {
+        retryCount = retryCount || 0;
+        if (!window.RebelShipBridge) {
+            console.error('[' + SCRIPT_NAME + '] FATAL: RebelShipBridge not found for SET!');
+            return false;
+        }
+        if (!window.RebelShipBridge.storage) {
+            console.error('[' + SCRIPT_NAME + '] FATAL: RebelShipBridge.storage not found for SET!');
+            return false;
+        }
         try {
-            await window.RebelShipBridge.storage.set(SCRIPT_NAME, STORE_NAME, key, JSON.stringify(value));
+            var jsonStr = JSON.stringify(value);
+            console.log('[' + SCRIPT_NAME + '] dbSet(' + key + ') size=' + jsonStr.length + ' bytes');
+            await window.RebelShipBridge.storage.set(SCRIPT_NAME, STORE_NAME, key, jsonStr);
+            console.log('[' + SCRIPT_NAME + '] dbSet(' + key + ') SUCCESS');
+            // VERIFY: Read back immediately
+            var verify = await window.RebelShipBridge.storage.get(SCRIPT_NAME, STORE_NAME, key);
+            if (verify) {
+                console.log('[' + SCRIPT_NAME + '] dbSet(' + key + ') VERIFIED - data persisted');
+            } else {
+                console.error('[' + SCRIPT_NAME + '] dbSet(' + key + ') VERIFY FAILED - data NOT persisted!');
+            }
             return true;
         } catch (e) {
-            console.error('[' + SCRIPT_NAME + '] dbSet error:', e);
+            console.error('[' + SCRIPT_NAME + '] dbSet(' + key + ') ERROR: ' + e.message);
+            if (retryCount < RETRY_DELAYS.length) {
+                var delay = RETRY_DELAYS[retryCount];
+                console.log('[' + SCRIPT_NAME + '] dbSet retry ' + (retryCount + 1) + '/' + RETRY_DELAYS.length + ' in ' + delay + 'ms');
+                await new Promise(function(r) { setTimeout(r, delay); });
+                return dbSet(key, value, retryCount + 1);
+            }
+            console.error('[' + SCRIPT_NAME + '] dbSet FAILED after all retries: ' + e.message);
             return false;
         }
     }
@@ -150,23 +200,6 @@
             return true;
         } catch (e) {
             log('Failed to save cache: ' + e.message, 'error');
-            return false;
-        }
-    }
-
-    async function saveRankingForPort(portCode, portRanking) {
-        try {
-            const existing = rankingCache ? rankingCache.ports : {};
-            existing[portCode] = portRanking;
-            const cacheData = {
-                timestamp: Date.now(),
-                ports: existing
-            };
-            await dbSet('rankingCache', cacheData);
-            rankingCache = cacheData;
-            return true;
-        } catch (e) {
-            log('Failed to save ranking for port ' + portCode + ': ' + e.message, 'error');
             return false;
         }
     }
@@ -332,13 +365,16 @@
         return allPorts;
     }
 
+    // WICHTIG: Ranking API akzeptiert NUR einzelne Strings, KEINE Arrays!
+    // Das ist ANDERS als die Demand API (/port/get-ports) die Arrays akzeptiert.
+    // Deshalb: Einzelne Calls parallel mit Promise.all ausfuehren.
     async function fetchPortRanking(portCode, maxRetries) {
         maxRetries = maxRetries ?? 3;
         let lastError;
 
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-                const response = await fetch(API_BASE + '/alliance/get-alliance-data', {
+                const response = await fetch(API_BASE + '/port/get-alliance-data', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     credentials: 'include',
@@ -359,16 +395,15 @@
                 return null;
             } catch (e) {
                 lastError = e;
-                log('fetchPortRanking ' + portCode + ' attempt ' + attempt + '/' + maxRetries + ' failed: ' + e.message);
                 if (attempt < maxRetries) {
-                    const delay = attempt * 1000;
-                    await new Promise(resolve => setTimeout(resolve, delay));
+                    await new Promise(resolve => setTimeout(resolve, attempt * 500));
                 }
             }
         }
-
-        throw lastError;
+        log('fetchPortRanking ' + portCode + ' failed after ' + maxRetries + ' attempts: ' + lastError.message, 'error');
+        return null;
     }
+
 
     function getPortLastUpdated(portCode) {
         const cache = loadCacheSync();
@@ -598,6 +633,93 @@
         tooltipTimeout = setTimeout(function() {
             hideTooltip();
         }, 200);
+    }
+
+    function showRankTooltip(portCode, cellElement) {
+        const rankings = loadRankingCacheSync();
+        if (!rankings || !rankings.ports || !rankings.ports[portCode]) {
+            showToast('No ranking data for this port', 'info');
+            return;
+        }
+
+        const portRanking = rankings.ports[portCode];
+        const tooltip = createTooltip();
+
+        let html = '<div style="font-weight:bold;font-size:14px;margin-bottom:8px;color:#f59e0b;">' + capitalizePortName(portCode) + '</div>';
+
+        // My Alliance
+        if (portRanking.myAlliance) {
+            html += '<div style="margin-bottom:8px;">';
+            html += '<div style="font-size:16px;font-weight:bold;color:#4ade80;">#' + portRanking.myAlliance.rank + ' ' + portRanking.myAlliance.name + '</div>';
+            html += '<div style="font-size:11px;color:#9ca3af;margin-top:2px;">TEU: ' + formatNumber(portRanking.myAlliance.teu) + ' | BBL: ' + formatNumber(portRanking.myAlliance.bbl) + '</div>';
+            html += '</div>';
+        } else {
+            html += '<div style="color:#9ca3af;margin-bottom:8px;">Your alliance has no rank here</div>';
+        }
+
+        // Top Alliances
+        if (portRanking.topAlliances && portRanking.topAlliances.length > 0) {
+            html += '<div style="border-top:1px solid #374151;padding-top:8px;">';
+            html += '<div style="color:#9ca3af;font-size:10px;margin-bottom:6px;">TOP ALLIANCES</div>';
+            for (var i = 0; i < portRanking.topAlliances.length; i++) {
+                var ally = portRanking.topAlliances[i];
+                var rankColor = i === 0 ? '#ffd700' : (i === 1 ? '#c0c0c0' : (i === 2 ? '#cd7f32' : '#fff'));
+                html += '<div style="margin-bottom:4px;">';
+                html += '<div style="color:' + rankColor + ';font-weight:bold;">#' + ally.rank + ' ' + ally.name + '</div>';
+                html += '<div style="font-size:10px;color:#9ca3af;margin-left:16px;">TEU: ' + formatNumber(ally.teu) + ' | BBL: ' + formatNumber(ally.bbl) + '</div>';
+                html += '</div>';
+            }
+            html += '</div>';
+        }
+
+        // Last updated
+        if (rankings.timestamp) {
+            html += '<div style="color:#6b7280;font-size:10px;margin-top:8px;padding-top:8px;border-top:1px solid #374151;">';
+            html += 'Updated: ' + formatTimestamp(rankings.timestamp);
+            html += '</div>';
+        }
+
+        // Close button for mobile
+        html += '<div style="text-align:center;margin-top:8px;">';
+        html += '<button id="rank-tooltip-close" style="padding:4px 16px;background:#374151;border:0;border-radius:4px;color:#fff;font-size:11px;cursor:pointer;">Close</button>';
+        html += '</div>';
+
+        tooltip.innerHTML = html;
+
+        // Position tooltip near the cell
+        tooltip.style.visibility = 'hidden';
+        tooltip.style.display = 'block';
+        const tooltipWidth = tooltip.offsetWidth;
+        const tooltipHeight = tooltip.offsetHeight;
+        tooltip.style.visibility = 'visible';
+
+        const rect = cellElement.getBoundingClientRect();
+        const padding = 10;
+        let left, top;
+
+        // Center horizontally on screen for mobile-friendliness
+        left = Math.max(padding, (window.innerWidth - tooltipWidth) / 2);
+
+        // Position below the cell
+        top = rect.bottom + padding;
+        if (top + tooltipHeight > window.innerHeight - padding) {
+            top = rect.top - tooltipHeight - padding;
+        }
+        if (top < padding) {
+            top = padding;
+        }
+
+        tooltip.style.left = left + 'px';
+        tooltip.style.top = top + 'px';
+
+        // Close button handler
+        const closeBtn = document.getElementById('rank-tooltip-close');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                hideTooltip();
+            });
+        }
     }
 
     function exportToCSV(ports, vesselsByDest) {
@@ -849,8 +971,21 @@
 
     async function renderModalContent(container) {
         activeModalContainer = container;
+
+        log('renderModalContent: cachedData=' + (cachedData ? 'exists(' + (cachedData.ports ? cachedData.ports.length : 'no ports') + ')' : 'NULL'));
+        log('renderModalContent: rankingCache=' + (rankingCache ? 'exists(' + (rankingCache.ports ? Object.keys(rankingCache.ports).length : 'no ports') + ')' : 'NULL'));
+
+        // Reload from DB if memory caches are empty (e.g., after app restart)
+        if (!cachedData || !rankingCache) {
+            log('renderModalContent: Loading from DB...');
+            await loadCache();
+            log('renderModalContent: After loadCache - cachedData=' + (cachedData ? 'exists(' + (cachedData.ports ? cachedData.ports.length : 'no ports') + ')' : 'NULL'));
+            log('renderModalContent: After loadCache - rankingCache=' + (rankingCache ? 'exists(' + (rankingCache.ports ? Object.keys(rankingCache.ports).length : 'no ports') + ')' : 'NULL'));
+        }
+
         const cache = loadCacheSync();
         const hasCache = cache && cache.ports && cache.ports.length > 0;
+        log('renderModalContent: hasCache=' + hasCache);
         const canCollectNow = canCollect();
         const cooldownRemaining = getTimeUntilNextCollect();
         const vesselsByDest = getVesselsByDestination();
@@ -859,6 +994,7 @@
 
         // Header with last collect times
         const rankings = loadRankingCacheSync();
+        log('Header: cache.timestamp=' + (cache ? cache.timestamp : 'NULL') + ', rankings.timestamp=' + (rankings ? rankings.timestamp : 'NULL'));
         html += '<div style="font-size:11px;color:#626b90;margin-bottom:2px;text-align:center;">';
         html += 'Demand: ' + formatTimestamp(cache ? cache.timestamp : null);
         html += ' | Ranking: ' + formatTimestamp(rankings ? rankings.timestamp : null);
@@ -878,7 +1014,7 @@
             html += '</div>';
 
             // Filter tabs
-            html += '<div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap;align-items:center;justify-content:center;">';
+            html += '<div style="display:flex;gap:2px;margin-bottom:12px;flex-wrap:wrap;align-items:center;justify-content:center;">';
             html += '<button class="demand-filter-btn" data-filter="all" style="padding:6px 12px;background:' + (currentFilter === 'all' ? '#0db8f4' : '#374151') + ';border:0;border-radius:4px;color:#fff;font-size:12px;cursor:pointer;">All</button>';
             html += '<button class="demand-filter-btn" data-filter="vessels" style="padding:6px 12px;background:' + (currentFilter === 'vessels' ? '#0db8f4' : '#374151') + ';border:0;border-radius:4px;color:#fff;font-size:12px;cursor:pointer;">With Vessels</button>';
             html += '<button class="demand-filter-btn" data-filter="novessels" style="padding:6px 12px;background:' + (currentFilter === 'novessels' ? '#0db8f4' : '#374151') + ';border:0;border-radius:4px;color:#fff;font-size:12px;cursor:pointer;">No Vessels</button>';
@@ -992,11 +1128,48 @@
                 }
             });
         });
+
+        // Rank cell click/touch handlers for tooltip
+        const rankCells = document.querySelectorAll('.demand-rank-cell');
+        rankCells.forEach(function(cell) {
+            // Desktop: click
+            cell.addEventListener('click', function(e) {
+                e.stopPropagation();
+                const portCode = cell.dataset.port;
+                if (portCode) {
+                    showRankTooltip(portCode, cell);
+                }
+            });
+
+            // Mobile: long press
+            var rankLongPressTimer = null;
+            cell.addEventListener('touchstart', function() {
+                const portCode = cell.dataset.port;
+                rankLongPressTimer = setTimeout(function() {
+                    if (portCode) {
+                        showRankTooltip(portCode, cell);
+                    }
+                }, 500); // 500ms long press
+            });
+            cell.addEventListener('touchend', function() {
+                if (rankLongPressTimer) {
+                    clearTimeout(rankLongPressTimer);
+                    rankLongPressTimer = null;
+                }
+            });
+            cell.addEventListener('touchmove', function() {
+                if (rankLongPressTimer) {
+                    clearTimeout(rankLongPressTimer);
+                    rankLongPressTimer = null;
+                }
+            });
+        });
     }
 
     function renderPortList(ports, vesselsByDest, filter, sortColumn, sortOrder) {
         const rankings = loadRankingCacheSync();
         const rankingPorts = rankings ? rankings.ports : {};
+        log('renderPortList: rankings=' + (rankings ? 'exists' : 'NULL') + ', rankingPorts count=' + Object.keys(rankingPorts).length);
 
         // Helper to get sort value for a port
         function getSortValue(port, column) {
@@ -1098,17 +1271,17 @@
         }
 
         // Table header
-        let html = '<table style="width:100%;border-collapse:collapse;font-size:11px;">';
+        let html = '<table style="width:100%;border-collapse:collapse;font-size:10px;">';
         html += '<thead style="position:sticky;top:0;background:#d1d5db;z-index:10;">';
         html += '<tr style="text-align:left;">';
-        html += '<th class="demand-sort-header" data-column="port" style="padding:4px 4px;border-bottom:2px solid #9ca3af;text-align:left;white-space:nowrap;cursor:pointer;">Port' + sortIcon('port') + '</th>';
-        html += '<th class="demand-sort-header" data-column="maxTEU" style="padding:4px 4px;border-bottom:2px solid #9ca3af;text-align:right;white-space:nowrap;cursor:pointer;">Max TEU' + sortIcon('maxTEU') + '</th>';
-        html += '<th class="demand-sort-header" data-column="currentTEU" style="padding:4px 4px;border-bottom:2px solid #9ca3af;text-align:right;white-space:nowrap;cursor:pointer;">Cur TEU' + sortIcon('currentTEU') + '</th>';
-        html += '<th class="demand-sort-header" data-column="maxBBL" style="padding:4px 4px;border-bottom:2px solid #9ca3af;text-align:right;white-space:nowrap;cursor:pointer;">Max BBL' + sortIcon('maxBBL') + '</th>';
-        html += '<th class="demand-sort-header" data-column="currentBBL" style="padding:4px 4px;border-bottom:2px solid #9ca3af;text-align:right;white-space:nowrap;cursor:pointer;">Cur BBL' + sortIcon('currentBBL') + '</th>';
-        html += '<th class="demand-sort-header" data-column="containerVessels" style="padding:4px 4px;border-bottom:2px solid #9ca3af;text-align:center;white-space:nowrap;cursor:pointer;" title="Container Vessels"><img src="/images/icons/departure_notification/container_yellow.svg" alt="Container" style="width:16px;height:16px;vertical-align:middle;">' + sortIcon('containerVessels') + '</th>';
-        html += '<th class="demand-sort-header" data-column="tankerVessels" style="padding:4px 4px;border-bottom:2px solid #9ca3af;text-align:center;white-space:nowrap;cursor:pointer;" title="Tanker Vessels"><img src="/images/icons/departure_notification/oil_icon.svg" alt="Tanker" style="width:16px;height:16px;vertical-align:middle;">' + sortIcon('tankerVessels') + '</th>';
-        html += '<th class="demand-sort-header" data-column="rank" style="padding:4px 4px;border-bottom:2px solid #9ca3af;text-align:center;white-space:nowrap;cursor:pointer;" title="Alliance Rank">\uD83C\uDFC6' + sortIcon('rank') + '</th>';
+        html += '<th class="demand-sort-header" data-column="port" style="padding:2px 1px;border-bottom:2px solid #9ca3af;text-align:left;white-space:nowrap;cursor:pointer;">Port' + sortIcon('port') + '</th>';
+        html += '<th class="demand-sort-header" data-column="maxTEU" style="padding:2px 1px;border-bottom:2px solid #9ca3af;text-align:right;white-space:nowrap;cursor:pointer;">mTEU' + sortIcon('maxTEU') + '</th>';
+        html += '<th class="demand-sort-header" data-column="currentTEU" style="padding:2px 1px;border-bottom:2px solid #9ca3af;text-align:right;white-space:nowrap;cursor:pointer;">cTEU' + sortIcon('currentTEU') + '</th>';
+        html += '<th class="demand-sort-header" data-column="maxBBL" style="padding:2px 1px;border-bottom:2px solid #9ca3af;text-align:right;white-space:nowrap;cursor:pointer;">mBBL' + sortIcon('maxBBL') + '</th>';
+        html += '<th class="demand-sort-header" data-column="currentBBL" style="padding:2px 1px;border-bottom:2px solid #9ca3af;text-align:right;white-space:nowrap;cursor:pointer;">cBBL' + sortIcon('currentBBL') + '</th>';
+        html += '<th class="demand-sort-header" data-column="containerVessels" style="padding:2px 1px;border-bottom:2px solid #9ca3af;text-align:center;white-space:nowrap;cursor:pointer;" title="Container Vessels"><img src="/images/icons/departure_notification/container_yellow.svg" alt="C" style="width:14px;height:14px;vertical-align:middle;">' + sortIcon('containerVessels') + '</th>';
+        html += '<th class="demand-sort-header" data-column="tankerVessels" style="padding:2px 1px;border-bottom:2px solid #9ca3af;text-align:center;white-space:nowrap;cursor:pointer;" title="Tanker Vessels"><img src="/images/icons/departure_notification/oil_icon.svg" alt="T" style="width:14px;height:14px;vertical-align:middle;">' + sortIcon('tankerVessels') + '</th>';
+        html += '<th class="demand-sort-header" data-column="rank" style="padding:2px 1px;border-bottom:2px solid #9ca3af;text-align:center;white-space:nowrap;cursor:pointer;" title="Alliance Rank">#' + sortIcon('rank') + '</th>';
         html += '</tr>';
         html += '</thead>';
         html += '<tbody>';
@@ -1119,37 +1292,37 @@
             const rowBg = i % 2 === 0 ? '#f3f4f6' : '#fff';
 
             html += '<tr class="demand-port-row" data-port="' + port.code + '" style="background:' + rowBg + ';">';
-            html += '<td style="padding:3px 4px;border-bottom:1px solid #e5e7eb;text-align:left;">';
+            html += '<td style="padding:1px 1px;border-bottom:1px solid #e5e7eb;text-align:left;">';
             html += '<span class="demand-port-link" data-port="' + port.code + '" style="cursor:pointer;color:#3b82f6;text-decoration:underline;">';
             html += capitalizePortName(port.code);
             html += '</span></td>';
 
-            html += '<td style="padding:3px 4px;border-bottom:1px solid #e5e7eb;text-align:right;">';
+            html += '<td style="padding:1px 1px;border-bottom:1px solid #e5e7eb;text-align:right;">';
             html += item.maxTEU > 0 ? formatNumber(item.maxTEU) : '-';
             html += '</td>';
 
-            html += '<td style="padding:3px 4px;border-bottom:1px solid #e5e7eb;text-align:right;">';
+            html += '<td style="padding:1px 1px;border-bottom:1px solid #e5e7eb;text-align:right;">';
             html += item.currentTEU > 0 ? formatNumber(item.currentTEU) : '-';
             html += '</td>';
 
-            html += '<td style="padding:3px 4px;border-bottom:1px solid #e5e7eb;text-align:right;">';
+            html += '<td style="padding:1px 1px;border-bottom:1px solid #e5e7eb;text-align:right;">';
             html += item.maxBBL > 0 ? formatNumber(item.maxBBL) : '-';
             html += '</td>';
 
-            html += '<td style="padding:3px 4px;border-bottom:1px solid #e5e7eb;text-align:right;">';
+            html += '<td style="padding:1px 1px;border-bottom:1px solid #e5e7eb;text-align:right;">';
             html += item.currentBBL > 0 ? formatNumber(item.currentBBL) : '-';
             html += '</td>';
 
-            html += '<td style="padding:3px 4px;border-bottom:1px solid #e5e7eb;text-align:center;">';
+            html += '<td style="padding:1px 1px;border-bottom:1px solid #e5e7eb;text-align:center;">';
             html += item.containerVessels > 0 ? item.containerVessels : '-';
             html += '</td>';
 
-            html += '<td style="padding:3px 4px;border-bottom:1px solid #e5e7eb;text-align:center;">';
+            html += '<td style="padding:1px 1px;border-bottom:1px solid #e5e7eb;text-align:center;">';
             html += item.tankerVessels > 0 ? item.tankerVessels : '-';
             html += '</td>';
 
             // Rank column with tooltip
-            html += '<td class="demand-rank-cell" data-port="' + port.code + '" style="padding:3px 4px;border-bottom:1px solid #e5e7eb;text-align:center;cursor:pointer;">';
+            html += '<td class="demand-rank-cell" data-port="' + port.code + '" style="padding:1px 1px;border-bottom:1px solid #e5e7eb;text-align:center;cursor:pointer;">';
             if (item.ranking && item.ranking.myAlliance) {
                 html += item.ranking.myAlliance.rank;
             } else {
@@ -1209,64 +1382,94 @@
         if (isCollectingRanking) return;
 
         isCollectingRanking = true;
+        rankingProgress.current = 0;
+        rankingProgress.total = 360;
+        updateRankingButtonProgress();
         log('Starting ranking collection...');
 
         try {
-            // Load existing ranking data from DB (not memory) to ensure we have latest
+            // Load existing ranking data from DB - but don't overwrite memory if DB fails
             const savedRanking = await dbGet('rankingCache');
             if (savedRanking) {
+                // Merge DB data with memory (DB takes precedence for resume)
                 rankingCache = savedRanking;
+                log('Loaded ' + Object.keys(savedRanking.ports).length + ' ports from DB');
+            } else if (!rankingCache) {
+                // Only init if both DB and memory are empty
+                rankingCache = { timestamp: null, ports: {} };
+                log('No existing ranking data, starting fresh');
+            } else {
+                log('DB empty but memory has ' + Object.keys(rankingCache.ports).length + ' ports');
             }
 
             const portCodes = await fetchAllPortCodes();
-            const existingRanking = rankingCache ? rankingCache.ports : {};
-            log('Existing ranking data: ' + Object.keys(existingRanking).length + ' ports');
+            log('Fetching ALL ' + portCodes.length + ' ports');
 
-            // Find ports that still need to be collected
-            const portsToCollect = portCodes.filter(function(code) {
-                return !existingRanking[code];
-            });
-
-            if (portsToCollect.length === 0) {
-                showToast('All ports already collected', 'success');
-                isCollectingRanking = false;
-                return;
-            }
+            // Always fetch ALL ports - no skipping
+            const portsToCollect = portCodes;
 
             rankingProgress.total = portCodes.length;
-            rankingProgress.current = portCodes.length - portsToCollect.length;
+            rankingProgress.current = 0;
 
             log('Resuming from ' + rankingProgress.current + '/' + rankingProgress.total + ' (' + portsToCollect.length + ' remaining)');
 
             var collectedCount = 0;
+            var baseProgress = portCodes.length - portsToCollect.length;
 
-            for (let i = 0; i < portsToCollect.length; i++) {
+            // Process in batches - parallel API calls per batch
+            for (let batchStart = 0; batchStart < portsToCollect.length; batchStart += RANKING_BATCH_SIZE) {
                 if (!isCollectingRanking) {
                     log('Ranking collection paused at ' + rankingProgress.current + '/' + rankingProgress.total);
                     break;
                 }
 
-                const portCode = portsToCollect[i];
-                rankingProgress.current = portCodes.length - portsToCollect.length + i + 1;
+                var batchEnd = Math.min(batchStart + RANKING_BATCH_SIZE, portsToCollect.length);
+                var batch = portsToCollect.slice(batchStart, batchEnd);
 
-                // Update UI to show progress
+                // Parallel einzelne Calls (Ranking API akzeptiert keine Arrays!)
+                var batchPromises = batch.map(function(portCode) {
+                    return fetchPortRanking(portCode).then(function(ranking) {
+                        return { portCode: portCode, ranking: ranking };
+                    });
+                });
+                var results = await Promise.all(batchPromises);
+
+                // Collect all results in memory first (fast)
+                var batchCollected = 0;
+                var noMyAlliance = [];
+                for (var r = 0; r < results.length; r++) {
+                    var result = results[r];
+                    if (result.ranking) {
+                        // Update memory only
+                        var existing = rankingCache ? Object.assign({}, rankingCache.ports) : {};
+                        existing[result.portCode] = result.ranking;
+                        rankingCache = { timestamp: Date.now(), ports: existing };
+                        batchCollected++;
+                        collectedCount++;
+                        updateRankCellLive(result.portCode, result.ranking);
+                        if (!result.ranking.myAlliance) {
+                            noMyAlliance.push(result.portCode);
+                        }
+                    }
+                    rankingProgress.current = baseProgress + batchStart + r + 1;
+                }
+                if (noMyAlliance.length > 0) {
+                    log('Ports WITHOUT myAlliance: ' + noMyAlliance.join(', '));
+                }
+
+                // Single DB save per batch (fast)
+                if (batchCollected > 0) {
+                    await dbSet('rankingCache', rankingCache);
+                    log('Batch saved: ' + batchCollected + ' ports, total ' + Object.keys(rankingCache.ports).length);
+                }
+
                 if (activeModalContainer) {
                     updateRankingButtonProgress();
                 }
 
-                try {
-                    const ranking = await fetchPortRanking(portCode);
-                    if (ranking) {
-                        await saveRankingForPort(portCode, ranking);
-                        collectedCount++;
-                    }
-                } catch (e) {
-                    log('Failed to fetch ranking for ' + portCode + ': ' + e.message, 'error');
-                }
-
-                // Wait 2 seconds before next request (except for last one)
-                if (i < portsToCollect.length - 1 && isCollectingRanking) {
-                    await new Promise(resolve => setTimeout(resolve, RANKING_DELAY_MS));
+                // Short delay between batches
+                if (batchEnd < portsToCollect.length && isCollectingRanking) {
+                    await new Promise(resolve => setTimeout(resolve, RANKING_BATCH_DELAY_MS));
                 }
             }
 
@@ -1294,6 +1497,21 @@
         const btn = document.getElementById('ranking-collect-btn');
         if (btn) {
             btn.textContent = 'Collecting ' + rankingProgress.current + '/' + rankingProgress.total;
+        }
+    }
+
+    function updateRankCellLive(portCode, ranking) {
+        var cell = document.querySelector('.demand-rank-cell[data-port="' + portCode + '"]');
+        if (cell) {
+            if (ranking && ranking.myAlliance) {
+                cell.textContent = ranking.myAlliance.rank;
+                cell.style.background = '#bbf7d0';
+                setTimeout(function() {
+                    cell.style.background = '';
+                }, 500);
+            } else {
+                cell.textContent = '-';
+            }
         }
     }
 
