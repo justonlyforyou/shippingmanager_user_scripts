@@ -2,7 +2,7 @@
 // @name         ShippingManager - Demand Summary
 // @namespace    https://rebelship.org/
 // @description  Shows port demand with vessel capacity allocation overview
-// @version      4.79
+// @version      4.80
 // @author       https://github.com/justonlyforyou/
 // @order        9
 // @match        https://shippingmanager.cc/*
@@ -1434,27 +1434,25 @@
                 });
                 var results = await Promise.all(batchPromises);
 
-                // Collect all results in memory first (fast)
+                // Collect all results in memory
                 var batchCollected = 0;
-                var noMyAlliance = [];
+                var failedPorts = [];
                 for (var r = 0; r < results.length; r++) {
                     var result = results[r];
                     if (result.ranking) {
-                        // Update memory only
                         var existing = rankingCache ? Object.assign({}, rankingCache.ports) : {};
                         existing[result.portCode] = result.ranking;
                         rankingCache = { timestamp: Date.now(), ports: existing };
                         batchCollected++;
                         collectedCount++;
                         updateRankCellLive(result.portCode, result.ranking);
-                        if (!result.ranking.myAlliance) {
-                            noMyAlliance.push(result.portCode);
-                        }
+                    } else {
+                        failedPorts.push(result.portCode);
                     }
                     rankingProgress.current = baseProgress + batchStart + r + 1;
                 }
-                if (noMyAlliance.length > 0) {
-                    log('Ports WITHOUT myAlliance: ' + noMyAlliance.join(', '));
+                if (failedPorts.length > 0) {
+                    log('FAILED to fetch ranking for: ' + failedPorts.join(', '), 'error');
                 }
 
                 // Single DB save per batch (fast)
