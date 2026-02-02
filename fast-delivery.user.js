@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Game Bug-Using: Fast Delivery for built vessels
 // @namespace    https://rebelship.org/
-// @version      1.10
+// @version      1.11
 // @description  Fast delivery for built vessels via drydock exploit. Sends pending vessels in drydock, for resetting the delivery time with the maintenance end ;)
 // @author       https://github.com/justonlyforyou/
 // @order        57
@@ -10,7 +10,7 @@
 // @run-at       document-end
 // @enabled      false
 // ==/UserScript==
-/* globals CustomEvent, MutationObserver */
+/* globals CustomEvent, MutationObserver, XMLHttpRequest */
 
 (function() {
     'use strict';
@@ -89,6 +89,44 @@
     // ============================================
     // API FUNCTIONS
     // ============================================
+
+    // Uses XMLHttpRequest to bypass window.fetch interceptors (e.g. AutoDrydock)
+    function xhrPost(url, body, maxRetries) {
+        maxRetries = maxRetries ?? 3;
+        var lastError;
+
+        return (async function tryRequest(attempt) {
+            try {
+                return await new Promise(function(resolve, reject) {
+                    var xhr = new XMLHttpRequest();
+                    xhr.open('POST', url, true);
+                    xhr.setRequestHeader('Content-Type', 'application/json');
+                    xhr.withCredentials = true;
+                    xhr.onload = function() {
+                        if (xhr.status >= 200 && xhr.status < 300) {
+                            resolve(JSON.parse(xhr.responseText));
+                        } else {
+                            reject(new Error('HTTP ' + xhr.status));
+                        }
+                    };
+                    xhr.onerror = function() {
+                        reject(new Error('Network error'));
+                    };
+                    xhr.send(JSON.stringify(body));
+                });
+            } catch (e) {
+                lastError = e;
+                log('xhrPost (' + url + ') attempt ' + attempt + '/' + maxRetries + ' failed: ' + e.message);
+                if (attempt < maxRetries) {
+                    var delay = attempt * 1000;
+                    await new Promise(function(resolve) { setTimeout(resolve, delay); });
+                    return tryRequest(attempt + 1);
+                }
+                throw lastError;
+            }
+        })(1);
+    }
+
     async function fetchDrydockStatus(vesselIds, maxRetries) {
         // POST /api/maintenance/get - returns maintenance_data with drydock costs
         maxRetries = maxRetries ?? 3;
@@ -137,38 +175,13 @@
         throw lastError;
     }
 
-    async function triggerBulkDrydock(vesselIds, maxRetries) {
-        // POST /api/maintenance/do-major-drydock-maintenance-bulk
-        maxRetries = maxRetries ?? 3;
-        let lastError;
-
-        for (let attempt = 1; attempt <= maxRetries; attempt++) {
-            try {
-                const response = await fetch(API_BASE + '/maintenance/do-major-drydock-maintenance-bulk', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    credentials: 'include',
-                    body: JSON.stringify({
-                        vessel_ids: JSON.stringify(vesselIds),
-                        speed: 'minimum',
-                        maintenance_type: 'minor'
-                    })
-                });
-                if (!response.ok) {
-                    throw new Error('HTTP ' + response.status);
-                }
-                return response.json();
-            } catch (e) {
-                lastError = e;
-                log('triggerBulkDrydock attempt ' + attempt + '/' + maxRetries + ' failed: ' + e.message);
-                if (attempt < maxRetries) {
-                    const delay = attempt * 1000;
-                    await new Promise(resolve => setTimeout(resolve, delay));
-                }
-            }
-        }
-
-        throw lastError;
+    async function triggerBulkDrydock(vesselIds) {
+        // Uses xhrPost to bypass window.fetch interceptors (AutoDrydock)
+        return xhrPost(API_BASE + '/maintenance/do-major-drydock-maintenance-bulk', {
+            vessel_ids: JSON.stringify(vesselIds),
+            speed: 'minimum',
+            maintenance_type: 'minor'
+        });
     }
 
     // ============================================

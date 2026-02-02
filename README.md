@@ -29,8 +29,15 @@ A collection of user scripts for [Shipping Manager](https://shippingmanager.cc/)
    - [Depart All Loop](#depart-all-loopuserjs---depart-all-loop)
    - [Alliance Chat Notification](#alliance-chat-notificationuserjs---chat-notification)
    - [Alliance Search](#alliance-searchuserjs---alliance-search)
+   - [Alliance ID Display](#alliance-id-displayuserjs---alliance-id-display)
+   - [Cleanup System Messages](#cleanup-system-messagesuserjs---cleanup-system-messages)
+   - [Create Alliance Unlock](#create-alliance-unlockuserjs---create-alliance-unlock)
+   - [Auto Anchor](#auto-anchoruserjs---auto-anchor)
+   - [Auto Stock](#auto-stockuserjs---auto-stock)
+   - [ChatBot](#chatbotuserjs---chatbot)
    - [Export Scripts](#export-scripts)
    - [Bug Fix Scripts](#bug-fix-scripts)
+   - [Vessel Details Fix](#fix-missing-vessel-detailsuserjs---vessel-details-fix)
    - [Admin View](#admin-viewuserjs---admin-view)
 4. [Developer Guide](#developer-guide)
 5. [Background Execution](#background-execution)
@@ -77,33 +84,40 @@ Previous versions of these scripts worked with Tampermonkey, but the current arc
 |--------|---------|-------------|
 | rebelship-header-optimizer.user.js | 3.51 | Header UI optimization, mobile layout, resize handling |
 | departmanager.user.js | 3.43 | Auto-Bunker, Auto-Depart, Route Settings, Min Utilization |
-| auto-repair.user.js | 2.36 | Auto-repair at wear threshold |
-| auto-happy-stuff.user.js | 1.36 | Auto salary adjustment for crew/management morale |
-| auto-coop-tickets-display.user.js | 5.35 | Co-Op display in header, Auto-COOP sending |
-| auto-marketing-reputation-display.user.js | 5.26 | Reputation in header, auto campaign renewal |
+| auto-repair.user.js | 2.41 | Auto-repair at wear threshold |
+| auto-happy-stuff.user.js | 1.40 | Auto salary adjustment for crew/management morale |
+| auto-coop-tickets-display.user.js | 5.38 | Co-Op display in header, Auto-COOP sending |
+| auto-marketing-reputation-display.user.js | 5.29 | Reputation in header, auto campaign renewal |
 | auto-drydock.user.js | 1.6 | Auto-drydock at hours threshold, drydock bug prevention |
 | smugglers-eye.user.js | 1.9 | Price optimization: 4% markup, gradual increase, max guards |
 | fleet-manager.user.js | 4.15 | Mass Moor/Resume with checkboxes |
-| vessel-cart.user.js | 4.22 | Shopping cart for vessel purchase/build |
+| vessel-cart.user.js | 4.25 | Shopping cart for vessel purchase/build |
 | bunker-price-display.user.js | 3.20 | Fuel/CO2 prices and fill level in header |
-| forecast-calendar.user.js | 3.27 | Page-flip calendar with price forecasts |
-| demand-summary.user.js | 4.79 | Port demand with capacity overview, alliance ranking |
-| api-stats.user.js | 1.6 | Monitor and analyze API call patterns |
+| forecast-calendar.user.js | 3.39 | Page-flip calendar with price forecasts |
+| demand-summary.user.js | 4.81 | Port demand with capacity overview, alliance ranking |
+| api-stats.user.js | 1.9 | Monitor and analyze API call patterns |
 | enable-distance-filter.user.js | 9.19 | Filter ports by distance |
 | map-unlock.user.js | 1.10 | Premium Map Themes, Tanker Ops, Metropolis, Zoom |
-| fast-delivery.user.js | 1.10 | Fast vessel delivery via drydock bug |
+| fast-delivery.user.js | 1.11 | Fast vessel delivery via drydock bug |
 | depart-all-loop.user.js | 2.6 | Clicks Depart All until all departed |
 | alliance-chat-notification.user.js | 2.14 | Red dot for unread alliance messages |
-| alliance-search.user.js | 3.46 | Search all open alliances |
+| alliance-search.user.js | 3.47 | Search all open alliances |
 | harbor-improvements.user.js | 2.7 | Details button repositioning in harbor menu |
 | at-port-refresh.user.js | 1.4 | Auto-refresh At Port list every 30 sec |
-| buy-vip-vessel.user.js | 2.24 | Buy VIP vessels |
+| buy-vip-vessel.user.js | 2.25 | Buy VIP vessels |
 | export-vessels-csv.user.js | 1.19 | Export fleet as CSV |
-| export-messages.user.js | 1.24 | Export messages as CSV/JSON |
+| export-messages.user.js | 1.25 | Export messages as CSV/JSON |
 | export-vessel-history.user.js | 3.5 | Save vessel history as CSV |
 | fix-alliance-member-exclude.user.js | 1.6 | Fix exclude buttons for CEO |
 | fix-alliance-interimCEO.user.js | 1.6 | Add edit buttons for Interim CEO |
 | admin-view.user.js | 8.7 | Shows Admin UI (visual only, no permissions) |
+| auto-anchor.user.js | 1.4 | Auto-purchase anchor points when timer expires |
+| auto-stock.user.js | 2.9 | IPO Alerts and Investments tabs in Finance modal |
+| chatbot.user.js | 2.16 | Automated chatbot for alliance chat and DMs |
+| fix-missing-vessel-details.user.js | 2.5 | Fix missing vessel details (Engine, Port, Fuel Factor) |
+| alliance-id-display.user.js | 1.0 | Shows alliance ID next to name in modal, click to copy |
+| cleanup-system-messages.user.js | 1.0 | Bulk delete alliance join and donation system messages |
+| create-alliance-unlock.user.js | 1.0 | Opens alliance creation modal before level 10 |
 
 ---
 
@@ -175,7 +189,7 @@ Adds a **Settings** tab to the Routes modal for editing ALL vessels (including e
 
 ### auto-repair.user.js - Auto Repair
 
-**Version:** 2.36 | **Background Job:** Yes
+**Version:** 2.41 | **Background Job:** Yes
 
 Automatically repairs vessels when wear reaches threshold.
 
@@ -191,7 +205,7 @@ Automatically repairs vessels when wear reaches threshold.
 
 ### auto-happy-stuff.user.js - Auto Happy Staff
 
-**Version:** 1.36 | **Background Job:** Yes
+**Version:** 1.40 | **Background Job:** Yes
 
 Automatically adjusts salaries to keep crew and management morale at target levels.
 
@@ -199,7 +213,7 @@ Automatically adjusts salaries to keep crew and management morale at target leve
 
 ### auto-coop-tickets-display.user.js - Auto CO-OP
 
-**Version:** 5.35 | **Background Job:** Yes
+**Version:** 5.38 | **Background Job:** Yes
 
 Shows Co-Op tickets in header and automatically sends COOP vessels.
 
@@ -207,7 +221,7 @@ Shows Co-Op tickets in header and automatically sends COOP vessels.
 
 ### auto-marketing-reputation-display.user.js - Auto Reputation
 
-**Version:** 5.26
+**Version:** 5.29
 
 Shows reputation in header and auto-renews expired marketing campaigns.
 
@@ -294,7 +308,7 @@ Mass moor and resume vessels with checkbox selection.
 
 ### vessel-cart.user.js - Vessel Shopping Cart
 
-**Version:** 4.22
+**Version:** 4.25
 
 Shopping cart for bulk vessel purchases and builds.
 
@@ -329,7 +343,7 @@ Shows current fuel and CO2 prices with fill levels in header.
 
 ### forecast-calendar.user.js - Forecast Calendar
 
-**Version:** 3.27
+**Version:** 3.39
 
 Visual page-flip calendar with fuel and CO2 price forecasts.
 
@@ -348,7 +362,7 @@ Visual page-flip calendar with fuel and CO2 price forecasts.
 
 ### demand-summary.user.js - Demand Summary
 
-**Version:** 4.79
+**Version:** 4.81
 
 Shows port demand with capacity overview and alliance rankings.
 
@@ -373,7 +387,7 @@ Shows port demand with capacity overview and alliance rankings.
 
 ### api-stats.user.js - API Stats Monitor
 
-**Version:** 1.6 | **Run-at:** document-start
+**Version:** 1.9 | **Run-at:** document-start
 
 Monitors all API calls to shippingmanager.cc in the background. Useful for debugging, rate limit monitoring, and understanding game API patterns.
 
@@ -431,7 +445,7 @@ Unlocks premium map features without VIP subscription.
 
 ### fast-delivery.user.js - Fast Delivery
 
-**Version:** 1.9
+**Version:** 1.11
 
 Uses a game bug to reduce vessel delivery time from days to 60 minutes.
 
@@ -440,6 +454,8 @@ Uses a game bug to reduce vessel delivery time from days to 60 minutes.
 1. When a vessel is being built/delivered, sends it to drydock
 2. The drydock journey resets the delivery timer
 3. Vessel arrives at drydock location in ~60 minutes instead of days
+
+**v1.11:** Uses XMLHttpRequest instead of fetch for drydock API calls to avoid conflicts with Auto Drydock's fetch interceptor.
 
 **Note:** Exploits a known game bug. Use at your own discretion.
 
@@ -477,7 +493,7 @@ Shows a red notification dot when there are unread alliance messages.
 
 ### alliance-search.user.js - Alliance Search
 
-**Version:** 3.46
+**Version:** 3.47
 
 Search and browse all open alliances.
 
@@ -490,6 +506,157 @@ Search and browse all open alliances.
 - Filter by member count, requirements, etc.
 - View alliance details before joining
 - Quick join button
+
+---
+
+### alliance-id-display.user.js - Alliance ID Display
+
+**Version:** 1.0
+
+Shows the alliance ID next to the alliance name in modals. Click the ID to copy it to clipboard.
+
+#### Features
+
+- Displays alliance ID as a badge next to the alliance name
+- Click to copy the ID to clipboard
+- Hover effect for visual feedback
+- Toast notification on copy
+- Auto-detects alliance modal via MutationObserver
+
+---
+
+### cleanup-system-messages.user.js - Cleanup System Messages
+
+**Version:** 1.0
+
+Bulk delete alliance join and donation system messages from your inbox.
+
+**Access:** RebelShip Menu > **"Cleanup Messages"**
+
+#### Features
+
+| Option | Deletes |
+|--------|---------|
+| Delete Join Messages | Messages about players joining/applying to the alliance |
+| Delete Donations | Alliance donation notification messages |
+
+- Fetches all chats via API, filters system messages by body content
+- Deletes in batches of 50 with retry logic
+- Progress overlay shows current status
+- Useful when inbox is flooded with automated system notifications
+
+---
+
+### create-alliance-unlock.user.js - Create Alliance Unlock
+
+**Version:** 1.0
+
+Opens the native alliance creation modal before reaching level 10.
+
+**Access:** RebelShip Menu > **"Create Alliance"**
+
+#### How It Works
+
+- The game blocks alliance creation in the UI until CEO level 10
+- This is a client-side check only - the backend allows it earlier
+- The script opens the game's native `createAlliance` modal directly via Pinia store
+- All form validation and API calls are handled by the game itself
+
+**Note:** Disabled by default. Enable in script manager before use.
+
+---
+
+### auto-anchor.user.js - Auto Anchor
+
+**Version:** 1.4 | **Background Job:** Yes
+
+Automatically purchases anchor points when the build timer expires.
+
+**Access:** RebelShip Menu > **"Auto Anchor"**
+
+#### Settings
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| Enable Auto-Buy | Main toggle | Off |
+| Purchase Amount | Buy 1 or 10 anchor points at a time | 1 |
+| Minimum Cash Balance | Keep at least this amount after purchase | 5,000,000 |
+| Notifications | Ingame toast and/or system notification | Ingame on |
+
+#### How It Works
+
+- Checks every 15 minutes whether the anchor point timer has expired
+- If expired, checks cash balance and purchases the configured amount
+- Intercepts anchor purchase and timer reset API responses for immediate state updates
+- Syncs game modal slider to match last purchase amount
+
+---
+
+### auto-stock.user.js - Auto Stock
+
+**Version:** 2.9 | **Background Job:** Yes
+
+IPO alerts, auto-buy, auto-sell, and investment tracking in the Finance modal.
+
+**Access:** RebelShip Menu > **"Auto Stocks"**
+
+#### Features
+
+- **IPO Alerts Tab** in Finance modal showing fresh IPOs (accounts younger than configurable days)
+- **Investments Tab** showing current portfolio with P/L and sell buttons
+- **Auto-Buy:** Automatically purchases shares from fresh IPOs within price threshold
+- **Auto-Sell:** Automatically sells stocks that drop below a configurable percentage from purchase price
+
+#### Settings
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| Auto-Buy | Enable automatic stock purchases | Off |
+| Min Cash Reserve | Keep at least this amount | 1,000,000 |
+| Max Stock Price | Only buy shares under this price | 500 |
+| Auto-Sell | Enable automatic selling of falling stocks | Off |
+| Drop Threshold | Sell if stock drops X% from purchase price | 15% |
+| IPO Max Age | Show IPOs from accounts younger than X days | 7 |
+| IPO Check Limit | How many recent IPOs to scan | 10 |
+
+---
+
+### chatbot.user.js - ChatBot
+
+**Version:** 2.16 | **Background Job:** Yes
+
+Automated chatbot for alliance chat and DMs with an extensible command system.
+
+**Access:** RebelShip Menu > **"ChatBot"**
+
+#### Features
+
+- Responds to commands in both DMs and alliance chat
+- Built-in `!help` command listing all available commands
+- Custom static-response commands configurable in settings
+- Other scripts can register commands via `window.RebelShipChatBot.registerCommand()`
+- Per-command DM/Alliance toggles and role-based access control
+- Role hierarchy: All > Member > Management > COO > Interim CEO > CEO
+
+#### Settings
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| Enable ChatBot | Main toggle | Off |
+| Command Prefix | Character before commands | ! |
+| Built-in Commands | Enable/disable !help with role and channel settings | On |
+| Custom Commands | Add static response commands with role restrictions | None |
+| Notifications | Ingame and/or system notifications | Ingame on |
+
+#### Rate Limits
+
+| Limit | Value |
+|-------|-------|
+| DM cooldown | 45 seconds |
+| Alliance cooldown | 30 seconds |
+| Command delay | 5 seconds |
+| Max message length | 1000 characters |
+| Polling interval | 10 seconds (60s in background) |
 
 ---
 
@@ -522,7 +689,7 @@ Automatically refreshes the "At Port" vessel list.
 
 ### buy-vip-vessel.user.js - VIP Vessel Shop
 
-**Version:** 2.24
+**Version:** 2.25
 
 Access to VIP-exclusive vessels.
 
@@ -551,7 +718,7 @@ Export your entire fleet as a CSV file.
 
 #### export-messages.user.js
 
-**Version:** 1.24
+**Version:** 1.25
 
 Export your messages as CSV or JSON.
 
@@ -594,6 +761,16 @@ Adds missing edit buttons for Interim CEO role.
 
 - Game bug: Interim CEOs couldn't edit alliance settings
 - This script adds the missing UI buttons
+
+#### fix-missing-vessel-details.user.js - Vessel Details Fix
+
+**Version:** 2.5
+
+Fixes missing vessel details in the vessel modal (Engine type, Port name, Fuel Factor).
+
+- Observes DOM changes and fills in missing data from the Pinia vessel store
+- Adds a Fuel Factor row below Year of Construction
+- Expands abbreviated port codes to full names
 
 ---
 
@@ -1098,7 +1275,7 @@ These scripts sync settings with RebelShip Browser via `RebelShipBridge`.
 
 ## Compatibility
 
-- Tested with Shipping Manager as of January 2026
+- Tested with Shipping Manager as of February 2026
 - **Requires RebelShip Browser** (Windows or Android)
 - Does NOT work with Tampermonkey, Violentmonkey or Greasemonkey
 - Scripts depend on RebelShipBridge API and SQLCipher database
