@@ -2,7 +2,7 @@
 // @name         ShippingManager - Depart Manager
 // @namespace    https://rebelship.org/
 // @description  Unified departure management: Auto bunker rebuy, auto-depart, route settings
-// @version      3.44
+// @version      3.45
 // @author       https://github.com/justonlyforyou/
 // @order        10
 // @match        https://shippingmanager.cc/*
@@ -3136,6 +3136,106 @@
     }
 
     // ============================================
+    // LOW UTILIZATION VESSEL MARKING (UI)
+    // ============================================
+    var utilDemandCache = {};
+    var utilCheckRunning = false;
+
+    function injectLowUtilStyles() {
+        if (document.getElementById('dm-low-util-styles')) return;
+        var style = document.createElement('style');
+        style.id = 'dm-low-util-styles';
+        style.textContent = '.vesselRow.dm-low-util { border-left: 3px solid #ef4444 !important; background: rgba(239,68,68,0.1) !important; }';
+        document.head.appendChild(style);
+    }
+
+    async function markLowUtilizationVessels() {
+        if (!getSettings().minUtilizationEnabled || utilCheckRunning) return;
+
+        var vesselList = document.querySelector('#notifications-vessels-listing .vesselList');
+        if (!vesselList) return;
+
+        var header = document.querySelector('#notifications-vessels-listing .header-text .text-center');
+        if (!header || !header.textContent.trim().toLowerCase().includes('at port')) return;
+
+        var rows = vesselList.querySelectorAll('.vesselRow');
+        if (!rows.length) return;
+
+        var pinia = getPinia();
+        if (!pinia || !pinia._s) return;
+        var vesselStore = pinia._s.get('vessel');
+        if (!vesselStore || !vesselStore.userVessels) return;
+
+        var settings = getSettings();
+        var toCheck = [];
+        rows.forEach(function(row) {
+            if (row.hasAttribute('data-dm-util-checked')) return;
+            var nameEl = row.querySelector('.vesselName .nameValue');
+            if (!nameEl) return;
+            var name = nameEl.textContent.trim();
+            var vessel = vesselStore.userVessels.find(function(v) { return v.name === name; });
+            if (!vessel) return;
+            if (vessel.status !== 'port' || vessel.is_parked) return;
+            if (!vessel.route_destination || !vessel.route_origin) return;
+            toCheck.push({ row: row, vessel: vessel });
+        });
+
+        if (toCheck.length === 0) return;
+
+        utilCheckRunning = true;
+        try {
+            for (var i = 0; i < toCheck.length; i++) {
+                var item = toCheck[i];
+                var v = item.vessel;
+                var dest = v.current_port_code === v.route_origin ? v.route_destination : v.route_origin;
+
+                if (!utilDemandCache[dest]) {
+                    utilDemandCache[dest] = await fetchPortDemandAPI(dest);
+                }
+
+                var portData = utilDemandCache[dest];
+                var utilization = calculatePortUtilization(v, portData);
+
+                item.row.setAttribute('data-dm-util-checked', '1');
+                if (utilization < settings.minUtilizationThreshold) {
+                    item.row.classList.add('dm-low-util');
+                    item.row.title = 'Low utilization: ' + utilization.toFixed(0) + '% (threshold: ' + settings.minUtilizationThreshold + '%)';
+                } else {
+                    item.row.classList.remove('dm-low-util');
+                }
+            }
+        } finally {
+            utilCheckRunning = false;
+        }
+    }
+
+    function resetUtilMarkers() {
+        utilDemandCache = {};
+        var rows = document.querySelectorAll('#notifications-vessels-listing .vesselRow[data-dm-util-checked]');
+        rows.forEach(function(row) {
+            row.removeAttribute('data-dm-util-checked');
+            row.classList.remove('dm-low-util');
+            row.title = '';
+        });
+    }
+
+    var lastUtilHeaderText = '';
+
+    function startUtilMarkerObserver() {
+        injectLowUtilStyles();
+
+        setInterval(function() {
+            var header = document.querySelector('#notifications-vessels-listing .header-text .text-center');
+            var currentText = header ? header.textContent.trim() : '';
+            if (currentText !== lastUtilHeaderText) {
+                lastUtilHeaderText = currentText;
+                resetUtilMarkers();
+            }
+            markLowUtilizationVessels();
+        }, 3000);
+    }
+
+    // ============================================
     // PERIODIC CHECK
     // ============================================
     async function periodicCheck() {
@@ -3256,6 +3356,7 @@
             rsWatchRoutesModal();
             setupDMModalWatcher();
             startUIObserver();
+            startUtilMarkerObserver();
 
             setTimeout(cleanupStalePendingSettings, 3000);
 
