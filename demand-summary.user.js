@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ShippingManager - Demand Summary
 // @namespace    https://rebelship.org/
-// @description  Shows port demand with vessel capacity allocation overview
-// @version      4.81
+// @description  Demand & ranking dashboard with map tooltips, CSV export, and route-popup demand/vessel filters
+// @version      4.86
 // @author       https://github.com/justonlyforyou/
 // @order        9
 // @match        https://shippingmanager.cc/*
@@ -386,7 +386,7 @@
                 }
 
                 const data = await response.json();
-                if (data.data) {
+                if (data.data && Array.isArray(data.data.top_alliances)) {
                     return {
                         topAlliances: data.data.top_alliances,
                         myAlliance: data.data.my_alliance
@@ -532,6 +532,34 @@
     let pendingReturn = false;
     let isDemandModalOpen = false;
     let modalListenerAttached = false;
+
+    let routeFilterInjected = false;
+    let routeFilterBaselinePorts = null;
+    let routeFilterDropdownOpen = null;
+    let noVesselsFilterActive = false;
+    let activeDemandFilter = { teu: null, bbl: null };
+
+    var TEU_RANGES = [
+        { label: 'All', min: 0 },
+        { label: '>10k TEU', min: 10000 },
+        { label: '>20k TEU', min: 20000 },
+        { label: '>50k TEU', min: 50000 },
+        { label: '>75k TEU', min: 75000 },
+        { label: '>100k TEU', min: 100000 },
+        { label: '>125k TEU', min: 125000 },
+        { label: '>150k TEU', min: 150000 },
+        { label: '>200k TEU', min: 200000 }
+    ];
+
+    var BBL_RANGES = [
+        { label: 'All', min: 0 },
+        { label: '>2M BBL', min: 2000000 },
+        { label: '>5M BBL', min: 5000000 },
+        { label: '>8M BBL', min: 8000000 },
+        { label: '>10M BBL', min: 10000000 },
+        { label: '>15M BBL', min: 15000000 },
+        { label: '>20M BBL', min: 20000000 }
+    ];
 
     function escapeHtml(text) {
         var div = document.createElement('div');
@@ -1477,8 +1505,68 @@
                 }
             }
 
+            // Retry loop for failed ports
+            var MAX_RETRY_PASSES = 3;
+            for (var retryPass = 1; retryPass <= MAX_RETRY_PASSES && isCollectingRanking; retryPass++) {
+                var missingPorts = portCodes.filter(function(code) {
+                    return !rankingCache.ports[code];
+                });
+                if (missingPorts.length === 0) break;
+
+                log('Retry pass ' + retryPass + ': ' + missingPorts.length + ' ports missing');
+                await new Promise(resolve => setTimeout(resolve, 3000));
+
+                for (var retryBatchStart = 0; retryBatchStart < missingPorts.length; retryBatchStart += RANKING_BATCH_SIZE) {
+                    if (!isCollectingRanking) break;
+
+                    var retryBatchEnd = Math.min(retryBatchStart + RANKING_BATCH_SIZE, missingPorts.length);
+                    var retryBatch = missingPorts.slice(retryBatchStart, retryBatchEnd);
+
+                    var retryPromises = retryBatch.map(function(portCode) {
+                        return fetchPortRanking(portCode).then(function(ranking) {
+                            return { portCode: portCode, ranking: ranking };
+                        });
+                    });
+                    var retryResults = await Promise.all(retryPromises);
+
+                    var retryCollected = 0;
+                    for (var ri = 0; ri < retryResults.length; ri++) {
+                        var rr = retryResults[ri];
+                        if (rr.ranking) {
+                            var existingRetry = Object.assign({}, rankingCache.ports);
+                            existingRetry[rr.portCode] = rr.ranking;
+                            rankingCache = { timestamp: Date.now(), ports: existingRetry };
+                            retryCollected++;
+                            collectedCount++;
+                            updateRankCellLive(rr.portCode, rr.ranking);
+                        }
+                    }
+
+                    if (retryCollected > 0) {
+                        await dbSet('rankingCache', rankingCache);
+                        log('Retry batch saved: ' + retryCollected + ' ports, total ' + Object.keys(rankingCache.ports).length);
+                    }
+
+                    if (activeModalContainer) {
+                        updateRankingButtonProgress();
+                    }
+
+                    if (retryBatchEnd < missingPorts.length && isCollectingRanking) {
+                        await new Promise(resolve => setTimeout(resolve, RANKING_BATCH_DELAY_MS));
+                    }
+                }
+            }
+
+            // Log final result
+            var finalCollected = rankingCache ? Object.keys(rankingCache.ports).length : 0;
+            var stillMissing = portCodes.length - finalCollected;
+            if (stillMissing > 0) {
+                log(stillMissing + ' ports still missing after retries', 'error');
+            }
+            log('Final ranking count: ' + finalCollected + '/' + portCodes.length);
+
             if (isCollectingRanking) {
-                showToast('Ranking complete: ' + Object.keys(rankingCache.ports).length + ' ports', 'success');
+                showToast('Ranking complete: ' + finalCollected + '/' + portCodes.length + ' ports', 'success');
                 log('Ranking collection complete');
             } else {
                 showToast('Ranking paused: ' + collectedCount + ' new ports saved', 'success');
@@ -1519,6 +1607,419 @@
         }
     }
 
+    // ========== ROUTE POPUP DEMAND FILTER ==========
+
+    function injectRoutePopupStyles() {
+        if (document.getElementById('route-popup-gap-fix')) return;
+        var style = document.createElement('style');
+        style.id = 'route-popup-gap-fix';
+        style.textContent = '#createRoutePopup .buttonContainer{gap:4px!important;row-gap:4px!important;}' +
+            '#createRoutePopup .buttonContainer>*{margin:0!important;}';
+        document.head.appendChild(style);
+    }
+
+    function initRoutePopupFilter() {
+        injectRoutePopupStyles();
+
+        var observer = new MutationObserver(function() {
+            var popup = document.getElementById('createRoutePopup');
+            if (popup && !routeFilterInjected) {
+                var btnContainer = popup.querySelector('.buttonContainer');
+                if (btnContainer) {
+                    injectRouteFilterButtons(btnContainer);
+                }
+            } else if (!popup && routeFilterInjected) {
+                resetRouteFilter();
+            }
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+
+        document.addEventListener('click', function(e) {
+            if (routeFilterDropdownOpen) {
+                var dropdown = document.getElementById('demandFilterDropdown');
+                if (dropdown && !dropdown.contains(e.target) && !e.target.closest('.demand-filter-route-btn')) {
+                    closeAllDemandDropdowns();
+                }
+            }
+        });
+    }
+
+    function injectRouteFilterButtons(container) {
+        if (routeFilterInjected) return;
+        routeFilterInjected = true;
+
+        // Detect vessel type from route store
+        var vesselType = null;
+        try {
+            var rs = getStore('route');
+            if (rs && rs.selectedVessel) {
+                vesselType = rs.selectedVessel.capacity_type;
+            }
+        } catch {
+            // ignore
+        }
+        var isContainer = vesselType === 'container';
+        var isTanker = vesselType === 'tanker';
+
+        var wrapper = document.createElement('div');
+        wrapper.id = 'demandFilterBtnWrapper';
+        wrapper.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap;margin-top:4px;justify-content:center;';
+
+        // DEMAND TEU button — only for container vessels (or unknown)
+        if (!isTanker) {
+            var teuBtn = document.createElement('button');
+            teuBtn.className = 'default light-blue demand-filter-route-btn';
+            teuBtn.setAttribute('data-v-67942aae', '');
+            teuBtn.style.cssText = 'flex:1;';
+            teuBtn.innerHTML = '<span class="btn-content-wrapper fit-btn-text">DEMAND TEU</span>';
+            teuBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                createDemandDropdown(teuBtn, TEU_RANGES, 'teu');
+            });
+            wrapper.appendChild(teuBtn);
+        }
+
+        // DEMAND BBL button — only for tanker vessels (or unknown)
+        if (!isContainer) {
+            var bblBtn = document.createElement('button');
+            bblBtn.className = 'default light-blue demand-filter-route-btn';
+            bblBtn.setAttribute('data-v-67942aae', '');
+            bblBtn.style.cssText = 'flex:1;';
+            bblBtn.innerHTML = '<span class="btn-content-wrapper fit-btn-text">DEMAND BBL</span>';
+            bblBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                createDemandDropdown(bblBtn, BBL_RANGES, 'bbl');
+            });
+            wrapper.appendChild(bblBtn);
+        }
+
+        // NO VESSELS button
+        var noVesselsBtn = document.createElement('button');
+        noVesselsBtn.id = 'demandFilterNoVessels';
+        noVesselsBtn.className = 'default light-blue demand-filter-route-btn';
+        noVesselsBtn.setAttribute('data-v-67942aae', '');
+        noVesselsBtn.style.cssText = 'flex:1;';
+        noVesselsBtn.innerHTML = '<span class="btn-content-wrapper fit-btn-text">NO VESSELS</span>';
+        noVesselsBtn.addEventListener('click', function() {
+            noVesselsFilterActive = !noVesselsFilterActive;
+            noVesselsBtn.className = noVesselsFilterActive
+                ? 'default green demand-filter-route-btn'
+                : 'default light-blue demand-filter-route-btn';
+            applyDemandFilters();
+        });
+
+        // COLLECT DEMAND button
+        var collectBtn = document.createElement('button');
+        collectBtn.id = 'demandFilterCollectBtn';
+        collectBtn.setAttribute('data-v-67942aae', '');
+        if (isCollecting) {
+            collectBtn.className = 'default light-blue demand-filter-route-btn';
+            collectBtn.style.cssText = 'flex:1;';
+            collectBtn.disabled = true;
+            collectBtn.innerHTML = '<span class="btn-content-wrapper fit-btn-text">Collecting...</span>';
+        } else if (!canCollect()) {
+            collectBtn.className = 'default light-blue demand-filter-route-btn';
+            collectBtn.style.cssText = 'flex:1;opacity:0.5;';
+            collectBtn.disabled = true;
+            collectBtn.innerHTML = '<span class="btn-content-wrapper fit-btn-text">Wait ' + formatCooldownTime(getTimeUntilNextCollect()) + '</span>';
+        } else {
+            collectBtn.className = 'default light-blue demand-filter-route-btn';
+            collectBtn.style.cssText = 'flex:1;';
+            collectBtn.innerHTML = '<span class="btn-content-wrapper fit-btn-text">COLLECT DEMAND</span>';
+            collectBtn.addEventListener('click', function() {
+                handleRouteCollect(collectBtn);
+            });
+        }
+
+        wrapper.appendChild(noVesselsBtn);
+        wrapper.appendChild(collectBtn);
+        container.appendChild(wrapper);
+    }
+
+    function resetRouteFilter() {
+        routeFilterInjected = false;
+        routeFilterBaselinePorts = null;
+        routeFilterDropdownOpen = null;
+        noVesselsFilterActive = false;
+        activeDemandFilter = { teu: null, bbl: null };
+        closeAllDemandDropdowns();
+    }
+
+    function createDemandDropdown(btn, ranges, type) {
+        closeAllDemandDropdowns();
+
+        var dropdown = document.createElement('div');
+        dropdown.id = 'demandFilterDropdown';
+        dropdown.style.cssText = 'position:absolute;background:#1a1a2e;border:1px solid #374151;border-radius:6px;padding:4px 0;z-index:9999;min-width:120px;box-shadow:0 4px 12px rgba(0,0,0,0.4);';
+
+        for (var i = 0; i < ranges.length; i++) {
+            (function(range) {
+                var item = document.createElement('div');
+                item.style.cssText = 'padding:6px 12px;color:#fff;font-size:12px;cursor:pointer;white-space:nowrap;';
+                item.textContent = range.label;
+
+                var isActive = activeDemandFilter[type] === range.min;
+                if (isActive) {
+                    item.style.background = '#3b82f6';
+                }
+
+                item.addEventListener('mouseenter', function() {
+                    if (!isActive) item.style.background = '#2a2a4e';
+                });
+                item.addEventListener('mouseleave', function() {
+                    if (!isActive) item.style.background = '';
+                });
+                item.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    if (range.min === 0) {
+                        activeDemandFilter[type] = null;
+                    } else {
+                        activeDemandFilter[type] = range.min;
+                    }
+                    closeAllDemandDropdowns();
+
+                    // Update button text
+                    var span = btn.querySelector('.btn-content-wrapper');
+                    if (span) {
+                        if (range.min === 0) {
+                            span.textContent = type === 'teu' ? 'DEMAND TEU' : 'DEMAND BBL';
+                        } else {
+                            span.textContent = range.label;
+                        }
+                    }
+                    applyDemandFilters();
+                });
+                dropdown.appendChild(item);
+            })(ranges[i]);
+        }
+
+        // Position: append first to measure, then clamp to viewport
+        dropdown.style.position = 'fixed';
+        dropdown.style.visibility = 'hidden';
+        document.body.appendChild(dropdown);
+
+        var rect = btn.getBoundingClientRect();
+        var ddWidth = dropdown.offsetWidth;
+        var ddHeight = dropdown.offsetHeight;
+
+        // Horizontal: try align left with button, clamp to viewport
+        var left = rect.left;
+        if (left + ddWidth > window.innerWidth - 8) {
+            left = window.innerWidth - ddWidth - 8;
+        }
+        if (left < 8) left = 8;
+
+        // Vertical: prefer below button, if no room flip above
+        var top = rect.bottom + 2;
+        if (top + ddHeight > window.innerHeight - 8) {
+            top = rect.top - ddHeight - 2;
+        }
+        if (top < 8) top = 8;
+
+        dropdown.style.left = left + 'px';
+        dropdown.style.top = top + 'px';
+        dropdown.style.visibility = 'visible';
+        routeFilterDropdownOpen = dropdown;
+    }
+
+    function closeAllDemandDropdowns() {
+        var dropdown = document.getElementById('demandFilterDropdown');
+        if (dropdown) {
+            dropdown.remove();
+        }
+        routeFilterDropdownOpen = null;
+    }
+
+    async function applyDemandFilters() {
+        var hasAnyFilter = activeDemandFilter.teu || activeDemandFilter.bbl || noVesselsFilterActive;
+
+        var rs = getStore('route');
+        if (!rs || !rs.routeSelection) {
+            log('Route store not found', 'error');
+            return;
+        }
+
+        // No filter active -> restore baseline
+        if (!hasAnyFilter) {
+            if (routeFilterBaselinePorts) {
+                rs.$patch(function(state) {
+                    state.routeSelection.activePorts = routeFilterBaselinePorts.slice();
+                    state.routeSelection.isMinified = true;
+                    state.routeSelection.routeCreationStep = 2;
+                });
+                fitBoundsToFilteredPorts(routeFilterBaselinePorts);
+                routeFilterBaselinePorts = null;
+            }
+            return;
+        }
+
+        // Need demand data for TEU/BBL filters
+        if ((activeDemandFilter.teu || activeDemandFilter.bbl) && !cachedData) {
+            showToast('No demand data. Collect first.', 'error');
+            return;
+        }
+
+        // Capture baseline before first filter — same trick as distance filter:
+        // fetch fresh ports from API via selectedVessel if store is empty
+        if (!routeFilterBaselinePorts) {
+            var currentPorts = rs.routeSelection.activePorts;
+            if (currentPorts && currentPorts.length > 0) {
+                routeFilterBaselinePorts = currentPorts.slice();
+                log('Captured baseline from store: ' + routeFilterBaselinePorts.length + ' ports');
+            } else {
+                // Store empty — fetch from API like distance filter does
+                var selectedVessel = rs.selectedVessel;
+                if (!selectedVessel) {
+                    showToast('No vessel selected', 'error');
+                    return;
+                }
+                log('Store empty, fetching ports from API for vessel: ' + selectedVessel.id);
+                var apiPorts = await fetchVesselPorts(selectedVessel.id);
+                if (!apiPorts || apiPorts.length === 0) {
+                    showToast('Could not load ports', 'error');
+                    return;
+                }
+                routeFilterBaselinePorts = apiPorts;
+                log('Captured baseline from API: ' + routeFilterBaselinePorts.length + ' ports');
+            }
+        }
+
+        if (!routeFilterBaselinePorts || routeFilterBaselinePorts.length === 0) {
+            log('No baseline ports to filter', 'error');
+            return;
+        }
+
+        // Build lookup from cachedData
+        var demandByCode = {};
+        if (cachedData && cachedData.ports) {
+            for (var i = 0; i < cachedData.ports.length; i++) {
+                var p = cachedData.ports[i];
+                demandByCode[p.code] = p;
+            }
+        }
+
+        var vesselsByPort = noVesselsFilterActive ? getVesselsByPort() : {};
+
+        var filtered = routeFilterBaselinePorts.filter(function(port) {
+            var code = port.code;
+
+            // TEU filter
+            if (activeDemandFilter.teu) {
+                var portData = demandByCode[code];
+                if (!portData) return false;
+                var demand = portData.demand || {};
+                var consumed = portData.consumed || {};
+                var cd = demand.container || {};
+                var cc = consumed.container || {};
+                var currentTEU = Math.max(0, (cd.dry || 0) + (cd.refrigerated || 0) - (cc.dry || 0) - (cc.refrigerated || 0));
+                if (currentTEU < activeDemandFilter.teu) return false;
+            }
+
+            // BBL filter
+            if (activeDemandFilter.bbl) {
+                var portDataB = demandByCode[code];
+                if (!portDataB) return false;
+                var demandB = portDataB.demand || {};
+                var consumedB = portDataB.consumed || {};
+                var td = demandB.tanker || {};
+                var tc = consumedB.tanker || {};
+                var currentBBL = Math.max(0, (td.fuel || 0) + (td.crude_oil || 0) - (tc.fuel || 0) - (tc.crude_oil || 0));
+                if (currentBBL < activeDemandFilter.bbl) return false;
+            }
+
+            // No vessels filter
+            if (noVesselsFilterActive) {
+                var vp = vesselsByPort[code];
+                if (vp) {
+                    var hasDest = vp.destContainerCount > 0 || vp.destTankerCount > 0;
+                    var hasOrigin = vp.originContainerCount > 0 || vp.originTankerCount > 0;
+                    if (hasDest || hasOrigin) return false;
+                }
+            }
+
+            return true;
+        });
+
+        if (filtered.length === 0) {
+            showToast('0 ports match the filter', 'error');
+            return;
+        }
+
+        rs.$patch(function(state) {
+            state.routeSelection.activePorts = filtered;
+            state.routeSelection.isMinified = true;
+            state.routeSelection.routeCreationStep = 2;
+        });
+        fitBoundsToFilteredPorts(filtered);
+        log('Demand filter applied: ' + filtered.length + '/' + routeFilterBaselinePorts.length + ' ports');
+    }
+
+    async function fetchVesselPorts(vesselId) {
+        try {
+            var response = await fetch(API_BASE + '/route/get-vessel-ports', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ user_vessel_id: vesselId })
+            });
+            if (!response.ok) return null;
+            var data = await response.json();
+            if (data && data.data && data.data.all && data.data.all.ports) {
+                return data.data.all.ports;
+            }
+        } catch (err) {
+            log('fetchVesselPorts error: ' + err.message, 'error');
+        }
+        return null;
+    }
+
+    function fitBoundsToFilteredPorts(ports) {
+        try {
+            var mapStore = getStore('mapStore');
+            if (!mapStore || !mapStore.map) return;
+            if (!ports || ports.length === 0) return;
+
+            var bounds = [];
+            for (var i = 0; i < ports.length; i++) {
+                var p = ports[i];
+                if (p.lat !== undefined && p.lon !== undefined) {
+                    bounds.push([parseFloat(p.lat), parseFloat(p.lon)]);
+                }
+            }
+            if (bounds.length > 0) {
+                mapStore.map.fitBounds(bounds, { padding: [20, 20] });
+            }
+        } catch (e) {
+            log('fitBounds failed: ' + e.message, 'error');
+        }
+    }
+
+    async function handleRouteCollect(btn) {
+        if (isCollecting) return;
+        if (!canCollect()) {
+            showToast('Please wait ' + formatCooldownTime(getTimeUntilNextCollect()), 'error');
+            return;
+        }
+        var span = btn.querySelector('.btn-content-wrapper');
+        if (span) span.textContent = 'Collecting...';
+        btn.disabled = true;
+        try {
+            await collectDemand();
+            if (span) span.textContent = 'Done!';
+            setTimeout(function() {
+                // After collect, show cooldown state
+                btn.style.opacity = '0.5';
+                if (span) span.textContent = 'Wait ' + formatCooldownTime(getTimeUntilNextCollect());
+            }, 2000);
+        } catch {
+            if (span) span.textContent = 'Failed';
+            setTimeout(function() {
+                btn.style.opacity = '0.5';
+                if (span) span.textContent = 'Wait ' + formatCooldownTime(getTimeUntilNextCollect());
+            }, 2000);
+        }
+    }
+
     // ========== INITIALIZATION ==========
     let uiInitialized = false;
     let uiRetryCount = 0;
@@ -1556,8 +2057,325 @@
 
         setupDemandModalWatcher();
         initMapMarkerHover();
+        initRoutePopupFilter();
+        initMapPortFilter();
 
         log('Script loaded');
+    }
+
+    // ========== MAP PORT FILTER ==========
+
+    let mapFilterInjected = false;
+    let mapFilterPanelOpen = false;
+    let mapFilterActive = { teu: null, bbl: null, noVessels: false };
+    let mapFilterHiddenMarkers = [];
+
+    function initMapPortFilter() {
+        // Watch for the customControls ship icon click -> port markers appear
+        document.addEventListener('click', function(e) {
+            var ctrl = e.target.closest('.customControls');
+            if (!ctrl) return;
+            // Port markers appear/disappear after a short delay
+            setTimeout(function() {
+                var markers = document.querySelectorAll('.leaflet-marker-icon[src*="porticon"]');
+                if (markers.length > 0 && !mapFilterInjected) {
+                    injectMapFilterControl();
+                } else if (markers.length === 0 && mapFilterInjected) {
+                    removeMapFilterControl();
+                }
+            }, 500);
+        });
+
+        // Also check periodically in case markers appear via other means
+        var checkInterval = setInterval(function() {
+            var markers = document.querySelectorAll('.leaflet-marker-icon[src*="porticon"]');
+            if (markers.length > 0 && !mapFilterInjected) {
+                injectMapFilterControl();
+            } else if (markers.length === 0 && mapFilterInjected) {
+                removeMapFilterControl();
+            }
+        }, 2000);
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', function() {
+            clearInterval(checkInterval);
+        });
+    }
+
+    function injectMapFilterControl() {
+        if (mapFilterInjected) return;
+        var rightControls = document.querySelector('.leaflet-top.leaflet-right');
+        if (!rightControls) return;
+
+        mapFilterInjected = true;
+
+        var container = document.createElement('div');
+        container.id = 'demand-map-filter-control';
+        container.className = 'leaflet-control-layers leaflet-control customControls';
+        container.style.cssText = 'cursor:pointer;display:flex;align-items:center;justify-content:center;';
+        container.title = 'Demand Filter';
+
+        // Filter SVG icon — same size as the ship icon SVG in customControls
+        container.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#666;"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg>';
+
+        container.addEventListener('click', function(e) {
+            e.stopPropagation();
+            if (mapFilterPanelOpen) {
+                closeMapFilterPanel();
+            } else {
+                openMapFilterPanel(container);
+            }
+        });
+
+        // Insert after the customControls
+        var customCtrl = rightControls.querySelector('.customControls');
+        if (customCtrl && customCtrl.nextSibling) {
+            rightControls.insertBefore(container, customCtrl.nextSibling);
+        } else {
+            rightControls.appendChild(container);
+        }
+    }
+
+    function removeMapFilterControl() {
+        mapFilterInjected = false;
+        mapFilterPanelOpen = false;
+        mapFilterActive = { teu: null, bbl: null, noVessels: false };
+        restoreAllMapMarkers();
+        var ctrl = document.getElementById('demand-map-filter-control');
+        if (ctrl) ctrl.remove();
+        var panel = document.getElementById('demand-map-filter-panel');
+        if (panel) panel.remove();
+    }
+
+    function openMapFilterPanel(anchorEl) {
+        closeMapFilterPanel();
+        mapFilterPanelOpen = true;
+
+        var panel = document.createElement('div');
+        panel.id = 'demand-map-filter-panel';
+        panel.style.cssText = 'position:fixed;background:#1a1a2e;border:1px solid #374151;border-radius:6px;padding:8px;z-index:9999;min-width:180px;box-shadow:0 4px 12px rgba(0,0,0,0.4);font-size:12px;color:#fff;';
+
+        // TEU section
+        panel.appendChild(createMapFilterSection('DEMAND TEU', TEU_RANGES, 'teu'));
+
+        // BBL section
+        panel.appendChild(createMapFilterSection('DEMAND BBL', BBL_RANGES, 'bbl'));
+
+        // Separator
+        var sep = document.createElement('div');
+        sep.style.cssText = 'border-top:1px solid #374151;margin:6px 0;';
+        panel.appendChild(sep);
+
+        // NO VESSELS toggle
+        var noVRow = document.createElement('div');
+        noVRow.style.cssText = 'display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;';
+        var noVCheck = document.createElement('input');
+        noVCheck.type = 'checkbox';
+        noVCheck.checked = mapFilterActive.noVessels;
+        noVCheck.style.cssText = 'margin:0;cursor:pointer;';
+        var noVLabel = document.createElement('span');
+        noVLabel.textContent = 'NO VESSELS';
+        noVLabel.style.cssText = 'cursor:pointer;';
+        noVRow.appendChild(noVCheck);
+        noVRow.appendChild(noVLabel);
+        noVRow.addEventListener('click', function(e) {
+            if (e.target !== noVCheck) noVCheck.checked = !noVCheck.checked;
+            mapFilterActive.noVessels = noVCheck.checked;
+            applyMapPortFilter();
+        });
+        panel.appendChild(noVRow);
+
+        // Separator
+        var sep2 = document.createElement('div');
+        sep2.style.cssText = 'border-top:1px solid #374151;margin:6px 0;';
+        panel.appendChild(sep2);
+
+        // Reset button
+        var resetBtn = document.createElement('button');
+        resetBtn.textContent = 'RESET';
+        resetBtn.style.cssText = 'width:100%;padding:6px;background:#374151;border:0;border-radius:4px;color:#fff;font-size:11px;cursor:pointer;';
+        resetBtn.addEventListener('click', function() {
+            mapFilterActive = { teu: null, bbl: null, noVessels: false };
+            restoreAllMapMarkers();
+            closeMapFilterPanel();
+            updateMapFilterIcon();
+        });
+        panel.appendChild(resetBtn);
+
+        // Close when clicking outside
+        setTimeout(function() {
+            document.addEventListener('click', mapFilterOutsideClickHandler);
+        }, 0);
+
+        // Position panel
+        document.body.appendChild(panel);
+        var rect = anchorEl.getBoundingClientRect();
+        var panelW = panel.offsetWidth;
+        var left = rect.left - panelW - 4;
+        if (left < 8) left = rect.right + 4;
+        var top = rect.top;
+        if (top + panel.offsetHeight > window.innerHeight - 8) {
+            top = window.innerHeight - panel.offsetHeight - 8;
+        }
+        panel.style.left = left + 'px';
+        panel.style.top = top + 'px';
+    }
+
+    function mapFilterOutsideClickHandler(e) {
+        var panel = document.getElementById('demand-map-filter-panel');
+        var ctrl = document.getElementById('demand-map-filter-control');
+        if (panel && !panel.contains(e.target) && ctrl && !ctrl.contains(e.target)) {
+            closeMapFilterPanel();
+        }
+    }
+
+    function closeMapFilterPanel() {
+        mapFilterPanelOpen = false;
+        var panel = document.getElementById('demand-map-filter-panel');
+        if (panel) panel.remove();
+        document.removeEventListener('click', mapFilterOutsideClickHandler);
+    }
+
+    function createMapFilterSection(title, ranges, type) {
+        var section = document.createElement('div');
+        section.style.cssText = 'margin-bottom:6px;';
+
+        var label = document.createElement('div');
+        label.textContent = title;
+        label.style.cssText = 'font-size:10px;color:#9ca3af;margin-bottom:4px;';
+        section.appendChild(label);
+
+        var select = document.createElement('select');
+        select.style.cssText = 'width:100%;padding:4px;background:#2a2a4e;border:1px solid #374151;border-radius:4px;color:#fff;font-size:12px;cursor:pointer;';
+        for (var i = 0; i < ranges.length; i++) {
+            var opt = document.createElement('option');
+            opt.value = ranges[i].min;
+            opt.textContent = ranges[i].label;
+            if (mapFilterActive[type] === ranges[i].min || (mapFilterActive[type] === null && ranges[i].min === 0)) {
+                opt.selected = true;
+            }
+            select.appendChild(opt);
+        }
+        select.addEventListener('change', function() {
+            var val = parseInt(select.value, 10);
+            mapFilterActive[type] = val === 0 ? null : val;
+            applyMapPortFilter();
+        });
+        section.appendChild(select);
+        return section;
+    }
+
+    function applyMapPortFilter() {
+        var hasAnyFilter = mapFilterActive.teu || mapFilterActive.bbl || mapFilterActive.noVessels;
+
+        updateMapFilterIcon();
+
+        if (!hasAnyFilter) {
+            restoreAllMapMarkers();
+            return;
+        }
+
+        if ((mapFilterActive.teu || mapFilterActive.bbl) && !cachedData) {
+            showToast('No demand data. Collect first.', 'error');
+            return;
+        }
+
+        // Build lookup from cachedData
+        var demandByCode = {};
+        if (cachedData && cachedData.ports) {
+            for (var i = 0; i < cachedData.ports.length; i++) {
+                var p = cachedData.ports[i];
+                demandByCode[p.code] = p;
+            }
+        }
+
+        var vesselsByPort = mapFilterActive.noVessels ? getVesselsByPort() : {};
+
+        var map = getLeafletMap();
+        if (!map) return;
+
+        // Restore all first
+        restoreAllMapMarkers();
+        mapFilterHiddenMarkers = [];
+
+        var layers = map._layers;
+        for (var layerId in layers) {
+            var layer = layers[layerId];
+            if (!layer._icon || !layer.options || !layer.options.port) continue;
+            var src = layer._icon.getAttribute('src');
+            if (!src || !src.includes('porticon')) continue;
+
+            var code = layer.options.port.code;
+            var shouldHide = false;
+
+            // TEU filter
+            if (mapFilterActive.teu) {
+                var portData = demandByCode[code];
+                if (!portData) {
+                    shouldHide = true;
+                } else {
+                    var demand = portData.demand || {};
+                    var consumed = portData.consumed || {};
+                    var cd = demand.container || {};
+                    var cc = consumed.container || {};
+                    var currentTEU = Math.max(0, (cd.dry || 0) + (cd.refrigerated || 0) - (cc.dry || 0) - (cc.refrigerated || 0));
+                    if (currentTEU < mapFilterActive.teu) shouldHide = true;
+                }
+            }
+
+            // BBL filter
+            if (!shouldHide && mapFilterActive.bbl) {
+                var portDataB = demandByCode[code];
+                if (!portDataB) {
+                    shouldHide = true;
+                } else {
+                    var demandB = portDataB.demand || {};
+                    var consumedB = portDataB.consumed || {};
+                    var td = demandB.tanker || {};
+                    var tc = consumedB.tanker || {};
+                    var currentBBL = Math.max(0, (td.fuel || 0) + (td.crude_oil || 0) - (tc.fuel || 0) - (tc.crude_oil || 0));
+                    if (currentBBL < mapFilterActive.bbl) shouldHide = true;
+                }
+            }
+
+            // No vessels filter
+            if (!shouldHide && mapFilterActive.noVessels) {
+                var vp = vesselsByPort[code];
+                if (vp) {
+                    var hasDest = vp.destContainerCount > 0 || vp.destTankerCount > 0;
+                    var hasOrigin = vp.originContainerCount > 0 || vp.originTankerCount > 0;
+                    if (hasDest || hasOrigin) shouldHide = true;
+                }
+            }
+
+            if (shouldHide) {
+                layer._icon.style.display = 'none';
+                if (layer._shadow) layer._shadow.style.display = 'none';
+                mapFilterHiddenMarkers.push(layer);
+            }
+        }
+
+        var totalMarkers = document.querySelectorAll('.leaflet-marker-icon[src*="porticon"]').length + mapFilterHiddenMarkers.length;
+        var visibleCount = totalMarkers - mapFilterHiddenMarkers.length;
+        log('Map filter: ' + visibleCount + '/' + totalMarkers + ' ports visible');
+    }
+
+    function restoreAllMapMarkers() {
+        for (var i = 0; i < mapFilterHiddenMarkers.length; i++) {
+            var layer = mapFilterHiddenMarkers[i];
+            if (layer._icon) layer._icon.style.display = '';
+            if (layer._shadow) layer._shadow.style.display = '';
+        }
+        mapFilterHiddenMarkers = [];
+    }
+
+    function updateMapFilterIcon() {
+        var ctrl = document.getElementById('demand-map-filter-control');
+        if (!ctrl) return;
+        var svg = ctrl.querySelector('svg');
+        if (!svg) return;
+        var hasFilter = mapFilterActive.teu || mapFilterActive.bbl || mapFilterActive.noVessels;
+        svg.style.color = hasFilter ? '#3b82f6' : '#666';
     }
 
     // ========== MAP MARKER HOVER ==========
