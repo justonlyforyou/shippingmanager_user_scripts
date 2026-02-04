@@ -2,7 +2,7 @@
 // @name         ShippingManager - Depart Manager
 // @namespace    https://rebelship.org/
 // @description  Unified departure management: Auto bunker rebuy, auto-depart, route settings
-// @version      3.43
+// @version      3.44
 // @author       https://github.com/justonlyforyou/
 // @order        10
 // @match        https://shippingmanager.cc/*
@@ -143,7 +143,8 @@
             settings: Object.assign({}, DEFAULT_SETTINGS, storageCache.settings || {}),
             pendingRouteSettings: storageCache.pendingRouteSettings || {},
             priceChangedAt: storageCache.priceChangedAt || {},
-            lastGradualIncrease: storageCache.lastGradualIncrease || {}
+            lastGradualIncrease: storageCache.lastGradualIncrease || {},
+            drydockVessels: storageCache.drydockVessels || {}
         };
     }
 
@@ -1555,6 +1556,68 @@
         }
 
         if (removed > 0) {
+            saveStorage(storage);
+        }
+    }
+
+    // ============================================
+    // DRYDOCK VESSEL RESTORE (fallback for auto-drydock)
+    // ============================================
+    async function restoreDrydockVessels(vessels) {
+        var storage = getStorage();
+        var drydockIds = Object.keys(storage.drydockVessels);
+        if (drydockIds.length === 0) return;
+
+        var vesselMap = new Map(vessels.map(function(v) { return [v.id, v]; }));
+        var changed = false;
+
+        for (var i = 0; i < drydockIds.length; i++) {
+            var vesselId = parseInt(drydockIds[i]);
+            var entry = storage.drydockVessels[drydockIds[i]];
+            var vessel = vesselMap.get(vesselId);
+            if (!entry || !vessel) continue;
+
+            if (entry.status === 'pre_drydock') {
+                // Check if drydock is complete
+                if (vessel.route_dry_operation === 1) continue;
+                if (vessel.status === 'maintenance') continue;
+
+                var currentHours = vessel.hours_until_check;
+                var savedHours = entry.hoursAtDrydock;
+
+                if (currentHours > savedHours) {
+                    log(entry.name + ': Drydock complete (hours: ' + savedHours + ' -> ' + currentHours + ')');
+                    storage.drydockVessels[drydockIds[i]].status = 'past_drydock';
+                    changed = true;
+                }
+            } else if (entry.status === 'past_drydock') {
+                // Restore settings when vessel is in port or anchored
+                if ((vessel.status === 'port' || vessel.status === 'anchor') && !vessel.is_parked) {
+                    var needsRestore =
+                        entry.speed !== vessel.route_speed ||
+                        entry.guards !== vessel.route_guards ||
+                        JSON.stringify(entry.prices) !== JSON.stringify(vessel.prices);
+
+                    if (!needsRestore) {
+                        log(entry.name + ': Drydock settings already match');
+                        delete storage.drydockVessels[drydockIds[i]];
+                        changed = true;
+                        continue;
+                    }
+
+                    log(entry.name + ': Restoring drydock settings (speed=' + entry.speed + ', guards=' + entry.guards + ')');
+                    var success = await updateRouteData(vesselId, entry.speed, entry.guards, entry.prices, vessel.prices);
+                    if (success) {
+                        log(entry.name + ': Drydock settings restored');
+                        notify('Restored drydock settings for ' + entry.name, 'success');
+                        delete storage.drydockVessels[drydockIds[i]];
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        if (changed) {
             saveStorage(storage);
         }
     }
@@ -3087,6 +3150,12 @@
         var vessels = await fetchVesselData();
         if (vessels && vessels.length > 0) {
             await handleVesselDataResponse({ data: { user_vessels: vessels } });
+
+            try {
+                await restoreDrydockVessels(vessels);
+            } catch (e) {
+                log('restoreDrydockVessels error: ' + e.message, 'error');
+            }
         }
 
         if (settings.fuelMode !== 'off') {

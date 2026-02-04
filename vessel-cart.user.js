@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Vessel Shopping Cart
 // @description Add vessels to cart and bulk purchase them
-// @version     4.25
+// @version     4.29
 // @author      https://github.com/justonlyforyou/
 // @order        63
 // @match       https://shippingmanager.cc/*
@@ -27,6 +27,15 @@
     var STORE_NAME = 'data';
 
     var CART_ICON = '<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2zM1 2v2h2l3.6 7.59-1.35 2.45c-.16.28-.25.61-.25.96 0 1.1.9 2 2 2h12v-2H7.42c-.14 0-.25-.11-.25-.25l.03-.12.9-1.63h7.45c.75 0 1.41-.41 1.75-1.03l3.58-6.49c.08-.14.12-.31.12-.48 0-.55-.45-1-1-1H5.21l-.94-2H1zm16 16c-1.1 0-1.99.9-1.99 2s.89 2 1.99 2 2-.9 2-2-.9-2-2-2z"/></svg>';
+
+    var VIP_VESSELS = [
+        { id: 59, name: 'Starliner', points: 2500 },
+        { id: 60, name: 'MS Sundown', points: 3500 },
+        { id: 61, name: 'MS Anaconda', points: 4500 },
+        { id: 62, name: 'Big Bear', points: 6000 },
+        { id: 63, name: 'Ventura', points: 8000 }
+    ];
+    var POINTS_ICON_URL = '/images/icons/points_icon.svg';
 
     // Cached cart data
     var cachedCart = null;
@@ -90,6 +99,9 @@
         if (vessel.type === 'build') {
             var cfg = vessel.buildConfig;
             return 'build_' + cfg.ship_yard + '_' + cfg.vessel_model + '_' + cfg.engine_type + '_' + cfg.capacity;
+        }
+        if (vessel.type === 'vip') {
+            return 'vip_' + vessel.id;
         }
         return 'purchase_' + vessel.id;
     }
@@ -339,14 +351,11 @@
         var vesselName2 = getVesselNameFromUI();
 
         if (!vesselName2) {
+                console.warn('[VesselCart] getCurrentVessel: no vessel name found in UI');
                 return null;
         }
 
-        if (allVessels.length === 0) {
-            console.log('[VesselCart] No vessels cached - open Fleet menu first to cache vessel list');
-            return null;
-        }
-
+        // Step 1: Exact match in cached acquirable vessels
         var vessel = null;
         for (var i = 0; i < allVessels.length; i++) {
             if (allVessels[i].name === vesselName2) {
@@ -354,18 +363,60 @@
                 break;
             }
         }
-        if (vessel) {
-            return Object.assign({ type: 'purchase' }, vessel);
-        }
 
-        for (var j = 0; j < allVessels.length; j++) {
-            if (allVessels[j].name.indexOf(vesselName2) !== -1 || vesselName2.indexOf(allVessels[j].name) !== -1) {
-                return Object.assign({ type: 'purchase' }, allVessels[j]);
+        // Step 2: Partial match in cached acquirable vessels
+        if (!vessel) {
+            for (var j = 0; j < allVessels.length; j++) {
+                if (allVessels[j].name.indexOf(vesselName2) !== -1 || vesselName2.indexOf(allVessels[j].name) !== -1) {
+                    vessel = allVessels[j];
+                    break;
+                }
             }
         }
 
-        console.log('[VesselCart] Vessel "' + vesselName2 + '" not found in ' + allVessels.length + ' cached vessels');
-        return null;
+        // Step 3: Check stores for VIP vessel data (set by buy-vip-vessel, game UI, or modal)
+        if (!vessel) {
+            var vipStores = getStores();
+            if (vipStores) {
+                var storeVessel = null;
+                if (vipStores.vessel && vipStores.vessel.acquiringVessel) {
+                    storeVessel = vipStores.vessel.acquiringVessel;
+                }
+                if (!storeVessel && vipStores.shop && vipStores.shop.vip_vessel) {
+                    storeVessel = vipStores.shop.vip_vessel;
+                }
+                if (!storeVessel && vipStores.modal && vipStores.modal.props && vipStores.modal.props.vip_vessel) {
+                    storeVessel = vipStores.modal.props.vip_vessel;
+                }
+                if (storeVessel && (storeVessel.name === vesselName2 || vesselName2.indexOf(storeVessel.name) !== -1 || storeVessel.name.indexOf(vesselName2) !== -1)) {
+                    vessel = storeVessel;
+                    console.log('[VesselCart] Found vessel via store fallback:', storeVessel.name);
+                }
+            }
+        }
+
+        // Step 4: Match against known VIP_VESSELS by name and construct vessel object
+        if (!vessel) {
+            for (var v = 0; v < VIP_VESSELS.length; v++) {
+                if (VIP_VESSELS[v].name === vesselName2 || vesselName2.indexOf(VIP_VESSELS[v].name) !== -1 || VIP_VESSELS[v].name.indexOf(vesselName2) !== -1) {
+                    vessel = { id: VIP_VESSELS[v].id, name: VIP_VESSELS[v].name };
+                    console.log('[VesselCart] Matched VIP vessel by name fallback:', VIP_VESSELS[v].name);
+                    break;
+                }
+            }
+        }
+
+        if (!vessel) {
+            console.warn('[VesselCart] Vessel "' + vesselName2 + '" not found. acquirableVessels=' + allVessels.length + ', stores checked, VIP names checked');
+            return null;
+        }
+
+        var vipInfo = getVipInfo(vessel);
+        if (vipInfo) {
+            return Object.assign({ type: 'vip', pointsPrice: vipInfo.points }, vessel);
+        }
+
+        return Object.assign({ type: 'purchase' }, vessel);
     }
 
     // Get quantity from input
@@ -483,6 +534,17 @@
             .join(' ');
     }
 
+    // Check if vessel is VIP by ID or name
+    function getVipInfo(vessel) {
+        if (!vessel) return null;
+        for (var i = 0; i < VIP_VESSELS.length; i++) {
+            if (VIP_VESSELS[i].id === vessel.id || VIP_VESSELS[i].name === vessel.name) {
+                return VIP_VESSELS[i];
+            }
+        }
+        return null;
+    }
+
     // Show shopping cart modal
     function showCartModal() {
         getCart(function(cart) {
@@ -494,26 +556,35 @@
             var stores = getStores();
             var userStore = stores ? stores.user : null;
             var userCash = userStore && userStore.user ? userStore.user.cash : 0;
+            var userPoints = userStore && userStore.user ? userStore.user.points : 0;
 
             var hasBuildItems = false;
             var hasUnpricedBuilds = false;
+            var hasVipItems = false;
             var purchaseTotal = 0;
+            var pointsTotal = 0;
             var totalItems = 0;
 
             for (var i = 0; i < cart.length; i++) {
                 var item = cart[i];
                 totalItems += item.quantity;
+                var itemVipInfo = getVipInfo(item.vessel);
                 if (item.vessel.type === 'build') {
                     hasBuildItems = true;
                     var buildPrice = item.vessel.buildConfig.price || 0;
                     if (!buildPrice) hasUnpricedBuilds = true;
                     purchaseTotal += buildPrice * item.quantity;
+                } else if (item.vessel.type === 'vip' || itemVipInfo) {
+                    hasVipItems = true;
+                    pointsTotal += (item.vessel.pointsPrice || (itemVipInfo ? itemVipInfo.points : 0)) * item.quantity;
                 } else if (item.vessel.price) {
                     purchaseTotal += item.vessel.price * item.quantity;
                 }
             }
 
-            var canAfford = userCash >= purchaseTotal;
+            var canAffordCash = userCash >= purchaseTotal;
+            var canAffordPoints = userPoints >= pointsTotal;
+            var canAfford = canAffordCash && canAffordPoints;
 
             var overlay = document.createElement('div');
             overlay.id = 'rebelship-cart-overlay';
@@ -536,6 +607,8 @@
                 var cartItem = cart[idx];
                 var key = cartItem.key || getCartItemKey(cartItem.vessel);
                 var isBuild = cartItem.vessel.type === 'build';
+                var cartVipInfo = getVipInfo(cartItem.vessel);
+                var isVipItem = cartItem.vessel.type === 'vip' || cartVipInfo !== null;
 
                 if (isBuild) {
                     var cfg = cartItem.vessel.buildConfig;
@@ -598,6 +671,15 @@
 
                         itemsContainer.appendChild(shipDiv);
                     }
+                } else if (isVipItem) {
+                    var vipUnitPrice = cartItem.vessel.pointsPrice || (cartVipInfo ? cartVipInfo.points : 0);
+                    var priceTextVip = formatNumber(vipUnitPrice) + ' pts each';
+                    var totalPriceVip = formatNumber(vipUnitPrice * cartItem.quantity) + ' pts';
+
+                    var vipDiv = document.createElement('div');
+                    vipDiv.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:12px;background:#252b3b;border-radius:8px;margin-bottom:8px;border-left:3px solid #a855f7;';
+                    vipDiv.innerHTML = '<div style="flex:1;"><div style="color:#fff;font-weight:500;">' + escapeHtml(cartItem.vessel.name) + ' <span style="color:#a855f7;font-size:11px;">[VIP]</span></div><div style="color:#9ca3af;font-size:12px;"><img src="' + POINTS_ICON_URL + '" style="width:12px;height:12px;vertical-align:middle;margin-right:2px;">' + escapeHtml(priceTextVip) + '</div></div><div style="display:flex;align-items:center;gap:8px;"><button class="cart-qty-minus" data-key="' + key + '" style="width:28px;height:28px;background:#374151;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:16px;">-</button><span style="color:#fff;min-width:24px;text-align:center;">' + cartItem.quantity + '</span><button class="cart-qty-plus" data-key="' + key + '" style="width:28px;height:28px;background:#374151;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:16px;">+</button><button class="cart-remove" data-key="' + key + '" style="width:28px;height:28px;background:#dc2626;color:#fff;border:none;border-radius:4px;cursor:pointer;margin-left:8px;" title="Remove">x</button></div><div style="min-width:80px;text-align:right;color:#a855f7;font-weight:600;"><img src="' + POINTS_ICON_URL + '" style="width:14px;height:14px;vertical-align:middle;margin-right:2px;">' + totalPriceVip + '</div>';
+                    itemsContainer.appendChild(vipDiv);
                 } else {
                     var priceTextPurchase = '$' + formatNumber(cartItem.vessel.price) + ' each';
                     var totalPricePurchase = '$' + formatNumber(cartItem.vessel.price * cartItem.quantity);
@@ -614,22 +696,39 @@
             var costDisplay = '$' + formatNumber(purchaseTotal) + (hasUnpricedBuilds ? ' (est.)' : '');
 
             var buildCount = 0;
+            var vipCount = 0;
             for (var bi = 0; bi < cart.length; bi++) {
                 if (cart[bi].vessel.type === 'build') buildCount += cart[bi].quantity;
+                if (cart[bi].vessel.type === 'vip' || getVipInfo(cart[bi].vessel)) vipCount += cart[bi].quantity;
             }
 
-            var footerHtml = '<div style="display:flex;justify-content:space-between;margin-bottom:8px;"><span style="color:#9ca3af;">Total Items:</span><span style="color:#fff;font-weight:500;">' + totalItems + ' vessels' + (hasBuildItems ? ' (incl. ' + buildCount + ' builds)' : '') + '</span></div>';
+            var itemsDetail = '';
+            if (hasBuildItems && hasVipItems) {
+                itemsDetail = ' (incl. ' + buildCount + ' builds, ' + vipCount + ' VIP)';
+            } else if (hasBuildItems) {
+                itemsDetail = ' (incl. ' + buildCount + ' builds)';
+            } else if (hasVipItems) {
+                itemsDetail = ' (incl. ' + vipCount + ' VIP)';
+            }
+
+            var footerHtml = '<div style="display:flex;justify-content:space-between;margin-bottom:8px;"><span style="color:#9ca3af;">Total Items:</span><span style="color:#fff;font-weight:500;">' + totalItems + ' vessels' + itemsDetail + '</span></div>';
 
             var anchorInfo = getAnchorPointsInfo();
             if (anchorInfo) {
-                var freeAfterPurchase = anchorInfo.free - totalItems;
+                var freeAfterPurchase = anchorInfo.free - (totalItems - vipCount);
                 var hasEnoughAnchors = freeAfterPurchase >= 0;
                 footerHtml += '<div style="display:flex;justify-content:space-between;margin-bottom:8px;"><span style="color:#9ca3af;">Anchor Points:</span><span style="color:#fff;font-weight:500;">' + anchorInfo.free + ' free / ' + anchorInfo.total + ' total</span></div>';
                 footerHtml += '<div style="display:flex;justify-content:space-between;margin-bottom:8px;"><span style="color:#9ca3af;">After Purchase:</span><span style="color:' + (hasEnoughAnchors ? '#4ade80' : '#ef4444') + ';font-weight:500;">' + freeAfterPurchase + ' free' + (hasEnoughAnchors ? '' : ' (not enough!)') + '</span></div>';
             }
 
             footerHtml += '<div style="display:flex;justify-content:space-between;margin-bottom:8px;"><span style="color:#9ca3af;">Cash Available:</span><span style="color:#4ade80;font-weight:500;">$' + formatNumber(userCash) + '</span></div>';
-            footerHtml += '<div style="display:flex;justify-content:space-between;"><span style="color:#fff;font-weight:600;">Total Cost:</span><span style="color:' + (canAfford ? '#4ade80' : '#ef4444') + ';font-weight:700;font-size:18px;">' + costDisplay + '</span></div>';
+            if (hasVipItems) {
+                footerHtml += '<div style="display:flex;justify-content:space-between;margin-bottom:8px;"><span style="color:#fff;font-weight:600;">Cash Cost:</span><span style="color:' + (canAffordCash ? '#4ade80' : '#ef4444') + ';font-weight:700;font-size:18px;">' + costDisplay + '</span></div>';
+                footerHtml += '<div style="display:flex;justify-content:space-between;margin-bottom:8px;padding-top:8px;border-top:1px solid #374151;"><span style="color:#9ca3af;">Points Available:</span><span style="color:#a855f7;font-weight:500;">' + formatNumber(userPoints) + ' pts</span></div>';
+                footerHtml += '<div style="display:flex;justify-content:space-between;"><span style="color:#fff;font-weight:600;">Points Cost:</span><span style="color:' + (canAffordPoints ? '#a855f7' : '#ef4444') + ';font-weight:700;font-size:18px;">' + formatNumber(pointsTotal) + ' pts</span></div>';
+            } else {
+                footerHtml += '<div style="display:flex;justify-content:space-between;"><span style="color:#fff;font-weight:600;">Total Cost:</span><span style="color:' + (canAfford ? '#4ade80' : '#ef4444') + ';font-weight:700;font-size:18px;">' + costDisplay + '</span></div>';
+            }
 
             footer.innerHTML = footerHtml;
 
@@ -724,6 +823,54 @@
         });
     }
 
+    // Purchase VIP vessel: load vessel data first, then call vessel/purchase-vessel
+    // Based on game source (fleet_b.js:7040-7077): purchaseVipVessel calls
+    // POST vessel/purchase-vessel with { vessel_id: modalStore.props.vip_vessel.id }
+    function purchaseVipVessel(vessel) {
+        var stores = getStores();
+        if (!stores) {
+            return Promise.reject(new Error('Stores not available'));
+        }
+
+        // Step 1: Load vessel data via show-acquirable-vessel (game does this before purchase)
+        return fetch('/api/vessel/show-acquirable-vessel', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ vessel_id: vessel.id })
+        })
+        .then(function(response) { return response.json(); })
+        .then(function(showData) {
+            var vesselData = showData && showData.data ? showData.data.vessels_for_sale : null;
+            if (!vesselData) {
+                vesselData = vessel;
+            }
+
+            // Set up stores as the game does (fleet_b.js:7030-7034)
+            if (stores.modal) {
+                stores.modal.props = stores.modal.props || {};
+                stores.modal.props.vip_vessel = vesselData;
+            }
+            if (stores.shop) {
+                stores.shop.vip_vessel = vesselData;
+                stores.shop.selectedVessel = vesselData;
+            }
+            if (stores.vessel) {
+                stores.vessel.acquiringVessel = vesselData;
+            }
+
+            // Step 2: Purchase via vessel/purchase-vessel (same endpoint as regular vessels)
+            console.log('[VesselCart] Purchasing VIP vessel via /api/vessel/purchase-vessel, id:', vessel.id);
+            return fetch('/api/vessel/purchase-vessel', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ vessel_id: vessel.id })
+            });
+        })
+        .then(function(response) { return response.json(); });
+    }
+
     // Process checkout - purchase all vessels
     function processCheckout() {
         getCart(function(cart) {
@@ -788,10 +935,9 @@
                 progressEl.textContent = 'Processing ' + currentPurchase + '/' + totalPurchases;
                 statusEl.textContent = vesselName + ' (' + (subIndex + 1) + '/' + item.quantity + ')';
 
-                var endpoint, body;
+                var purchasePromise;
 
                 if (item.vessel.type === 'build' && item.vessel.buildConfig) {
-                    endpoint = '/api/vessel/build-vessel';
                     var buildConfig = Object.assign({}, item.vessel.buildConfig);
 
                     if (shipConfig) {
@@ -803,25 +949,30 @@
                         buildConfig.name = buildConfig.name + '_' + (subIndex + 1);
                     }
 
-                    body = JSON.stringify(buildConfig);
                     console.log('[VesselCart] Building vessel:', buildConfig);
+                    purchasePromise = fetch('/api/vessel/build-vessel', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                        body: JSON.stringify(buildConfig)
+                    }).then(function(response) { return response.json(); });
+                } else if (item.vessel.type === 'vip' || getVipInfo(item.vessel)) {
+                    console.log('[VesselCart] Purchasing VIP vessel:', item.vessel.id, item.vessel.name);
+                    purchasePromise = purchaseVipVessel(item.vessel);
                 } else {
-                    endpoint = '/api/vessel/purchase-vessel';
-                    body = JSON.stringify({ vessel_id: item.vessel.id });
                     console.log('[VesselCart] Purchasing vessel ID:', item.vessel.id);
+                    purchasePromise = fetch('/api/vessel/purchase-vessel', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                        body: JSON.stringify({ vessel_id: item.vessel.id })
+                    }).then(function(response) { return response.json(); });
                 }
 
-                fetch(endpoint, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    credentials: 'include',
-                    body: body
-                }).then(function(response) {
-                    return response.json();
-                }).then(function(data) {
+                purchasePromise.then(function(data) {
                     if (data.error) {
                         failCount++;
-                        var errorMsg = data.error.replace(/_/g, ' ');
+                        var errorMsg = typeof data.error === 'string' ? data.error.replace(/_/g, ' ') : (data.error.message || JSON.stringify(data.error));
                         errors.push(escapeHtml(vesselName) + ': ' + escapeHtml(errorMsg));
                         statusEl.innerHTML = '<span style="color:#ef4444;">' + escapeHtml(errorMsg) + '</span>';
                         console.error('[VesselCart] Failed:', data);

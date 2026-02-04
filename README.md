@@ -19,6 +19,7 @@ A collection of user scripts for [Shipping Manager](https://shippingmanager.cc/)
    - [Smuggler's Eye](#smugglers-eyeuserjs---smugglers-eye)
    - [Fleet Manager](#fleet-manageruserjs---mass-moorresume)
    - [Vessel Shopping Cart](#vessel-cartuserjs---vessel-shopping-cart)
+   - [Vessel Sell Cart](#vessel-selluserjs---vessel-sell-cart)
    - [Bunker Price Display](#bunker-price-displayuserjs---bunker-prices)
    - [Forecast Calendar](#forecast-calendaruserjs---forecast-calendar)
    - [Demand Summary](#demand-summaryuserjs---demand-summary)
@@ -31,7 +32,6 @@ A collection of user scripts for [Shipping Manager](https://shippingmanager.cc/)
    - [Alliance Search](#alliance-searchuserjs---alliance-search)
    - [Alliance ID Display](#alliance-id-displayuserjs---alliance-id-display)
    - [Cleanup System Messages](#cleanup-system-messagesuserjs---cleanup-system-messages)
-   - [Create Alliance Unlock](#create-alliance-unlockuserjs---create-alliance-unlock)
    - [Auto Anchor](#auto-anchoruserjs---auto-anchor)
    - [Auto Stock](#auto-stockuserjs---auto-stock)
    - [ChatBot](#chatbotuserjs---chatbot)
@@ -83,7 +83,7 @@ Previous versions of these scripts worked with Tampermonkey, but the current arc
 | Script | Version | Description |
 |--------|---------|-------------|
 | rebelship-header-optimizer.user.js | 3.51 | Header UI optimization, mobile layout, resize handling |
-| departmanager.user.js | 3.43 | Auto-Bunker, Auto-Depart, Route Settings, Min Utilization |
+| departmanager.user.js | 3.44 | Auto-Bunker, Auto-Depart, Route Settings, Min Utilization |
 | auto-repair.user.js | 2.41 | Auto-repair at wear threshold |
 | auto-happy-stuff.user.js | 1.40 | Auto salary adjustment for crew/management morale |
 | auto-coop-tickets-display.user.js | 5.38 | Co-Op display in header, Auto-COOP sending |
@@ -91,7 +91,8 @@ Previous versions of these scripts worked with Tampermonkey, but the current arc
 | auto-drydock.user.js | 1.6 | Auto-drydock at hours threshold, drydock bug prevention |
 | smugglers-eye.user.js | 1.9 | Price optimization: 4% markup, gradual increase, max guards |
 | fleet-manager.user.js | 4.15 | Mass Moor/Resume with checkboxes |
-| vessel-cart.user.js | 4.25 | Shopping cart for vessel purchase/build |
+| vessel-cart.user.js | 4.29 | Shopping cart for vessel purchase/build |
+| vessel-sell.user.js | 1.0 | Bulk-sell vessels with lazy-loaded sell prices |
 | bunker-price-display.user.js | 3.20 | Fuel/CO2 prices and fill level in header |
 | forecast-calendar.user.js | 3.39 | Page-flip calendar with price forecasts |
 | demand-summary.user.js | 4.81 | Port demand with capacity overview, alliance ranking |
@@ -117,7 +118,6 @@ Previous versions of these scripts worked with Tampermonkey, but the current arc
 | fix-missing-vessel-details.user.js | 2.5 | Fix missing vessel details (Engine, Port, Fuel Factor) |
 | alliance-id-display.user.js | 1.0 | Shows alliance ID next to name in modal, click to copy |
 | cleanup-system-messages.user.js | 1.0 | Bulk delete alliance join and donation system messages |
-| create-alliance-unlock.user.js | 1.0 | Opens alliance creation modal before level 10 |
 
 ---
 
@@ -142,7 +142,7 @@ Previous versions of these scripts worked with Tampermonkey, but the current arc
 
 ### departmanager.user.js - Depart Manager
 
-**Version:** 3.43 | **Background Job:** Yes
+**Version:** 3.44 | **Background Job:** Yes
 
 The main automation script for departure and route management.
 
@@ -308,7 +308,7 @@ Mass moor and resume vessels with checkbox selection.
 
 ### vessel-cart.user.js - Vessel Shopping Cart
 
-**Version:** 4.25
+**Version:** 4.29
 
 Shopping cart for bulk vessel purchases and builds.
 
@@ -320,6 +320,27 @@ Shopping cart for bulk vessel purchases and builds.
 - Cart persists across sessions (saved in RebelShipBridge storage)
 - Shows total cost before purchase
 - Cart button appears in header on mobile
+
+---
+
+### vessel-sell.user.js - Vessel Sell Cart
+
+**Version:** 1.0
+
+Select and bulk-sell vessels with lazy-loaded sell prices.
+
+**Access:** RebelShip Menu > **"Sell Vessels"**
+
+#### Features
+
+- Shows all sellable vessels (status: port or anchored)
+- Lazy-loads sell prices per vessel from API (with progress indicator)
+- Select individual vessels or use Select All/None
+- Search/filter vessels by name
+- Shows sell price and original price per vessel
+- Footer displays total sell value of selected vessels
+- Bulk-sell all selected vessels with confirmation
+- Price cache to avoid redundant API calls
 
 ---
 
@@ -544,25 +565,6 @@ Bulk delete alliance join and donation system messages from your inbox.
 - Deletes in batches of 50 with retry logic
 - Progress overlay shows current status
 - Useful when inbox is flooded with automated system notifications
-
----
-
-### create-alliance-unlock.user.js - Create Alliance Unlock
-
-**Version:** 1.0
-
-Opens the native alliance creation modal before reaching level 10.
-
-**Access:** RebelShip Menu > **"Create Alliance"**
-
-#### How It Works
-
-- The game blocks alliance creation in the UI until CEO level 10
-- This is a client-side check only - the backend allows it earlier
-- The script opens the game's native `createAlliance` modal directly via Pinia store
-- All form validation and API calls are handled by the game itself
-
-**Note:** Disabled by default. Enable in script manager before use.
 
 ---
 
