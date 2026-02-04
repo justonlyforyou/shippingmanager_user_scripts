@@ -2,7 +2,7 @@
 // @name         ShippingManager - Demand Summary
 // @namespace    https://rebelship.org/
 // @description  Demand & ranking dashboard with map tooltips, CSV export, and route-popup demand/vessel filters
-// @version      4.87
+// @version      4.94
 // @author       https://github.com/justonlyforyou/
 // @order        9
 // @match        https://shippingmanager.cc/*
@@ -173,6 +173,8 @@
             const savedRanking = await dbGet('rankingCache');
             if (savedRanking) {
                 rankingCache = savedRanking;
+                await fetchMyAllianceName();
+                patchRankingCacheMyAlliance();
             }
         } catch (e) {
             log('Failed to load ranking cache: ' + e.message, 'error');
@@ -180,12 +182,73 @@
         return cachedData;
     }
 
+    var cachedMyAllianceName = null;
+
+    function getMyAllianceName() {
+        if (cachedMyAllianceName) return cachedMyAllianceName;
+        try {
+            var allianceStore = getStore('alliance');
+            if (allianceStore && allianceStore.alliance && allianceStore.alliance.name) {
+                cachedMyAllianceName = allianceStore.alliance.name;
+                return cachedMyAllianceName;
+            }
+        } catch {
+            // ignore
+        }
+        return null;
+    }
+
+    async function fetchMyAllianceName() {
+        if (cachedMyAllianceName) return cachedMyAllianceName;
+        try {
+            var response = await fetch(API_BASE + '/alliance/get-user-alliance', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({})
+            });
+            if (!response.ok) return null;
+            var data = await response.json();
+            if (data.data && data.data.alliance && data.data.alliance.name) {
+                cachedMyAllianceName = data.data.alliance.name;
+                return cachedMyAllianceName;
+            }
+        } catch {
+            // ignore
+        }
+        return null;
+    }
+
+    function patchRankingCacheMyAlliance() {
+        if (!rankingCache || !rankingCache.ports) return;
+        var myName = getMyAllianceName();
+        if (!myName) return; // Store not ready yet, try again next call
+        rankingCachePatched = true;
+        var ports = rankingCache.ports;
+        for (var portCode in ports) {
+            var entry = ports[portCode];
+            if (!entry.myAlliance && entry.topAlliances) {
+                for (var i = 0; i < entry.topAlliances.length; i++) {
+                    if (entry.topAlliances[i].name === myName) {
+                        entry.myAlliance = entry.topAlliances[i];
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     // Sync version for functions that can't be async (uses in-memory cache)
     function loadCacheSync() {
         return cachedData;
     }
 
+    var rankingCachePatched = false;
+
     function loadRankingCacheSync() {
+        if (rankingCache && !rankingCachePatched) {
+            patchRankingCacheMyAlliance();
+        }
         return rankingCache;
     }
 
@@ -389,11 +452,10 @@
                 if (data.data && Array.isArray(data.data.top_alliances)) {
                     var myAlliance = data.data.my_alliance;
                     if (!myAlliance) {
-                        var allianceStore = getStore('alliance');
-                        var myAllianceId = allianceStore && allianceStore.alliance ? allianceStore.alliance.id : null;
-                        if (myAllianceId) {
+                        var myName = await fetchMyAllianceName();
+                        if (myName) {
                             for (var t = 0; t < data.data.top_alliances.length; t++) {
-                                if (data.data.top_alliances[t].id === myAllianceId) {
+                                if (data.data.top_alliances[t].name === myName) {
                                     myAlliance = data.data.top_alliances[t];
                                     break;
                                 }
@@ -1626,7 +1688,7 @@
         if (document.getElementById('route-popup-gap-fix')) return;
         var style = document.createElement('style');
         style.id = 'route-popup-gap-fix';
-        style.textContent = '#createRoutePopup .buttonContainer{gap:4px!important;row-gap:4px!important;}' +
+        style.textContent = '#createRoutePopup .buttonContainer{display:flex!important;flex-direction:column!important;gap:4px!important;row-gap:4px!important;}' +
             '#createRoutePopup .buttonContainer>*{margin:0!important;}';
         document.head.appendChild(style);
     }
@@ -1674,22 +1736,17 @@
         var isContainer = vesselType === 'container';
         var isTanker = vesselType === 'tanker';
 
-        var wrapper = document.createElement('div');
-        wrapper.id = 'demandFilterBtnWrapper';
-        wrapper.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap;margin-top:4px;justify-content:center;';
-
         // DEMAND TEU button — only for container vessels (or unknown)
         if (!isTanker) {
             var teuBtn = document.createElement('button');
             teuBtn.className = 'default light-blue demand-filter-route-btn';
             teuBtn.setAttribute('data-v-67942aae', '');
-            teuBtn.style.cssText = 'flex:1;';
             teuBtn.innerHTML = '<span class="btn-content-wrapper fit-btn-text">DEMAND TEU</span>';
             teuBtn.addEventListener('click', function(e) {
                 e.stopPropagation();
                 createDemandDropdown(teuBtn, TEU_RANGES, 'teu');
             });
-            wrapper.appendChild(teuBtn);
+            container.appendChild(teuBtn);
         }
 
         // DEMAND BBL button — only for tanker vessels (or unknown)
@@ -1697,13 +1754,12 @@
             var bblBtn = document.createElement('button');
             bblBtn.className = 'default light-blue demand-filter-route-btn';
             bblBtn.setAttribute('data-v-67942aae', '');
-            bblBtn.style.cssText = 'flex:1;';
             bblBtn.innerHTML = '<span class="btn-content-wrapper fit-btn-text">DEMAND BBL</span>';
             bblBtn.addEventListener('click', function(e) {
                 e.stopPropagation();
                 createDemandDropdown(bblBtn, BBL_RANGES, 'bbl');
             });
-            wrapper.appendChild(bblBtn);
+            container.appendChild(bblBtn);
         }
 
         // NO VESSELS button
@@ -1711,7 +1767,6 @@
         noVesselsBtn.id = 'demandFilterNoVessels';
         noVesselsBtn.className = 'default light-blue demand-filter-route-btn';
         noVesselsBtn.setAttribute('data-v-67942aae', '');
-        noVesselsBtn.style.cssText = 'flex:1;';
         noVesselsBtn.innerHTML = '<span class="btn-content-wrapper fit-btn-text">NO VESSELS</span>';
         noVesselsBtn.addEventListener('click', function() {
             noVesselsFilterActive = !noVesselsFilterActive;
@@ -1720,6 +1775,7 @@
                 : 'default light-blue demand-filter-route-btn';
             applyDemandFilters();
         });
+        container.appendChild(noVesselsBtn);
 
         // COLLECT DEMAND button
         var collectBtn = document.createElement('button');
@@ -1727,26 +1783,21 @@
         collectBtn.setAttribute('data-v-67942aae', '');
         if (isCollecting) {
             collectBtn.className = 'default light-blue demand-filter-route-btn';
-            collectBtn.style.cssText = 'flex:1;';
             collectBtn.disabled = true;
             collectBtn.innerHTML = '<span class="btn-content-wrapper fit-btn-text">Collecting...</span>';
         } else if (!canCollect()) {
             collectBtn.className = 'default light-blue demand-filter-route-btn';
-            collectBtn.style.cssText = 'flex:1;opacity:0.5;';
+            collectBtn.style.cssText = 'opacity:0.5;';
             collectBtn.disabled = true;
             collectBtn.innerHTML = '<span class="btn-content-wrapper fit-btn-text">Wait ' + formatCooldownTime(getTimeUntilNextCollect()) + '</span>';
         } else {
             collectBtn.className = 'default light-blue demand-filter-route-btn';
-            collectBtn.style.cssText = 'flex:1;';
             collectBtn.innerHTML = '<span class="btn-content-wrapper fit-btn-text">COLLECT DEMAND</span>';
             collectBtn.addEventListener('click', function() {
                 handleRouteCollect(collectBtn);
             });
         }
-
-        wrapper.appendChild(noVesselsBtn);
-        wrapper.appendChild(collectBtn);
-        container.appendChild(wrapper);
+        container.appendChild(collectBtn);
     }
 
     function resetRouteFilter() {
