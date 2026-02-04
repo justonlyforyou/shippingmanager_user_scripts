@@ -11,6 +11,7 @@ A collection of user scripts for [Shipping Manager](https://shippingmanager.cc/)
 3. [Detailed Documentation](#detailed-documentation)
    - [Rebelship Header Optimizer](#rebelship-header-optimizeruserjs---header-optimizer)
    - [Depart Manager](#departmanageruserjs---depart-manager)
+   - [Captain Blackbeard](#captain-blackbearduserjs---captain-blackbeard)
    - [Auto Repair](#auto-repairuserjs---auto-repair)
    - [Auto Happy Staff](#auto-happy-stuffuserjs---auto-happy-staff)
    - [Auto CO-OP](#auto-coop-tickets-displayuserjs---auto-co-op)
@@ -84,6 +85,7 @@ Previous versions of these scripts worked with Tampermonkey, but the current arc
 |--------|---------|-------------|
 | rebelship-header-optimizer.user.js | 3.51 | Header UI optimization, mobile layout, resize handling |
 | departmanager.user.js | 3.44 | Auto-Bunker, Auto-Depart, Route Settings, Min Utilization |
+| captain-blackbeard.user.js | 1.0 | Auto-negotiate hijacked vessels (2x 25% offers, pay 3rd price) |
 | auto-repair.user.js | 2.41 | Auto-repair at wear threshold |
 | auto-happy-stuff.user.js | 1.40 | Auto salary adjustment for crew/management morale |
 | auto-coop-tickets-display.user.js | 5.38 | Co-Op display in header, Auto-COOP sending |
@@ -184,6 +186,48 @@ Adds a **Settings** tab to the Routes modal for editing ALL vessels (including e
 
 - Auto-Expand Advanced sections
 - Price Difference Badges (green = above auto-price, red = below)
+
+---
+
+### captain-blackbeard.user.js - Captain Blackbeard
+
+**Version:** 1.0 | **Background Job:** Yes
+
+Automatically negotiates hijacked vessels using a 3-step strategy to reduce ransom payments.
+
+#### Accessing Settings
+
+RebelShip Menu > **"Captain Blackbeard"**
+
+#### How It Works
+
+When a vessel gets hijacked, Blackbeard auto-negotiates:
+
+| Step | Action | Timing |
+|------|--------|--------|
+| 1 | Offer 25% of pirate's demand | Immediately |
+| 2 | Offer 25% of pirate's counter | After 2 min wait |
+| 3 | Pay the final pirate price | After 2 min wait |
+
+Result: 2 low-ball offers force the pirate price down before paying.
+
+#### Settings
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| Enabled | Enables auto-negotiation | Off |
+| Check Interval | How often to scan for hijackings (5 / 15 / 30 min) | 5 min |
+| Notifications | Ingame toast and/or system notification | Ingame on |
+
+#### Edge Cases
+
+| Case | Handling |
+|------|---------|
+| Insufficient cash | Toast error, case skipped |
+| Case already solved | Skipped silently |
+| Duplicate negotiation | Prevented by active negotiations tracker |
+| API error during offer | Logged, retried on next check cycle |
+| Script disabled mid-negotiation | Running negotiation completes (async chain) |
 
 ---
 
@@ -1265,6 +1309,7 @@ Scripts with `@background-job-required true` support background execution:
 | Script | Background Function |
 |--------|---------------------|
 | departmanager.user.js | Auto-Bunker, Auto-Depart |
+| captain-blackbeard.user.js | Auto-negotiate hijackings |
 | auto-repair.user.js | Auto-Repair |
 | auto-happy-stuff.user.js | Auto salary adjustment |
 | auto-coop-tickets-display.user.js | Auto-COOP sending |
