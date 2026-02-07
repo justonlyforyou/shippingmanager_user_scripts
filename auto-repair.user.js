@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Auto Repair
 // @namespace    https://rebelship.org/
-// @version      2.41
+// @version      2.43
 // @description  Auto-repair vessels when wear reaches threshold
 // @author       https://github.com/justonlyforyou/
 // @order        7
@@ -11,6 +11,7 @@
 // @enabled      false
 // @background-job-required true
 // @RequireRebelShipMenu true
+// @RequireRebelShipStorage true
 // ==/UserScript==
 /* globals addMenuItem */
 
@@ -35,6 +36,9 @@
     var monitorInterval = null;
     var isRepairModalOpen = false;
     var modalListenerAttached = false;
+    var cachedModalElement = null;
+    var activeAbortController = null;
+    var inputDebounceTimers = {};
 
     // Global lock to prevent duplicate runs (survives script reload)
     if (!window._autoRepairLock) {
@@ -69,13 +73,13 @@
         try {
             var record = await dbGet('settings');
             if (record) {
-                settings = {
-                    enabled: record.enabled !== undefined ? record.enabled : false,
-                    wearThreshold: record.wearThreshold !== undefined ? record.wearThreshold : 5,
-                    minCashAfterRepair: record.minCashAfterRepair !== undefined ? Math.max(record.minCashAfterRepair, 1000000) : 1000000,
-                    notifyIngame: record.notifyIngame !== undefined ? record.notifyIngame : true,
-                    notifySystem: record.notifySystem !== undefined ? record.notifySystem : false
-                };
+                Object.assign(settings, {
+                    enabled: record.enabled !== undefined ? record.enabled : settings.enabled,
+                    wearThreshold: record.wearThreshold !== undefined ? record.wearThreshold : settings.wearThreshold,
+                    minCashAfterRepair: record.minCashAfterRepair !== undefined ? Math.max(record.minCashAfterRepair, 1000000) : settings.minCashAfterRepair,
+                    notifyIngame: record.notifyIngame !== undefined ? record.notifyIngame : settings.notifyIngame,
+                    notifySystem: record.notifySystem !== undefined ? record.notifySystem : settings.notifySystem
+                });
             }
             return settings;
         } catch (e) {
@@ -95,21 +99,45 @@
 
     // ========== DIRECT API FUNCTIONS ==========
     function fetchWithCookie(url, options) {
+        // URL whitelist validation
+        if (!url.startsWith('https://shippingmanager.cc/')) {
+            return Promise.reject(new Error('Invalid URL: only shippingmanager.cc allowed'));
+        }
+
         options = options || {};
         var mergedHeaders = Object.assign({
             'Content-Type': 'application/json',
             'Accept': 'application/json'
         }, options.headers);
 
+        // Abort previous request if exists
+        if (activeAbortController) {
+            activeAbortController.abort();
+        }
+
+        // Create AbortController with 15s timeout
+        activeAbortController = new window.AbortController();
+        var timeoutId = setTimeout(function() {
+            activeAbortController.abort();
+        }, 15000);
+
         return fetch(url, Object.assign({
-            credentials: 'include'
+            credentials: 'include',
+            signal: activeAbortController.signal
         }, options, {
             headers: mergedHeaders
         })).then(function(response) {
+            clearTimeout(timeoutId);
             if (!response.ok) {
                 throw new Error('HTTP ' + response.status);
             }
             return response.json();
+        }).catch(function(error) {
+            clearTimeout(timeoutId);
+            if (error.name === 'AbortError') {
+                throw new Error('Request timeout (15s)');
+            }
+            throw error;
         });
     }
 
@@ -357,11 +385,8 @@
 
     // ========== CUSTOM MODAL (Game-style) ==========
     function injectRepairModalStyles() {
-        if (document.getElementById('repair-modal-styles')) return;
-
-        var style = document.createElement('style');
-        style.id = 'repair-modal-styles';
-        style.textContent = [
+        var existingStyle = document.getElementById('repair-modal-styles');
+        var newContent = [
             '@keyframes repair-fade-in{0%{opacity:0}to{opacity:1}}',
             '@keyframes repair-fade-out{0%{opacity:1}to{opacity:0}}',
             '@keyframes repair-drop-down{0%{transform:translateY(-10px)}to{transform:translateY(0)}}',
@@ -382,18 +407,55 @@
             '#repair-modal-container .header-icon.closeModal{height:19px;width:19px}',
             '#repair-modal-container #repair-modal-content{height:calc(100% - 31px);max-width:inherit;overflow:hidden;display:flex;flex-direction:column}',
             '#repair-modal-container #repair-central-container{background-color:#e9effd;margin:0;overflow-x:hidden;overflow-y:auto;width:100%;flex:1;padding:10px 15px}',
-            '#repair-modal-wrapper.hide{pointer-events:none}'
+            '#repair-modal-wrapper.hide{pointer-events:none}',
+            '.repair-container{padding:20px;max-width:400px;margin:0 auto;font-family:Lato,sans-serif;color:#01125d}',
+            '.repair-section{margin-bottom:20px}',
+            '.repair-checkbox-label{display:flex;align-items:center;cursor:pointer;font-weight:700;font-size:16px}',
+            '.repair-checkbox{width:20px;height:20px;margin-right:12px;accent-color:#0db8f4;cursor:pointer}',
+            '.repair-field-label{display:block;margin-bottom:8px;font-size:14px;font-weight:700;color:#01125d}',
+            '.repair-input{width:100%;height:2.5rem;padding:0 1rem;background:#ebe9ea;border:0;border-radius:7px;color:#01125d;font-size:16px;font-family:Lato,sans-serif;text-align:center;box-sizing:border-box}',
+            '.repair-hint{font-size:12px;color:#626b90;margin-top:6px}',
+            '.repair-notify-group{display:flex;gap:24px}',
+            '.repair-notify-label{display:flex;align-items:center;cursor:pointer}',
+            '.repair-notify-checkbox{width:18px;height:18px;margin-right:8px;accent-color:#0db8f4;cursor:pointer}',
+            '.repair-notify-text{font-size:13px}',
+            '.repair-buttons{display:flex;gap:12px;justify-content:space-between;margin-top:30px}',
+            '.repair-btn{padding:10px 24px;border:0;border-radius:6px;cursor:pointer;font-size:16px;font-weight:500;font-family:Lato,sans-serif}',
+            '.repair-btn-secondary{background:linear-gradient(90deg,#d7d8db,#95969b);color:#393939}',
+            '.repair-btn-green{background:linear-gradient(180deg,#46ff33,#129c00);color:#fff}'
         ].join('');
-        document.head.appendChild(style);
+
+        if (existingStyle) {
+            if (existingStyle.textContent !== newContent) {
+                existingStyle.remove();
+                existingStyle = null;
+            } else {
+                return; // Content matches, no update needed
+            }
+        }
+
+        if (!existingStyle) {
+            var style = document.createElement('style');
+            style.id = 'repair-modal-styles';
+            style.textContent = newContent;
+            document.head.appendChild(style);
+        }
     }
 
     function closeRepairModal() {
         if (!isRepairModalOpen) return;
         log('Closing modal');
         isRepairModalOpen = false;
-        var modalWrapper = document.getElementById('repair-modal-wrapper');
+        var modalWrapper = cachedModalElement || document.getElementById('repair-modal-wrapper');
         if (modalWrapper) {
             modalWrapper.classList.add('hide');
+            // Remove from DOM after animation completes (150ms)
+            setTimeout(function() {
+                if (modalWrapper.parentNode) {
+                    modalWrapper.remove();
+                    cachedModalElement = null;
+                }
+            }, 150);
         }
     }
 
@@ -441,16 +503,20 @@
 
         injectRepairModalStyles();
 
+        // Check if modal already exists with content
+        if (cachedModalElement) {
+            var contentCheck = cachedModalElement.querySelector('#repair-settings-content');
+            if (contentCheck && contentCheck.hasChildNodes()) {
+                cachedModalElement.classList.remove('hide');
+                isRepairModalOpen = true;
+                return; // Content exists, no re-render needed
+            }
+        }
+
         var existing = document.getElementById('repair-modal-wrapper');
         if (existing) {
-            var contentCheck = existing.querySelector('#repair-settings-content');
-            if (contentCheck) {
-                existing.classList.remove('hide');
-                isRepairModalOpen = true;
-                updateRepairSettingsContent();
-                return;
-            }
             existing.remove();
+            cachedModalElement = null;
         }
 
         var headerEl = document.querySelector('header');
@@ -514,109 +580,221 @@
         modalWrapper.appendChild(modalContentWrapper);
         document.body.appendChild(modalWrapper);
 
+        cachedModalElement = modalWrapper;
         isRepairModalOpen = true;
         updateRepairSettingsContent();
+    }
+
+    function debounceInput(inputId, callback, delay) {
+        return function() {
+            if (inputDebounceTimers[inputId]) {
+                clearTimeout(inputDebounceTimers[inputId]);
+            }
+            inputDebounceTimers[inputId] = setTimeout(callback, delay);
+        };
     }
 
     function updateRepairSettingsContent() {
         var settingsContent = document.getElementById('repair-settings-content');
         if (!settingsContent) return;
 
-        settingsContent.innerHTML = '\
-            <div style="padding:20px;max-width:400px;margin:0 auto;font-family:Lato,sans-serif;color:#01125d;">\
-                <div style="margin-bottom:20px;">\
-                    <label style="display:flex;align-items:center;cursor:pointer;font-weight:700;font-size:16px;">\
-                        <input type="checkbox" id="yf-enabled" ' + (settings.enabled ? 'checked' : '') + '\
-                               style="width:20px;height:20px;margin-right:12px;accent-color:#0db8f4;cursor:pointer;">\
-                        <span>Enable Auto-Repair</span>\
-                    </label>\
-                </div>\
-                <div style="margin-bottom:20px;">\
-                    <label style="display:block;margin-bottom:8px;font-size:14px;font-weight:700;color:#01125d;">\
-                        Wear Threshold (%)\
-                    </label>\
-                    <input type="number" id="yf-threshold" min="1" max="99" value="' + settings.wearThreshold + '"\
-                           class="redesign" style="width:100%;height:2.5rem;padding:0 1rem;background:#ebe9ea;border:0;border-radius:7px;color:#01125d;font-size:16px;font-family:Lato,sans-serif;text-align:center;box-sizing:border-box;">\
-                    <div style="font-size:12px;color:#626b90;margin-top:6px;">\
-                        Repair vessels when wear reaches this percentage (1-99)\
-                    </div>\
-                </div>\
-                <div style="margin-bottom:20px;">\
-                    <label style="display:block;margin-bottom:8px;font-size:14px;font-weight:700;color:#01125d;">\
-                        Minimum Cash Balance\
-                    </label>\
-                    <input type="number" id="yf-mincash" min="1000000" step="100000" value="' + settings.minCashAfterRepair + '"\
-                           class="redesign" style="width:100%;height:2.5rem;padding:0 1rem;background:#ebe9ea;border:0;border-radius:7px;color:#01125d;font-size:16px;font-family:Lato,sans-serif;text-align:center;box-sizing:border-box;">\
-                    <div style="font-size:12px;color:#626b90;margin-top:6px;">\
-                        Keep at least this much cash after repairs (minimum $1,000,000)\
-                    </div>\
-                </div>\
-                <div style="margin-bottom:24px;">\
-                    <div style="font-weight:700;font-size:14px;margin-bottom:12px;color:#01125d;">Notifications</div>\
-                    <div style="display:flex;gap:24px;">\
-                        <label style="display:flex;align-items:center;cursor:pointer;">\
-                            <input type="checkbox" id="yf-notify-ingame" ' + (settings.notifyIngame ? 'checked' : '') + '\
-                                   style="width:18px;height:18px;margin-right:8px;accent-color:#0db8f4;cursor:pointer;">\
-                            <span style="font-size:13px;">Ingame</span>\
-                        </label>\
-                        <label style="display:flex;align-items:center;cursor:pointer;">\
-                            <input type="checkbox" id="yf-notify-system" ' + (settings.notifySystem ? 'checked' : '') + '\
-                                   style="width:18px;height:18px;margin-right:8px;accent-color:#0db8f4;cursor:pointer;">\
-                            <span style="font-size:13px;">System</span>\
-                        </label>\
-                    </div>\
-                </div>\
-                <div style="display:flex;gap:12px;justify-content:space-between;margin-top:30px;">\
-                    <button id="yf-cancel" class="btn btn-secondary" style="padding:10px 24px;background:linear-gradient(90deg,#d7d8db,#95969b);border:0;border-radius:6px;color:#393939;cursor:pointer;font-size:16px;font-weight:500;font-family:Lato,sans-serif;">\
-                        Cancel\
-                    </button>\
-                    <button id="yf-save" class="btn btn-green" style="padding:10px 24px;background:linear-gradient(180deg,#46ff33,#129c00);border:0;border-radius:6px;color:#fff;cursor:pointer;font-size:16px;font-weight:500;font-family:Lato,sans-serif;">\
-                        Save\
-                    </button>\
-                </div>\
-            </div>';
+        // Clear existing content
+        settingsContent.textContent = '';
 
-        document.getElementById('yf-cancel').addEventListener('click', function() {
-            closeRepairModal();
+        // Main container
+        var container = document.createElement('div');
+        container.className = 'repair-container';
+
+        // Enable checkbox section
+        var enableSection = document.createElement('div');
+        enableSection.className = 'repair-section';
+        var enableLabel = document.createElement('label');
+        enableLabel.className = 'repair-checkbox-label';
+        var enableCheckbox = document.createElement('input');
+        enableCheckbox.type = 'checkbox';
+        enableCheckbox.id = 'yf-enabled';
+        enableCheckbox.className = 'repair-checkbox';
+        enableCheckbox.checked = settings.enabled;
+        var enableText = document.createElement('span');
+        enableText.textContent = 'Enable Auto-Repair';
+        enableLabel.appendChild(enableCheckbox);
+        enableLabel.appendChild(enableText);
+        enableSection.appendChild(enableLabel);
+
+        // Wear threshold section
+        var thresholdSection = document.createElement('div');
+        thresholdSection.className = 'repair-section';
+        var thresholdLabel = document.createElement('label');
+        thresholdLabel.className = 'repair-field-label';
+        thresholdLabel.textContent = 'Wear Threshold (%)';
+        var thresholdInput = document.createElement('input');
+        thresholdInput.type = 'number';
+        thresholdInput.id = 'yf-threshold';
+        thresholdInput.className = 'redesign repair-input';
+        thresholdInput.min = '1';
+        thresholdInput.max = '99';
+        thresholdInput.value = settings.wearThreshold;
+        var thresholdHint = document.createElement('div');
+        thresholdHint.className = 'repair-hint';
+        thresholdHint.textContent = 'Repair vessels when wear reaches this percentage (1-99)';
+        thresholdSection.appendChild(thresholdLabel);
+        thresholdSection.appendChild(thresholdInput);
+        thresholdSection.appendChild(thresholdHint);
+
+        // Min cash section
+        var minCashSection = document.createElement('div');
+        minCashSection.className = 'repair-section';
+        var minCashLabel = document.createElement('label');
+        minCashLabel.className = 'repair-field-label';
+        minCashLabel.textContent = 'Minimum Cash Balance';
+        var minCashInput = document.createElement('input');
+        minCashInput.type = 'number';
+        minCashInput.id = 'yf-mincash';
+        minCashInput.className = 'redesign repair-input';
+        minCashInput.min = '1000000';
+        minCashInput.step = '100000';
+        minCashInput.value = settings.minCashAfterRepair;
+        var minCashHint = document.createElement('div');
+        minCashHint.className = 'repair-hint';
+        minCashHint.textContent = 'Keep at least this much cash after repairs (minimum $1,000,000)';
+        minCashSection.appendChild(minCashLabel);
+        minCashSection.appendChild(minCashInput);
+        minCashSection.appendChild(minCashHint);
+
+        // Notifications section
+        var notifySection = document.createElement('div');
+        notifySection.className = 'repair-section';
+        notifySection.style.marginBottom = '24px';
+        var notifyTitle = document.createElement('div');
+        notifyTitle.className = 'repair-field-label';
+        notifyTitle.textContent = 'Notifications';
+        notifyTitle.style.marginBottom = '12px';
+        var notifyGroup = document.createElement('div');
+        notifyGroup.className = 'repair-notify-group';
+
+        var ingameLabel = document.createElement('label');
+        ingameLabel.className = 'repair-notify-label';
+        var ingameCheckbox = document.createElement('input');
+        ingameCheckbox.type = 'checkbox';
+        ingameCheckbox.id = 'yf-notify-ingame';
+        ingameCheckbox.className = 'repair-notify-checkbox';
+        ingameCheckbox.checked = settings.notifyIngame;
+        var ingameText = document.createElement('span');
+        ingameText.className = 'repair-notify-text';
+        ingameText.textContent = 'Ingame';
+        ingameLabel.appendChild(ingameCheckbox);
+        ingameLabel.appendChild(ingameText);
+
+        var systemLabel = document.createElement('label');
+        systemLabel.className = 'repair-notify-label';
+        var systemCheckbox = document.createElement('input');
+        systemCheckbox.type = 'checkbox';
+        systemCheckbox.id = 'yf-notify-system';
+        systemCheckbox.className = 'repair-notify-checkbox';
+        systemCheckbox.checked = settings.notifySystem;
+        var systemText = document.createElement('span');
+        systemText.className = 'repair-notify-text';
+        systemText.textContent = 'System';
+        systemLabel.appendChild(systemCheckbox);
+        systemLabel.appendChild(systemText);
+
+        notifyGroup.appendChild(ingameLabel);
+        notifyGroup.appendChild(systemLabel);
+        notifySection.appendChild(notifyTitle);
+        notifySection.appendChild(notifyGroup);
+
+        // Buttons section
+        var buttonsDiv = document.createElement('div');
+        buttonsDiv.className = 'repair-buttons';
+        var cancelBtn = document.createElement('button');
+        cancelBtn.id = 'yf-cancel';
+        cancelBtn.className = 'btn btn-secondary repair-btn repair-btn-secondary';
+        cancelBtn.textContent = 'Cancel';
+        var saveBtn = document.createElement('button');
+        saveBtn.id = 'yf-save';
+        saveBtn.className = 'btn btn-green repair-btn repair-btn-green';
+        saveBtn.textContent = 'Save';
+        buttonsDiv.appendChild(cancelBtn);
+        buttonsDiv.appendChild(saveBtn);
+
+        // Assemble
+        container.appendChild(enableSection);
+        container.appendChild(thresholdSection);
+        container.appendChild(minCashSection);
+        container.appendChild(notifySection);
+        container.appendChild(buttonsDiv);
+        settingsContent.appendChild(container);
+
+        // Event delegation on container instead of individual listeners
+        settingsContent.addEventListener('click', function(e) {
+            if (e.target.id === 'yf-cancel') {
+                closeRepairModal();
+            } else if (e.target.id === 'yf-save') {
+                handleSaveSettings();
+            }
         });
 
-        document.getElementById('yf-save').addEventListener('click', function() {
-            var enabled = document.getElementById('yf-enabled').checked;
-            var threshold = parseInt(document.getElementById('yf-threshold').value, 10);
-            var minCash = parseInt(document.getElementById('yf-mincash').value, 10);
-            var notifyIngame = document.getElementById('yf-notify-ingame').checked;
-            var notifySystem = document.getElementById('yf-notify-system').checked;
-
-            // Validate
-            if (isNaN(threshold) || threshold < 1 || threshold > 99) {
-                alert('Wear threshold must be between 1 and 99');
-                return;
+        // Debounced input validation
+        thresholdInput.addEventListener('input', debounceInput('threshold', function() {
+            var val = parseInt(thresholdInput.value, 10);
+            if (Number.isInteger(val) && val >= 1 && val <= 99) {
+                thresholdInput.style.borderColor = '';
+            } else {
+                thresholdInput.style.borderColor = '#ff0000';
             }
-            if (isNaN(minCash) || minCash < 1000000) {
-                alert('Minimum cash must be at least $1,000,000');
-                return;
+        }, 300));
+
+        minCashInput.addEventListener('input', debounceInput('minCash', function() {
+            var val = parseInt(minCashInput.value, 10);
+            if (Number.isInteger(val) && val >= 1000000) {
+                minCashInput.style.borderColor = '';
+            } else {
+                minCashInput.style.borderColor = '#ff0000';
+            }
+        }, 300));
+    }
+
+    function handleSaveSettings() {
+        var enabled = document.getElementById('yf-enabled').checked;
+        var thresholdVal = document.getElementById('yf-threshold').value;
+        var minCashVal = document.getElementById('yf-mincash').value;
+        var notifyIngame = document.getElementById('yf-notify-ingame').checked;
+        var notifySystem = document.getElementById('yf-notify-system').checked;
+
+        var threshold = parseInt(thresholdVal, 10);
+        var minCash = parseInt(minCashVal, 10);
+
+        // Validate with Number.isInteger and whitelisted ranges
+        if (!Number.isInteger(threshold) || threshold < 1 || threshold > 99) {
+            alert('Wear threshold must be between 1 and 99');
+            return;
+        }
+        if (!Number.isInteger(minCash) || minCash < 1000000) {
+            alert('Minimum cash must be at least $1,000,000');
+            return;
+        }
+
+        // Update settings using Object.assign
+        var wasEnabled = settings.enabled;
+        Object.assign(settings, {
+            enabled: enabled,
+            wearThreshold: threshold,
+            minCashAfterRepair: minCash,
+            notifyIngame: notifyIngame,
+            notifySystem: notifySystem
+        });
+
+        saveSettings().then(function() {
+            // Start/stop monitoring based on enabled state
+            if (enabled && !wasEnabled) {
+                startMonitoring();
+            } else if (!enabled && wasEnabled) {
+                stopMonitoring();
             }
 
-            // Update settings
-            var wasEnabled = settings.enabled;
-            settings.enabled = enabled;
-            settings.wearThreshold = threshold;
-            settings.minCashAfterRepair = minCash;
-            settings.notifyIngame = notifyIngame;
-            settings.notifySystem = notifySystem;
-
-            saveSettings().then(function() {
-                // Start/stop monitoring based on enabled state
-                if (enabled && !wasEnabled) {
-                    startMonitoring();
-                } else if (!enabled && wasEnabled) {
-                    stopMonitoring();
-                }
-
-                log('Settings saved: threshold=' + threshold + '%, minCash=$' + minCash + ', enabled=' + enabled);
-                showToast('Auto Repair settings saved');
-                closeRepairModal();
-            });
+            log('Settings saved: threshold=' + threshold + '%, minCash=$' + minCash + ', enabled=' + enabled);
+            showToast('Auto Repair settings saved');
+            closeRepairModal();
         });
     }
 
@@ -643,7 +821,7 @@
     }
 
     async function init() {
-        log('Initializing v2.41...');
+        log('Initializing v2.43...');
 
         // Register menu immediately - no DOM needed for IPC call
         addMenuItem('Auto Repair', openSettingsModal, 21);
@@ -651,6 +829,14 @@
 
         await loadSettings();
         setupRepairModalWatcher();
+
+        // Cleanup fetch on page unload
+        window.addEventListener('beforeunload', function() {
+            if (activeAbortController) {
+                activeAbortController.abort();
+                activeAbortController = null;
+            }
+        });
 
         if (settings.enabled) {
             setTimeout(startMonitoring, 3000);

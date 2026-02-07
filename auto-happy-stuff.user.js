@@ -2,7 +2,7 @@
 // @name         ShippingManager - Auto Happy Staff & Stuff Header Display
 // @namespace    http://tampermonkey.net/
 // @description  Automatically manages staff salaries to maintain crew and management morale at target levels
-// @version      1.40
+// @version      1.43
 // @author       https://github.com/justonlyforyou/
 // @order        5
 // @match        https://shippingmanager.cc/*
@@ -11,6 +11,7 @@
 // @enabled      false
 // @background-job-required true
 // @RequireRebelShipMenu true
+// @RequireRebelShipStorage true
 // ==/UserScript==
 /* globals addMenuItem */
 
@@ -45,6 +46,13 @@
     var modalListenerAttached = false;
 
     var cachedSettings = null;
+    var displayUpdateInterval = null;
+    var menuClickListener = null;
+    var headerResizeListener = null;
+    var resizeDebounceTimer = null;
+    var staffDataCache = null;
+    var staffDataCacheTime = 0;
+    var CACHE_DURATION = 5 * 60 * 1000;
 
     // ============================================
     // RebelShipBridge Storage Functions
@@ -118,6 +126,33 @@
     // HEADER SMILEY DISPLAY
     // ============================================
 
+    /**
+     * Wait for element to appear in DOM using MutationObserver
+     */
+    function waitForElement(selector, timeout) {
+        timeout = timeout || 20000;
+        return new Promise(function(resolve, reject) {
+            if (document.querySelector(selector)) {
+                resolve(document.querySelector(selector));
+                return;
+            }
+
+            var observer = new MutationObserver(function() {
+                var element = document.querySelector(selector);
+                if (element) {
+                    observer.disconnect();
+                    resolve(element);
+                }
+            });
+
+            observer.observe(document.body, { childList: true, subtree: true });
+            setTimeout(function() {
+                observer.disconnect();
+                reject(new Error('Element ' + selector + ' not found within timeout'));
+            }, timeout);
+        });
+    }
+
     // Captain hat SVG (for management) - lighter blue for visibility
     var CAPTAIN_HAT_SVG = '<svg viewBox="0 0 24 12" width="18" height="9" style="position:absolute;top:-6px;left:50%;transform:translateX(-50%);"><path d="M4 10 L12 2 L20 10 L18 10 L12 5 L6 10 Z" fill="#4a7ab5"/><path d="M3 10 L21 10 L21 12 L3 12 Z" fill="#4a7ab5"/><circle cx="12" cy="7" r="2" fill="#ffd700"/></svg>';
 
@@ -125,9 +160,9 @@
     var SAILOR_HAT_SVG = '<svg viewBox="0 0 20 10" width="16" height="8" style="position:absolute;top:-5px;left:50%;transform:translateX(-50%);"><path d="M4 9 L4 6 Q10 3 16 6 L16 9 Z" fill="#ffffff" stroke="#1e3a5f" stroke-width="0.5"/><path d="M4 7 L16 7 L16 8 L4 8 Z" fill="#1e3a5f"/><ellipse cx="10" cy="9" rx="7" ry="1.5" fill="#ffffff" stroke="#1e3a5f" stroke-width="0.5"/></svg>';
 
     /**
-     * Generate a smiley face based on morale percentage with configurable thresholds
+     * Calculate smiley colors and mouth path from morale percentage
      */
-    function generateHeaderSmiley(percentage, hatType, thresholds) {
+    function calculateSmileyData(percentage, thresholds) {
         var t = thresholds;
         var faceColor = '';
         var glowColor = '';
@@ -166,17 +201,83 @@
             mouthPath = 'M5 14 Q9 8 13 14';
         }
 
-        var hatSvg = hatType === 'captain' ? CAPTAIN_HAT_SVG : SAILOR_HAT_SVG;
-        var boxShadow = glowColor ? 'box-shadow:0 0 6px ' + glowColor + ';' : '';
+        return {
+            faceColor: faceColor,
+            glowColor: glowColor,
+            mouthPath: mouthPath
+        };
+    }
 
-        return '<div style="position:relative;display:inline-block;width:18px;height:18px;">' +
-            hatSvg +
-            '<svg viewBox="0 0 18 18" width="18" height="18">' +
-            '<circle cx="9" cy="9" r="8" fill="' + faceColor + '" style="' + boxShadow + '"/>' +
-            '<circle cx="6" cy="7" r="1.5" fill="#1f2937"/>' +
-            '<circle cx="12" cy="7" r="1.5" fill="#1f2937"/>' +
-            '<path d="' + mouthPath + '" stroke="#1f2937" stroke-width="1.5" fill="none" stroke-linecap="round"/>' +
-            '</svg></div>';
+    /**
+     * Create smiley SVG element
+     */
+    function createSmileyElement(hatType) {
+        var wrapper = document.createElement('div');
+        wrapper.style.cssText = 'position:relative;display:inline-block;width:18px;height:18px;';
+
+        var hatSvg = hatType === 'captain' ? CAPTAIN_HAT_SVG : SAILOR_HAT_SVG;
+        wrapper.innerHTML = hatSvg;
+
+        var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('viewBox', '0 0 18 18');
+        svg.setAttribute('width', '18');
+        svg.setAttribute('height', '18');
+
+        var circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        circle.setAttribute('cx', '9');
+        circle.setAttribute('cy', '9');
+        circle.setAttribute('r', '8');
+        circle.setAttribute('fill', '#e5e7eb');
+
+        var leftEye = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        leftEye.setAttribute('cx', '6');
+        leftEye.setAttribute('cy', '7');
+        leftEye.setAttribute('r', '1.5');
+        leftEye.setAttribute('fill', '#1f2937');
+
+        var rightEye = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        rightEye.setAttribute('cx', '12');
+        rightEye.setAttribute('cy', '7');
+        rightEye.setAttribute('r', '1.5');
+        rightEye.setAttribute('fill', '#1f2937');
+
+        var mouth = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        mouth.setAttribute('d', 'M6 12 Q9 12 12 12');
+        mouth.setAttribute('stroke', '#1f2937');
+        mouth.setAttribute('stroke-width', '1.5');
+        mouth.setAttribute('fill', 'none');
+        mouth.setAttribute('stroke-linecap', 'round');
+
+        svg.appendChild(circle);
+        svg.appendChild(leftEye);
+        svg.appendChild(rightEye);
+        svg.appendChild(mouth);
+        wrapper.appendChild(svg);
+
+        wrapper._smileyCircle = circle;
+        wrapper._smileyMouth = mouth;
+
+        return wrapper;
+    }
+
+    /**
+     * Update existing smiley element with new morale data
+     */
+    function updateSmileyElement(element, percentage, thresholds) {
+        if (!element || !element._smileyCircle || !element._smileyMouth) {
+            return;
+        }
+
+        var data = calculateSmileyData(percentage, thresholds);
+        element._smileyCircle.setAttribute('fill', data.faceColor);
+
+        if (data.glowColor) {
+            element._smileyCircle.style.filter = 'drop-shadow(0 0 6px ' + data.glowColor + ')';
+        } else {
+            element._smileyCircle.style.filter = '';
+        }
+
+        element._smileyMouth.setAttribute('d', data.mouthPath);
     }
 
     /**
@@ -185,13 +286,9 @@
     function createMoraleDisplay() {
         if (moraleDisplayElement) return moraleDisplayElement;
 
-        var coopDisplay = document.getElementById('coop-tickets-display');
-        var repDisplay = document.getElementById('reputation-display');
-        var insertAfter = repDisplay || coopDisplay;
-
-        if (!insertAfter) {
-            insertAfter = document.querySelector('.content.led.cursor-pointer');
-        }
+        var insertAfter = document.getElementById('reputation-display') ||
+                          document.getElementById('coop-tickets-display') ||
+                          document.querySelector('.content.led.cursor-pointer');
 
         if (!insertAfter || !insertAfter.parentNode) {
             return null;
@@ -208,9 +305,9 @@
         var mgmtLabel = document.createElement('span');
         mgmtLabel.style.cssText = 'color:#9ca3af;margin-bottom:3px;font-size:12px;';
         mgmtLabel.textContent = 'Mgmt';
-        managementSmileyElement = document.createElement('div');
+        managementSmileyElement = createSmileyElement('captain');
         managementSmileyElement.id = 'mgmt-smiley';
-        managementSmileyElement.innerHTML = generateHeaderSmiley(100, 'captain', loadSettings());
+        updateSmileyElement(managementSmileyElement, 100, loadSettings());
         mgmtContainer.appendChild(mgmtLabel);
         mgmtContainer.appendChild(managementSmileyElement);
 
@@ -219,9 +316,9 @@
         var crewLabel = document.createElement('span');
         crewLabel.style.cssText = 'color:#9ca3af;margin-bottom:3px;font-size:12px;';
         crewLabel.textContent = 'Crew';
-        crewSmileyElement = document.createElement('div');
+        crewSmileyElement = createSmileyElement('sailor');
         crewSmileyElement.id = 'crew-smiley';
-        crewSmileyElement.innerHTML = generateHeaderSmiley(100, 'sailor', loadSettings());
+        updateSmileyElement(crewSmileyElement, 100, loadSettings());
         crewContainer.appendChild(crewLabel);
         crewContainer.appendChild(crewSmileyElement);
 
@@ -251,11 +348,17 @@
         }
 
         if (!moraleDisplayElement) {
-            displayRetries++;
             if (displayRetries < 10) {
-                setTimeout(updateMoraleDisplay, 2000);
+                displayRetries++;
+                try {
+                    await waitForElement('#reputation-display, #coop-tickets-display, .content.led.cursor-pointer', 5000);
+                    createMoraleDisplay();
+                } catch {
+                    console.log('[AutoHappyStaff] Could not find insertion point for morale display');
+                    return;
+                }
             }
-            return;
+            if (!moraleDisplayElement) return;
         }
 
         var thresholds = {
@@ -266,12 +369,12 @@
         };
 
         if (managementSmileyElement) {
-            managementSmileyElement.innerHTML = generateHeaderSmiley(managementMorale, 'captain', thresholds);
+            updateSmileyElement(managementSmileyElement, managementMorale, thresholds);
             managementSmileyElement.title = 'Management: ' + managementMorale + '%';
         }
 
         if (crewSmileyElement) {
-            crewSmileyElement.innerHTML = generateHeaderSmiley(crewMorale, 'sailor', thresholds);
+            updateSmileyElement(crewSmileyElement, crewMorale, thresholds);
             crewSmileyElement.title = 'Crew: ' + crewMorale + '%';
         }
 
@@ -368,18 +471,37 @@
     // ============================================
     // API FUNCTIONS
     // ============================================
+    async function fetchWithRetry(url, options, retries) {
+        retries = retries || 3;
+        for (var i = 0; i < retries; i++) {
+            try {
+                var response = await fetch(url, options);
+                if (response.ok) return response;
+                if (response.status >= 400 && response.status < 500) {
+                    throw new Error('HTTP ' + response.status);
+                }
+            } catch (e) {
+                if (i === retries - 1) throw e;
+                if (e.message && e.message.indexOf('HTTP 4') === 0) throw e;
+            }
+            await new Promise(function(r) { setTimeout(r, 1000 * (i + 1)); });
+        }
+        throw new Error('Max retries exceeded');
+    }
+
     async function fetchStaffData() {
+        var now = Date.now();
+        if (staffDataCache && (now - staffDataCacheTime) < CACHE_DURATION) {
+            return staffDataCache;
+        }
+
         try {
-            var response = await fetch(API_BASE + '/staff/get-user-staff', {
+            var response = await fetchWithRetry(API_BASE + '/staff/get-user-staff', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 credentials: 'include',
                 body: JSON.stringify({})
             });
-
-            if (!response.ok) {
-                throw new Error('HTTP ' + response.status);
-            }
 
             var data = await response.json();
             if (!data.data) {
@@ -387,6 +509,8 @@
                 return null;
             }
 
+            staffDataCache = data.data;
+            staffDataCacheTime = now;
             return data.data;
         } catch (e) {
             console.error('[AutoHappyStaff] fetchStaffData failed:', e);
@@ -396,18 +520,16 @@
 
     async function raiseSalary(staffType) {
         try {
-            var response = await fetch(API_BASE + '/staff/raise-salary', {
+            var response = await fetchWithRetry(API_BASE + '/staff/raise-salary', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 credentials: 'include',
                 body: JSON.stringify({ type: staffType })
             });
 
-            if (!response.ok) {
-                throw new Error('HTTP ' + response.status);
-            }
-
             var data = await response.json();
+            staffDataCache = null;
+            staffDataCacheTime = 0;
             return data;
         } catch (e) {
             console.error('[AutoHappyStaff] raiseSalary failed for ' + staffType + ':', e);
@@ -545,6 +667,20 @@
     // ============================================
     var monitoringInterval = null;
 
+    function startDisplayUpdates() {
+        if (displayUpdateInterval) {
+            clearInterval(displayUpdateInterval);
+        }
+        displayUpdateInterval = setInterval(updateMoraleDisplay, CHECK_INTERVAL);
+    }
+
+    function stopDisplayUpdates() {
+        if (displayUpdateInterval) {
+            clearInterval(displayUpdateInterval);
+            displayUpdateInterval = null;
+        }
+    }
+
     function startMonitoring() {
         if (monitoringInterval) {
             clearInterval(monitoringInterval);
@@ -559,11 +695,19 @@
             monitoringInterval = null;
             console.log('[AutoHappyStaff] Stopped monitoring');
         }
+        stopDisplayUpdates();
     }
 
     // ============================================
     // SETTINGS MODAL (Game-style custom modal)
     // ============================================
+
+    function removeHappyModalStyles() {
+        var style = document.getElementById('happy-modal-styles');
+        if (style) {
+            style.remove();
+        }
+    }
 
     function injectHappyModalStyles() {
         if (document.getElementById('happy-modal-styles')) return;
@@ -610,12 +754,14 @@
         if (modalListenerAttached) return;
         modalListenerAttached = true;
 
-        window.addEventListener('rebelship-menu-click', function() {
+        menuClickListener = function() {
             if (isHappyModalOpen) {
                 console.log('[AutoHappyStaff] RebelShip menu clicked, closing modal');
                 closeHappyModal();
             }
-        });
+        };
+
+        window.addEventListener('rebelship-menu-click', menuClickListener);
     }
 
     function openSettingsModal() {
@@ -796,24 +942,27 @@
                 </div>\
             </div>';
 
-        document.getElementById('ah-run-now').addEventListener('click', async function() {
+        var runNowBtn = document.getElementById('ah-run-now');
+        var saveBtn = document.getElementById('ah-save');
+
+        runNowBtn.onclick = async function() {
             this.disabled = true;
             this.textContent = 'Running...';
             await checkAndAdjustMorale(true);
             this.textContent = 'Run Now';
             this.disabled = false;
-        });
+        };
 
-        document.getElementById('ah-save').addEventListener('click', function() {
+        saveBtn.onclick = function() {
             var newSettings = {
                 enabled: document.getElementById('ah-enabled').checked,
                 targetMorale: parseInt(document.getElementById('ah-target-morale').value, 10) || 100,
                 notifyIngame: document.getElementById('ah-notify-ingame').checked,
                 notifySystem: document.getElementById('ah-notify-system').checked,
-                happyThreshold: parseInt(document.getElementById('ah-happy-threshold').value, 10) || 75,
-                neutralThreshold: parseInt(document.getElementById('ah-neutral-threshold').value, 10) || 50,
-                sadThreshold: parseInt(document.getElementById('ah-sad-threshold').value, 10) || 35,
-                badThreshold: parseInt(document.getElementById('ah-bad-threshold').value, 10) || 25
+                happyThreshold: Math.max(0, Math.min(100, parseInt(document.getElementById('ah-happy-threshold').value, 10) || 75)),
+                neutralThreshold: Math.max(0, Math.min(100, parseInt(document.getElementById('ah-neutral-threshold').value, 10) || 50)),
+                sadThreshold: Math.max(0, Math.min(100, parseInt(document.getElementById('ah-sad-threshold').value, 10) || 35)),
+                badThreshold: Math.max(0, Math.min(100, parseInt(document.getElementById('ah-bad-threshold').value, 10) || 25))
             };
 
             if (newSettings.notifySystem) {
@@ -832,7 +981,7 @@
 
             notify('Settings saved', 'success');
             closeHappyModal();
-        });
+        };
     }
 
     // ============================================
@@ -881,12 +1030,40 @@
         setTimeout(function() {
             createMoraleDisplay();
             updateMoraleDisplay();
-            setInterval(updateMoraleDisplay, CHECK_INTERVAL);
+            startDisplayUpdates();
         }, 3000);
 
         if (settings.enabled) {
             setTimeout(startMonitoring, 5000);
         }
+    }
+
+    // Cleanup function
+    function cleanup() {
+        stopMonitoring();
+        stopDisplayUpdates();
+        removeHappyModalStyles();
+
+        if (menuClickListener) {
+            window.removeEventListener('rebelship-menu-click', menuClickListener);
+            menuClickListener = null;
+        }
+
+        if (headerResizeListener) {
+            window.removeEventListener('rebelship-header-resize', headerResizeListener);
+            headerResizeListener = null;
+        }
+
+        if (moraleDisplayElement && moraleDisplayElement.parentNode) {
+            moraleDisplayElement.removeEventListener('click', openSettingsModal);
+            moraleDisplayElement.parentNode.removeChild(moraleDisplayElement);
+            moraleDisplayElement = null;
+        }
+
+        crewSmileyElement = null;
+        managementSmileyElement = null;
+
+        console.log('[AutoHappyStaff] Cleanup complete');
     }
 
     // Expose for Android BackgroundScriptService
@@ -899,17 +1076,25 @@
         return { success: true };
     };
 
+    // Expose cleanup for manual cleanup
+    window.rebelshipCleanupAutoHappyStaff = cleanup;
+
     // Listen for header resize event to reinitialize display
-    window.addEventListener('rebelship-header-resize', function() {
-        moraleDisplayElement = null;
-        crewSmileyElement = null;
-        managementSmileyElement = null;
-        displayRetries = 0;
-        setTimeout(function() {
+    headerResizeListener = function() {
+        if (resizeDebounceTimer) {
+            clearTimeout(resizeDebounceTimer);
+        }
+        resizeDebounceTimer = setTimeout(function() {
+            moraleDisplayElement = null;
+            crewSmileyElement = null;
+            managementSmileyElement = null;
+            displayRetries = 0;
             createMoraleDisplay();
             updateMoraleDisplay();
-        }, 450);
-    });
+        }, 300);
+    };
+
+    window.addEventListener('rebelship-header-resize', headerResizeListener);
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);

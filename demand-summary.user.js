@@ -2,13 +2,14 @@
 // @name         ShippingManager - Demand Summary
 // @namespace    https://rebelship.org/
 // @description  Demand & ranking dashboard with map tooltips, CSV export, and route-popup demand/vessel filters
-// @version      4.94
+// @version      4.99
 // @author       https://github.com/justonlyforyou/
 // @order        9
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-end
 // @RequireRebelShipMenu true
+// @RequireRebelShipStorage true
 // @enabled      false
 // ==/UserScript==
 
@@ -21,7 +22,8 @@
     const COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
     const RANKING_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes
     const RANKING_BATCH_SIZE = 5; // Ports per batch
-    const RANKING_BATCH_DELAY_MS = 1500; // Delay between batches
+    const RANKING_RETRY_BATCH_SIZE = 3; // Reduced batch size for retries
+    const RANKING_BATCH_DELAY_MS = 2000; // Delay between batches
     const API_BASE = 'https://shippingmanager.cc/api';
 
     // ========== REBELSHIPBRIDGE STORAGE ==========
@@ -155,7 +157,7 @@
         }
     }
 
-    // ========== CACHE MANAGEMENT (INDEXEDDB) ==========
+    // ========== CACHE MANAGEMENT (REBELSHIPBRIDGE) ==========
     // In-memory cache for sync access (loaded on init)
     let cachedData = null;
     let rankingCache = null;
@@ -452,7 +454,8 @@
                 if (data.data && Array.isArray(data.data.top_alliances)) {
                     var myAlliance = data.data.my_alliance;
                     if (!myAlliance) {
-                        var myName = await fetchMyAllianceName();
+                        // Use cached alliance name (fetched once during init, not per-port)
+                        var myName = cachedMyAllianceName || getMyAllianceName();
                         if (myName) {
                             for (var t = 0; t < data.data.top_alliances.length; t++) {
                                 if (data.data.top_alliances[t].name === myName) {
@@ -471,7 +474,11 @@
             } catch (e) {
                 lastError = e;
                 if (attempt < maxRetries) {
-                    await new Promise(resolve => setTimeout(resolve, attempt * 500));
+                    // Exponential backoff: 500ms, 1000ms, 2000ms... doubled for 429/503
+                    var baseDelay = attempt * 500;
+                    var isRateLimit = e.message && (e.message.includes('429') || e.message.includes('503'));
+                    var delay = isRateLimit ? baseDelay * 2 : baseDelay;
+                    await new Promise(resolve => setTimeout(resolve, delay));
                 }
             }
         }
@@ -489,9 +496,33 @@
         return cache.timestamp;
     }
 
+    // Cached vessel data - invalidated via Pinia $subscribe on vesselStore
+    var vesselsByPortCache = null;
+    var vesselStoreSubscribed = false;
+
+    function invalidateVesselsByPortCache() {
+        vesselsByPortCache = null;
+    }
+
+    function subscribeVesselStore() {
+        if (vesselStoreSubscribed) return;
+        var vesselStore = getVesselStore();
+        if (!vesselStore || !vesselStore.$subscribe) return;
+        vesselStoreSubscribed = true;
+        vesselStore.$subscribe(function() {
+            invalidateVesselsByPortCache();
+        });
+    }
+
     function getVesselsByPort() {
+        // Return cached result if available
+        if (vesselsByPortCache) return vesselsByPortCache;
+
         const vesselStore = getVesselStore();
         if (!vesselStore || !vesselStore.userVessels) return {};
+
+        // Subscribe to store changes for cache invalidation (once)
+        subscribeVesselStore();
 
         const result = {};
 
@@ -555,6 +586,7 @@
             }
         }
 
+        vesselsByPortCache = result;
         return result;
     }
 
@@ -693,10 +725,23 @@
         document.head.appendChild(style);
     }
 
+    // Modal close: lazy re-attach pattern.
+    // On close, we only hide via CSS (classList.add('hide')), NOT remove from DOM.
+    // On re-open, we check if the modal element still exists and just remove 'hide'.
+    // Event listeners stay attached because the DOM nodes are reused, not recreated.
+    // This avoids accumulating listeners without needing complex removeEventListener.
+    // The renderModalContent() call on re-open refreshes innerHTML and re-attaches
+    // handlers to the new inner elements each time.
     function closeDemandModal() {
         if (!isDemandModalOpen) return;
         log('Closing modal');
         isDemandModalOpen = false;
+        // Stop ranking collection if running (cleanup on modal close)
+        isCollectingRanking = false;
+        if (rankingAbortController) {
+            rankingAbortController.abort();
+            rankingAbortController = null;
+        }
         restoreViewport();
         const modalWrapper = document.getElementById('demand-modal-wrapper');
         if (modalWrapper) {
@@ -754,7 +799,7 @@
         const portRanking = rankings.ports[portCode];
         const tooltip = createTooltip();
 
-        let html = '<div style="font-weight:bold;font-size:14px;margin-bottom:8px;color:#f59e0b;">' + capitalizePortName(portCode) + '</div>';
+        let html = '<div style="font-weight:bold;font-size:14px;margin-bottom:8px;color:#f59e0b;">' + escapeHtml(capitalizePortName(portCode)) + '</div>';
 
         // My Alliance
         if (portRanking.myAlliance) {
@@ -1275,87 +1320,28 @@
         });
     }
 
-    function renderPortList(ports, vesselsByDest, filter, sortColumn, sortOrder) {
-        const rankings = loadRankingCacheSync();
-        const rankingPorts = rankings ? rankings.ports : {};
-        log('renderPortList: rankings=' + (rankings ? 'exists' : 'NULL') + ', rankingPorts count=' + Object.keys(rankingPorts).length);
+    // Pre-calculated sort values cache - built once on data load, reused on sort clicks
+    var sortValuesCache = null; // Map: portCode -> { port, maxTEU, currentTEU, maxBBL, currentBBL, containerVessels, tankerVessels, rank }
 
-        // Helper to get sort value for a port
-        function getSortValue(port, column) {
-            const demand = port.demand || {};
-            const consumed = port.consumed || {};
-            const containerDemand = demand.container || {};
-            const containerConsumed = consumed.container || {};
-            const tankerDemand = demand.tanker || {};
-            const tankerConsumed = consumed.tanker || {};
-            const vessels = vesselsByDest[port.code];
-            const portRanking = rankingPorts[port.code];
+    function buildSortValuesCache(ports, vesselsByDest, rankingPorts) {
+        var cache = new Map();
+        for (var i = 0; i < ports.length; i++) {
+            var port = ports[i];
+            var demand = port.demand || {};
+            var consumed = port.consumed || {};
+            var containerDemand = demand.container || {};
+            var containerConsumed = consumed.container || {};
+            var tankerDemand = demand.tanker || {};
+            var tankerConsumed = consumed.tanker || {};
+            var vessels = vesselsByDest[port.code];
+            var portRanking = rankingPorts[port.code];
 
-            const maxTEU = (containerDemand.dry || 0) + (containerDemand.refrigerated || 0);
-            const currentTEU = Math.max(0, maxTEU - (containerConsumed.dry || 0) - (containerConsumed.refrigerated || 0));
-            const maxBBL = (tankerDemand.fuel || 0) + (tankerDemand.crude_oil || 0);
-            const currentBBL = Math.max(0, maxBBL - (tankerConsumed.fuel || 0) - (tankerConsumed.crude_oil || 0));
+            var maxTEU = (containerDemand.dry || 0) + (containerDemand.refrigerated || 0);
+            var currentTEU = Math.max(0, maxTEU - (containerConsumed.dry || 0) - (containerConsumed.refrigerated || 0));
+            var maxBBL = (tankerDemand.fuel || 0) + (tankerDemand.crude_oil || 0);
+            var currentBBL = Math.max(0, maxBBL - (tankerConsumed.fuel || 0) - (tankerConsumed.crude_oil || 0));
 
-            switch (column) {
-                case 'port': return port.code;
-                case 'maxTEU': return maxTEU;
-                case 'currentTEU': return currentTEU;
-                case 'maxBBL': return maxBBL;
-                case 'currentBBL': return currentBBL;
-                case 'containerVessels': return vessels ? vessels.containerCount : 0;
-                case 'tankerVessels': return vessels ? vessels.tankerCount : 0;
-                case 'rank': return portRanking && portRanking.myAlliance ? portRanking.myAlliance.rank : 9999;
-                default: return currentTEU;
-            }
-        }
-
-        // Sort ports
-        const sortedPorts = ports.slice().sort(function(a, b) {
-            const aVal = getSortValue(a, sortColumn);
-            const bVal = getSortValue(b, sortColumn);
-            if (sortColumn === 'port') {
-                // String comparison for port names
-                if (sortOrder === 'asc') {
-                    return aVal.localeCompare(bVal);
-                }
-                return bVal.localeCompare(aVal);
-            }
-            // Numeric comparison
-            if (sortOrder === 'asc') {
-                return aVal - bVal;
-            }
-            return bVal - aVal;
-        });
-
-        // Filter ports
-        const filteredPorts = [];
-        for (const port of sortedPorts) {
-            const vessels = vesselsByDest[port.code];
-            const demand = port.demand || {};
-            const consumed = port.consumed || {};
-            const containerDemand = demand.container || {};
-            const containerConsumed = consumed.container || {};
-            const tankerDemand = demand.tanker || {};
-            const tankerConsumed = consumed.tanker || {};
-
-            // Max = total demand
-            const maxTEU = (containerDemand.dry || 0) + (containerDemand.refrigerated || 0);
-            const maxBBL = (tankerDemand.fuel || 0) + (tankerDemand.crude_oil || 0);
-
-            // Current = max - consumed
-            const currentTEU = Math.max(0, maxTEU - (containerConsumed.dry || 0) - (containerConsumed.refrigerated || 0));
-            const currentBBL = Math.max(0, maxBBL - (tankerConsumed.fuel || 0) - (tankerConsumed.crude_oil || 0));
-
-            const hasContainer = currentTEU > 0;
-            const hasTanker = currentBBL > 0;
-
-            if (filter === 'vessels' && !vessels) continue;
-            if (filter === 'novessels' && vessels) continue;
-            if (filter === 'container' && !hasContainer) continue;
-            if (filter === 'tanker' && !hasTanker) continue;
-
-            const portRanking = rankingPorts[port.code];
-            filteredPorts.push({
+            cache.set(port.code, {
                 port: port,
                 maxTEU: maxTEU,
                 currentTEU: currentTEU,
@@ -1363,8 +1349,58 @@
                 currentBBL: currentBBL,
                 containerVessels: vessels ? vessels.containerCount : 0,
                 tankerVessels: vessels ? vessels.tankerCount : 0,
+                rank: portRanking && portRanking.myAlliance ? portRanking.myAlliance.rank : 9999,
                 ranking: portRanking
             });
+        }
+        return cache;
+    }
+
+    function renderPortList(ports, vesselsByDest, filter, sortColumn, sortOrder) {
+        const rankings = loadRankingCacheSync();
+        const rankingPorts = rankings ? rankings.ports : {};
+        log('renderPortList: rankings=' + (rankings ? 'exists' : 'NULL') + ', rankingPorts count=' + Object.keys(rankingPorts).length);
+
+        // Build sort values cache once (reused across sort clicks until data changes)
+        sortValuesCache = buildSortValuesCache(ports, vesselsByDest, rankingPorts);
+
+        // Sort ports using pre-calculated values
+        const sortedPorts = ports.slice().sort(function(a, b) {
+            var aCache = sortValuesCache.get(a.code);
+            var bCache = sortValuesCache.get(b.code);
+            var aVal, bVal;
+
+            switch (sortColumn) {
+                case 'port': aVal = a.code; bVal = b.code; break;
+                case 'maxTEU': aVal = aCache.maxTEU; bVal = bCache.maxTEU; break;
+                case 'currentTEU': aVal = aCache.currentTEU; bVal = bCache.currentTEU; break;
+                case 'maxBBL': aVal = aCache.maxBBL; bVal = bCache.maxBBL; break;
+                case 'currentBBL': aVal = aCache.currentBBL; bVal = bCache.currentBBL; break;
+                case 'containerVessels': aVal = aCache.containerVessels; bVal = bCache.containerVessels; break;
+                case 'tankerVessels': aVal = aCache.tankerVessels; bVal = bCache.tankerVessels; break;
+                case 'rank': aVal = aCache.rank; bVal = bCache.rank; break;
+                default: aVal = aCache.currentTEU; bVal = bCache.currentTEU;
+            }
+
+            if (sortColumn === 'port') {
+                return sortOrder === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+            }
+            return sortOrder === 'asc' ? aVal - bVal : bVal - aVal;
+        });
+
+        // Filter ports using pre-calculated values
+        const filteredPorts = [];
+        for (var fi = 0; fi < sortedPorts.length; fi++) {
+            var port = sortedPorts[fi];
+            var cached = sortValuesCache.get(port.code);
+            var vessels = vesselsByDest[port.code];
+
+            if (filter === 'vessels' && !vessels) continue;
+            if (filter === 'novessels' && vessels) continue;
+            if (filter === 'container' && cached.currentTEU <= 0) continue;
+            if (filter === 'tanker' && cached.currentBBL <= 0) continue;
+
+            filteredPorts.push(cached);
         }
 
         if (filteredPorts.length === 0) {
@@ -1397,13 +1433,13 @@
 
         for (let i = 0; i < filteredPorts.length; i++) {
             const item = filteredPorts[i];
-            const port = item.port;
+            const portData = item.port;
             const rowBg = i % 2 === 0 ? '#f3f4f6' : '#fff';
 
-            html += '<tr class="demand-port-row" data-port="' + port.code + '" style="background:' + rowBg + ';">';
+            html += '<tr class="demand-port-row" data-port="' + escapeHtml(portData.code) + '" style="background:' + rowBg + ';">';
             html += '<td style="padding:1px 1px;border-bottom:1px solid #e5e7eb;text-align:left;">';
-            html += '<span class="demand-port-link" data-port="' + port.code + '" style="cursor:pointer;color:#3b82f6;text-decoration:underline;">';
-            html += capitalizePortName(port.code);
+            html += '<span class="demand-port-link" data-port="' + escapeHtml(portData.code) + '" style="cursor:pointer;color:#3b82f6;text-decoration:underline;">';
+            html += escapeHtml(capitalizePortName(portData.code));
             html += '</span></td>';
 
             html += '<td style="padding:1px 1px;border-bottom:1px solid #e5e7eb;text-align:right;">';
@@ -1431,7 +1467,7 @@
             html += '</td>';
 
             // Rank column with tooltip
-            html += '<td class="demand-rank-cell" data-port="' + port.code + '" style="padding:1px 1px;border-bottom:1px solid #e5e7eb;text-align:center;cursor:pointer;">';
+            html += '<td class="demand-rank-cell" data-port="' + escapeHtml(portData.code) + '" style="padding:1px 1px;border-bottom:1px solid #e5e7eb;text-align:center;cursor:pointer;">';
             if (item.ranking && item.ranking.myAlliance) {
                 html += item.ranking.myAlliance.rank;
             } else {
@@ -1487,10 +1523,14 @@
         }
     }
 
+    // AbortController for cancellable ranking collection
+    var rankingAbortController = null;
+
     async function collectRanking() {
         if (isCollectingRanking) return;
 
         isCollectingRanking = true;
+        rankingAbortController = new window.AbortController();
         rankingProgress.current = 0;
         rankingProgress.total = 360;
         updateRankingButtonProgress();
@@ -1500,9 +1540,21 @@
             // Load existing ranking data from DB - but don't overwrite memory if DB fails
             const savedRanking = await dbGet('rankingCache');
             if (savedRanking) {
+                // Check if saved ranking has expired (older than RANKING_COOLDOWN_MS)
+                var rankingAge = savedRanking.timestamp ? Date.now() - savedRanking.timestamp : Infinity;
+                if (rankingAge < RANKING_COOLDOWN_MS && Object.keys(savedRanking.ports).length >= 360) {
+                    // Ranking data is still fresh and complete, no need to re-fetch
+                    rankingCache = savedRanking;
+                    log('Ranking cache still valid (' + Math.round(rankingAge / 60000) + 'min old), skipping collection');
+                    isCollectingRanking = false;
+                    rankingProgress.current = 0;
+                    rankingProgress.total = 0;
+                    if (activeModalContainer) renderModalContent(activeModalContainer);
+                    return;
+                }
                 // Merge DB data with memory (DB takes precedence for resume)
                 rankingCache = savedRanking;
-                log('Loaded ' + Object.keys(savedRanking.ports).length + ' ports from DB');
+                log('Loaded ' + Object.keys(savedRanking.ports).length + ' ports from DB (age: ' + Math.round(rankingAge / 60000) + 'min)');
             } else if (!rankingCache) {
                 // Only init if both DB and memory are empty
                 rankingCache = { timestamp: null, ports: {} };
@@ -1591,10 +1643,10 @@
                 log('Retry pass ' + retryPass + ': ' + missingPorts.length + ' ports missing');
                 await new Promise(resolve => setTimeout(resolve, 3000));
 
-                for (var retryBatchStart = 0; retryBatchStart < missingPorts.length; retryBatchStart += RANKING_BATCH_SIZE) {
+                for (var retryBatchStart = 0; retryBatchStart < missingPorts.length; retryBatchStart += RANKING_RETRY_BATCH_SIZE) {
                     if (!isCollectingRanking) break;
 
-                    var retryBatchEnd = Math.min(retryBatchStart + RANKING_BATCH_SIZE, missingPorts.length);
+                    var retryBatchEnd = Math.min(retryBatchStart + RANKING_RETRY_BATCH_SIZE, missingPorts.length);
                     var retryBatch = missingPorts.slice(retryBatchStart, retryBatchEnd);
 
                     var retryPromises = retryBatch.map(function(portCode) {
@@ -1652,15 +1704,17 @@
             showToast('Failed to collect ranking: ' + err.message, 'error');
         } finally {
             isCollectingRanking = false;
+            rankingAbortController = null;
             rankingProgress.current = 0;
             rankingProgress.total = 0;
-            if (activeModalContainer) {
+            if (activeModalContainer && isDemandModalOpen) {
                 renderModalContent(activeModalContainer);
             }
         }
     }
 
     function updateRankingButtonProgress() {
+        // Check if element still exists (modal may be closed)
         const btn = document.getElementById('ranking-collect-btn');
         if (btn) {
             btn.textContent = 'Collecting ' + rankingProgress.current + '/' + rankingProgress.total;
@@ -1668,17 +1722,18 @@
     }
 
     function updateRankCellLive(portCode, ranking) {
+        // Guard: only update if modal is still open and element exists in DOM
+        if (!isDemandModalOpen) return;
         var cell = document.querySelector('.demand-rank-cell[data-port="' + portCode + '"]');
-        if (cell) {
-            if (ranking && ranking.myAlliance) {
-                cell.textContent = ranking.myAlliance.rank;
-                cell.style.background = '#bbf7d0';
-                setTimeout(function() {
-                    cell.style.background = '';
-                }, 500);
-            } else {
-                cell.textContent = '-';
-            }
+        if (!cell || !cell.isConnected) return;
+        if (ranking && ranking.myAlliance) {
+            cell.textContent = ranking.myAlliance.rank;
+            cell.style.background = '#bbf7d0';
+            setTimeout(function() {
+                if (cell.isConnected) cell.style.background = '';
+            }, 500);
+        } else {
+            cell.textContent = '-';
         }
     }
 
@@ -1693,21 +1748,46 @@
         document.head.appendChild(style);
     }
 
+    function isShowAllPortsStep(container) {
+        var buttons = container.querySelectorAll('button');
+        for (var i = 0; i < buttons.length; i++) {
+            var text = (buttons[i].textContent || '').trim().toLowerCase();
+            if (text.indexOf('show all ports') !== -1) return true;
+        }
+        return false;
+    }
+
+    var routePopupObserver = null;
+
     function initRoutePopupFilter() {
         injectRoutePopupStyles();
 
-        var observer = new MutationObserver(function() {
-            var popup = document.getElementById('createRoutePopup');
-            if (popup && !routeFilterInjected) {
+        var routePopupDebounceTimer = null;
+
+        routePopupObserver = new MutationObserver(function() {
+            // Debounce 250ms to avoid firing hundreds of times per second in Vue SPA
+            if (routePopupDebounceTimer) clearTimeout(routePopupDebounceTimer);
+            routePopupDebounceTimer = setTimeout(function() {
+                var popup = document.getElementById('createRoutePopup');
+                if (!popup) {
+                    if (routeFilterInjected) {
+                        resetRouteFilter();
+                        // Disconnect observer when popup closes, reconnect on next check
+                    }
+                    return;
+                }
                 var btnContainer = popup.querySelector('.buttonContainer');
-                if (btnContainer) {
+                if (!btnContainer) return;
+                if (!isShowAllPortsStep(btnContainer)) return;
+                // Check if our buttons are still in the DOM (popup may have been recreated)
+                var hasOurButtons = btnContainer.querySelector('.demand-filter-route-btn');
+                if (!hasOurButtons) {
+                    routeFilterInjected = false;
                     injectRouteFilterButtons(btnContainer);
                 }
-            } else if (!popup && routeFilterInjected) {
-                resetRouteFilter();
-            }
+            }, 250);
         });
-        observer.observe(document.body, { childList: true, subtree: true });
+        routePopupObserver.observe(document.body, { childList: true, subtree: true });
 
         document.addEventListener('click', function(e) {
             if (routeFilterDropdownOpen) {
@@ -2116,6 +2196,9 @@
         addMenuItem('Demand Summary', openDemandModal, 12);
         initUI();
 
+        // Fetch alliance name ONCE before anything else (used by ranking)
+        await fetchMyAllianceName();
+
         // Load cache into memory for sync access
         await loadCache();
 
@@ -2151,18 +2234,41 @@
         });
 
         // Also check periodically in case markers appear via other means
-        var checkInterval = setInterval(function() {
-            var markers = document.querySelectorAll('.leaflet-marker-icon[src*="porticon"]');
-            if (markers.length > 0 && !mapFilterInjected) {
-                injectMapFilterControl();
-            } else if (markers.length === 0 && mapFilterInjected) {
-                removeMapFilterControl();
+        // Only run when page is visible (Page Visibility API)
+        var checkInterval = null;
+
+        function startMapMarkerCheck() {
+            if (checkInterval) return;
+            checkInterval = setInterval(function() {
+                var markers = document.querySelectorAll('.leaflet-marker-icon[src*="porticon"]');
+                if (markers.length > 0 && !mapFilterInjected) {
+                    injectMapFilterControl();
+                } else if (markers.length === 0 && mapFilterInjected) {
+                    removeMapFilterControl();
+                }
+            }, 2000);
+        }
+
+        function stopMapMarkerCheck() {
+            if (checkInterval) {
+                clearInterval(checkInterval);
+                checkInterval = null;
             }
-        }, 2000);
+        }
+
+        // Start/stop based on page visibility
+        startMapMarkerCheck();
+        document.addEventListener('visibilitychange', function() {
+            if (document.hidden) {
+                stopMapMarkerCheck();
+            } else {
+                startMapMarkerCheck();
+            }
+        });
 
         // Cleanup on page unload
         window.addEventListener('beforeunload', function() {
-            clearInterval(checkInterval);
+            stopMapMarkerCheck();
         });
     }
 
@@ -2205,6 +2311,9 @@
         mapFilterPanelOpen = false;
         mapFilterActive = { teu: null, bbl: null, noVessels: false };
         restoreAllMapMarkers();
+        mapFilterHiddenMarkers = [];
+        // Invalidate port marker layer cache (markers may be removed from DOM)
+        invalidatePortMarkerLayerCache();
         var ctrl = document.getElementById('demand-map-filter-control');
         if (ctrl) ctrl.remove();
         var panel = document.getElementById('demand-map-filter-panel');
@@ -2329,6 +2438,35 @@
         return section;
     }
 
+    // Cached port marker layers - WeakMap for layer->port-code mapping
+    var portMarkerLayerCache = null; // Array of { layer, code } for port-icon layers only
+    var portMarkerLayerMap = new WeakMap(); // layer -> portCode
+
+    function getPortMarkerLayers() {
+        var map = getLeafletMap();
+        if (!map) return [];
+
+        // Rebuild cache if empty
+        if (!portMarkerLayerCache) {
+            portMarkerLayerCache = [];
+            var layers = map._layers;
+            for (var layerId in layers) {
+                var layer = layers[layerId];
+                if (!layer._icon || !layer.options || !layer.options.port) continue;
+                var src = layer._icon.getAttribute('src');
+                if (!src || !src.includes('porticon')) continue;
+                var code = layer.options.port.code;
+                portMarkerLayerCache.push({ layer: layer, code: code });
+                portMarkerLayerMap.set(layer, code);
+            }
+        }
+        return portMarkerLayerCache;
+    }
+
+    function invalidatePortMarkerLayerCache() {
+        portMarkerLayerCache = null;
+    }
+
     function applyMapPortFilter() {
         var hasAnyFilter = mapFilterActive.teu || mapFilterActive.bbl || mapFilterActive.noVessels;
 
@@ -2355,21 +2493,16 @@
 
         var vesselsByPort = mapFilterActive.noVessels ? getVesselsByPort() : {};
 
-        var map = getLeafletMap();
-        if (!map) return;
-
         // Restore all first
         restoreAllMapMarkers();
         mapFilterHiddenMarkers = [];
 
-        var layers = map._layers;
-        for (var layerId in layers) {
-            var layer = layers[layerId];
-            if (!layer._icon || !layer.options || !layer.options.port) continue;
-            var src = layer._icon.getAttribute('src');
-            if (!src || !src.includes('porticon')) continue;
-
-            var code = layer.options.port.code;
+        // Use cached port marker layer list (only port markers, not all layers)
+        var portLayers = getPortMarkerLayers();
+        for (var i = 0; i < portLayers.length; i++) {
+            var entry = portLayers[i];
+            var layer = entry.layer;
+            var code = entry.code;
             var shouldHide = false;
 
             // TEU filter
@@ -2413,13 +2546,13 @@
             }
 
             if (shouldHide) {
-                layer._icon.style.display = 'none';
+                if (layer._icon) layer._icon.style.display = 'none';
                 if (layer._shadow) layer._shadow.style.display = 'none';
                 mapFilterHiddenMarkers.push(layer);
             }
         }
 
-        var totalMarkers = document.querySelectorAll('.leaflet-marker-icon[src*="porticon"]').length + mapFilterHiddenMarkers.length;
+        var totalMarkers = portLayers.length;
         var visibleCount = totalMarkers - mapFilterHiddenMarkers.length;
         log('Map filter: ' + visibleCount + '/' + totalMarkers + ' ports visible');
     }
@@ -2566,7 +2699,7 @@
         const lastUpdated = getPortLastUpdated(portCode);
         const rankingLastUpdated = rankings ? rankings.timestamp : null;
 
-        let html = '<div style="font-weight:bold;font-size:14px;margin-bottom:8px;color:#3b82f6;">' + capitalizePortName(portCode) + '</div>';
+        let html = '<div style="font-weight:bold;font-size:14px;margin-bottom:8px;color:#3b82f6;">' + escapeHtml(capitalizePortName(portCode)) + '</div>';
 
         // Container demand
         if (containerDemand.dry || containerDemand.refrigerated) {

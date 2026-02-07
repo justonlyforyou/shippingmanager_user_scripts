@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Auto Port Refresh
 // @description Automatically refreshes the port (left side menu) every 30 seconds.
-// @version     1.4
+// @version     1.5
 // @author      https://github.com/justonlyforyou/
 // @order        52
 // @match       https://shippingmanager.cc/*
@@ -56,21 +56,48 @@
     }
 
     function init() {
-        log('Initializing At Port Refresh script v1.2');
+        log('Initializing At Port Refresh script v1.5');
 
-        // Wait for Vue app to be ready
-        var checkInterval = setInterval(function() {
+        var timeoutRef = null;
+        var observer = null;
+
+        function checkPinia() {
             var pinia = getPinia();
             if (pinia) {
-                clearInterval(checkInterval);
+                if (observer) {
+                    observer.disconnect();
+                    observer = null;
+                }
+                if (timeoutRef) {
+                    clearTimeout(timeoutRef);
+                    timeoutRef = null;
+                }
                 log('Pinia found, starting refresh timer');
                 startRefreshTimer();
+                return true;
             }
-        }, 1000);
+            return false;
+        }
+
+        // Try immediately
+        if (checkPinia()) return;
+
+        // Wait for Vue app to be ready using MutationObserver
+        var appElement = document.querySelector('#app');
+        if (appElement) {
+            observer = new MutationObserver(function() {
+                checkPinia();
+            });
+            observer.observe(appElement, { childList: true, subtree: true });
+        }
 
         // Timeout after 30 seconds
-        setTimeout(function() {
-            clearInterval(checkInterval);
+        timeoutRef = setTimeout(function() {
+            if (observer) {
+                observer.disconnect();
+                observer = null;
+            }
+            log('Timeout: Pinia not found after 30 seconds');
         }, 30000);
     }
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Bunker Price Display
 // @namespace    http://tampermonkey.net/
-// @version      3.20
+// @version      3.21
 // @description  Shows current fuel and CO2 bunker prices with fill levels
 // @author       https://github.com/justonlyforyou/
 // @order        53
@@ -20,16 +20,20 @@
     let co2PriceElement = null;
     let fuelFillElement = null;
     let co2FillElement = null;
+    let storeUnsubscribe = null;
+    let initRetryCount = 0;
+    const MAX_INIT_RETRIES = 10;
 
     function findCurrentPrice(prices) {
         const now = new Date();
         const utcHours = now.getUTCHours();
         const utcMinutes = now.getUTCMinutes();
-        const currentSlot = utcMinutes < 30
-            ? String(utcHours).padStart(2, '0') + ':00'
-            : String(utcHours).padStart(2, '0') + ':30';
-        const match = prices.find(function(p) { return p.time === currentSlot; });
-        return match || prices[0];
+
+        // Direct index calculation: each hour has 2 slots (:00 and :30)
+        const slotIndex = utcHours * 2 + (utcMinutes < 30 ? 0 : 1);
+
+        // Return price at calculated index, fallback to first price if out of bounds
+        return prices[slotIndex] || prices[0];
     }
 
     function getFuelColor(price) {
@@ -201,14 +205,39 @@
     function subscribeToStore() {
         var userStore = getUserStore();
         if (!userStore) {
-            setTimeout(subscribeToStore, 1000);
+            // Use MutationObserver to wait for Pinia instead of polling
+            waitForPinia();
             return;
         }
 
-        // Subscribe to user store mutations
-        userStore.$subscribe(function() {
+        // Unsubscribe from previous subscription if exists
+        if (storeUnsubscribe) {
+            storeUnsubscribe();
+        }
+
+        // Subscribe to user store mutations and store unsubscribe function
+        storeUnsubscribe = userStore.$subscribe(function() {
             updateFillLevels();
         });
+    }
+
+    // Wait for Pinia to become available using MutationObserver
+    function waitForPinia() {
+        var app = document.getElementById('app');
+        if (!app) {
+            console.error('[BunkerPrice] #app not found, cannot wait for Pinia');
+            return;
+        }
+
+        var observer = new MutationObserver(function() {
+            var userStore = getUserStore();
+            if (userStore) {
+                observer.disconnect();
+                subscribeToStore();
+            }
+        });
+
+        observer.observe(app, { childList: true, subtree: true });
     }
 
     // Update fill levels (both desktop and mobile use same elements now)
@@ -278,6 +307,13 @@
         co2PriceElement = null;
         fuelFillElement = null;
         co2FillElement = null;
+        initRetryCount = 0;
+
+        // Unsubscribe from store on cleanup
+        if (storeUnsubscribe) {
+            storeUnsubscribe();
+            storeUnsubscribe = null;
+        }
     }
 
     function init() {
@@ -288,25 +324,34 @@
             // Subscribe to store for instant fill level updates
             subscribeToStore();
         } else {
-            setTimeout(init, 1000);
+            initRetryCount++;
+            if (initRetryCount < MAX_INIT_RETRIES) {
+                setTimeout(init, 1000);
+            } else {
+                console.error('[BunkerPrice] Init failed after ' + MAX_INIT_RETRIES + ' attempts');
+            }
         }
+    }
+
+    // Debounce helper for resize listener
+    var resizeDebounceTimer = null;
+    function debounceResize(callback, delay) {
+        if (resizeDebounceTimer) {
+            clearTimeout(resizeDebounceTimer);
+        }
+        resizeDebounceTimer = setTimeout(callback, delay);
     }
 
     // Listen for header resize event to reinitialize
     window.addEventListener('rebelship-header-resize', function() {
         resetElements();
-        setTimeout(function() {
+        debounceResize(function() {
             if (insertPriceDisplays()) {
                 updatePrices();
             } else {
-                console.log('[BunkerPrice] Reinit failed, retrying...');
-                setTimeout(function() {
-                    if (insertPriceDisplays()) {
-                        updatePrices();
-                    }
-                }, 500);
+                console.log('[BunkerPrice] Reinit failed after resize');
             }
-        }, 150);
+        }, 300);
     });
 
     init();

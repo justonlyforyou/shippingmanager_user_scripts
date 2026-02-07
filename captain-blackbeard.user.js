@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Captain Blackbeard
 // @namespace    https://rebelship.org/
-// @version      1.0
+// @version      1.22
 // @description  Auto-negotiate hijacked vessels: bid twice at 25%, accept third pirate price
 // @author       https://github.com/justonlyforyou/
 // @order        8
@@ -11,6 +11,7 @@
 // @enabled      false
 // @background-job-required true
 // @RequireRebelShipMenu true
+// @RequireRebelShipStorage true
 // ==/UserScript==
 /* globals addMenuItem */
 
@@ -38,11 +39,20 @@
 
     // Global lock + active negotiations tracker (survives script reload)
     if (!window._blackbeardLock) {
-        window._blackbeardLock = { isProcessing: false, lastRunTime: 0 };
+        window._blackbeardLock = { isProcessing: false, lastRunTime: 0, lastCheckTime: 0 };
     }
     if (!window._blackbeardNegotiations) {
         window._blackbeardNegotiations = new Map();
     }
+
+    // Case status cache with TTL (30 seconds)
+    var caseStatusCache = new Map(); // { caseId: { status: 'solved', timestamp: Date.now() } }
+    var CASE_STATUS_TTL = 30000; // 30 seconds
+
+    // Pinia cache with TTL (60 seconds)
+    var cachedPinia = null;
+    var piniaCacheTime = 0;
+    var PINIA_CACHE_TTL = 60000; // 60 seconds
 
     // ========== REBELSHIPBRIDGE STORAGE ==========
     async function dbGet(key) {
@@ -116,12 +126,33 @@
     }
 
     function getAllHijackingCases() {
-        return fetchWithCookie('https://shippingmanager.cc/api/hijacking/get-all-cases', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({})
+        // Early exit if active negotiations exist and last check < 60 seconds ago
+        var now = Date.now();
+        if (window._blackbeardNegotiations.size > 0 &&
+            (now - window._blackbeardLock.lastCheckTime) < 60000) {
+            log('Active negotiation in progress, skipping getAllHijackingCases (last check: ' +
+                Math.floor((now - window._blackbeardLock.lastCheckTime) / 1000) + 's ago)');
+            return Promise.resolve([]);
+        }
+
+        return fetchWithCookie('https://shippingmanager.cc/api/game/index', {
+            method: 'GET'
         }).then(function(data) {
-            return data.data || [];
+            window._blackbeardLock.lastCheckTime = Date.now();
+            var messages = (data && data.data && data.data.messages) || [];
+            var hijackCases = [];
+            for (var i = 0; i < messages.length; i++) {
+                var msg = messages[i];
+                if (msg.system_chat && msg.body === 'vessel_got_hijacked' && msg.values && msg.values.case_id) {
+                    hijackCases.push({
+                        case_id: msg.values.case_id,
+                        vessel_name: msg.values.vessel_name || 'Unknown Vessel',
+                        user_vessel_id: msg.values.user_vessel_id,
+                        status: 'open'
+                    });
+                }
+            }
+            return hijackCases;
         });
     }
 
@@ -131,8 +162,33 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ case_id: caseId })
         }).then(function(data) {
+            // Update cache
+            if (data && data.data && data.data.status) {
+                caseStatusCache.set(caseId, {
+                    status: data.data.status,
+                    timestamp: Date.now()
+                });
+            }
             return data;
         });
+    }
+
+    function getCachedCaseStatus(caseId) {
+        var cached = caseStatusCache.get(caseId);
+        if (!cached) return null;
+
+        var age = Date.now() - cached.timestamp;
+        // If solved/paid, cache is permanent. Otherwise 30s TTL.
+        if (cached.status === 'solved' || cached.status === 'paid') {
+            return cached.status;
+        }
+        if (age < CASE_STATUS_TTL) {
+            return cached.status;
+        }
+
+        // Expired
+        caseStatusCache.delete(caseId);
+        return null;
     }
 
     function submitOffer(caseId, amount) {
@@ -247,6 +303,7 @@
             }
 
             var pirateCounter2 = response2.data.requested_amount;
+            var cashBefore = response2.user ? response2.user.cash : 0; // Reuse cash from response2
             log('Case ' + caseId + ': Pirate counter 2 (FINAL): $' + pirateCounter2.toLocaleString());
             showToast('Blackbeard: Offer 2 sent for ' + vesselName);
 
@@ -257,17 +314,6 @@
 
             // ========== PAYMENT ==========
             window._blackbeardNegotiations.set(caseId, 'paying');
-
-            // Re-fetch case to check cash
-            var prePay;
-            try {
-                prePay = await getCase(caseId);
-            } catch (e) {
-                log('Case ' + caseId + ': Failed to re-fetch before payment - ' + e.message, 'error');
-                return { success: false, reason: 'prefetch_failed' };
-            }
-
-            var cashBefore = prePay && prePay.user ? prePay.user.cash : 0;
             var finalPrice = pirateCounter2;
 
             log('Case ' + caseId + ': Ready to pay $' + finalPrice.toLocaleString() + '. Cash: $' + cashBefore.toLocaleString());
@@ -279,25 +325,27 @@
             }
 
             // PAY
+            var paymentResponse;
             try {
-                await payRansom(caseId);
+                paymentResponse = await payRansom(caseId);
             } catch (e) {
                 log('Case ' + caseId + ': Payment failed - ' + e.message, 'error');
                 showToast('Blackbeard: Payment failed for ' + vesselName + '!', 'error');
                 return { success: false, reason: 'payment_failed' };
             }
 
-            // Verify
-            var finalResponse;
-            try {
-                finalResponse = await getCase(caseId);
-            } catch (e) {
-                log('Case ' + caseId + ': Post-payment verification failed - ' + e.message, 'error');
-            }
-
-            var cashAfter = finalResponse && finalResponse.user ? finalResponse.user.cash : cashBefore;
+            // Reuse cash from payment response instead of extra getCase() call
+            var cashAfter = paymentResponse && paymentResponse.user ? paymentResponse.user.cash : cashBefore;
             var actualPaid = cashBefore - cashAfter;
             var saved = initialDemand - actualPaid;
+
+            // Update cache to mark as solved
+            if (paymentResponse && paymentResponse.data && paymentResponse.data.status) {
+                caseStatusCache.set(caseId, {
+                    status: paymentResponse.data.status,
+                    timestamp: Date.now()
+                });
+            }
 
             log('=== END Case ' + caseId + ': Paid $' + actualPaid.toLocaleString() + ', Saved $' + saved.toLocaleString() + ' ===');
             showToast('Blackbeard: ' + vesselName + ' released! Paid $' + actualPaid.toLocaleString() + ' (saved $' + saved.toLocaleString() + ')');
@@ -323,12 +371,41 @@
         try {
             var cases = await getAllHijackingCases();
 
-            // Filter to open/negotiating cases only
+            if (cases.length === 0) {
+                log('No hijacking messages found');
+                return result;
+            }
+
+            log('Found ' + cases.length + ' hijacking message(s), checking status...');
+
+            // Check actual status for each case via API (with caching)
             var activeCases = [];
             for (var i = 0; i < cases.length; i++) {
                 var c = cases[i];
-                if (c.status === 'open' || c.status === 'negotiating') {
-                    activeCases.push(c);
+                if (!c.case_id || window._blackbeardNegotiations.has(c.case_id)) continue;
+
+                // Check cache first
+                var cachedStatus = getCachedCaseStatus(c.case_id);
+                if (cachedStatus) {
+                    if (cachedStatus !== 'solved' && cachedStatus !== 'paid') {
+                        c.status = cachedStatus;
+                        activeCases.push(c);
+                    }
+                    continue;
+                }
+
+                // Cache miss - fetch from API
+                try {
+                    var caseData = await getCase(c.case_id);
+                    if (caseData && caseData.data) {
+                        var st = caseData.data.status;
+                        if (st !== 'solved' && st !== 'paid') {
+                            c.status = st;
+                            activeCases.push(c);
+                        }
+                    }
+                } catch (e) {
+                    log('Case ' + c.case_id + ': status check failed - ' + e.message, 'error');
                 }
             }
 
@@ -339,14 +416,12 @@
                 return result;
             }
 
-            log('Found ' + activeCases.length + ' active hijacking case(s)');
+            log(activeCases.length + ' active hijacking case(s)');
 
             for (var j = 0; j < activeCases.length; j++) {
                 var hijackCase = activeCases[j];
-                var caseId = hijackCase.case_id || hijackCase.id;
+                var caseId = hijackCase.case_id;
                 var vesselName = hijackCase.vessel_name || 'Unknown Vessel';
-
-                if (!caseId) continue;
 
                 // Skip if already being negotiated
                 if (window._blackbeardNegotiations.has(caseId)) {
@@ -443,11 +518,24 @@
 
     // ========== UI: PINIA STORES ==========
     function getPinia() {
+        // Check cache with TTL
+        if (cachedPinia && (Date.now() - piniaCacheTime < PINIA_CACHE_TTL)) {
+            return cachedPinia;
+        }
+
         try {
             var appEl = document.querySelector('#app');
             if (!appEl || !appEl.__vue_app__) return null;
             var app = appEl.__vue_app__;
-            return app._context.provides.pinia || app.config.globalProperties.$pinia;
+            var pinia = app._context.provides.pinia || app.config.globalProperties.$pinia;
+
+            // Cache the result
+            if (pinia) {
+                cachedPinia = pinia;
+                piniaCacheTime = Date.now();
+            }
+
+            return pinia;
         } catch {
             return null;
         }
@@ -536,19 +624,29 @@
         var modalWrapper = document.getElementById('bb-modal-wrapper');
         if (modalWrapper) {
             modalWrapper.classList.add('hide');
+
+            // Remove modal from DOM after animation completes
+            setTimeout(function() {
+                var wrapper = document.getElementById('bb-modal-wrapper');
+                if (wrapper && wrapper.classList.contains('hide')) {
+                    wrapper.remove();
+                }
+            }, 200); // 200ms matches animation duration
+        }
+    }
+
+    // Named function for cleanup
+    function handleMenuClick() {
+        if (isModalOpen) {
+            log('RebelShip menu clicked, closing modal');
+            closeModal();
         }
     }
 
     function setupModalWatcher() {
         if (modalListenerAttached) return;
         modalListenerAttached = true;
-
-        window.addEventListener('rebelship-menu-click', function() {
-            if (isModalOpen) {
-                log('RebelShip menu clicked, closing modal');
-                closeModal();
-            }
-        });
+        window.addEventListener('rebelship-menu-click', handleMenuClick);
     }
 
     function openSettingsModal() {

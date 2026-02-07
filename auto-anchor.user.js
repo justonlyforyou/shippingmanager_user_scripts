@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Auto Anchor Points
 // @namespace    https://rebelship.org/
-// @version      1.4
+// @version      1.42
 // @description  Auto-purchase anchor points when timer expires
 // @author       https://github.com/justonlyforyou/
 // @order        8
@@ -11,6 +11,7 @@
 // @enabled      false
 // @background-job-required true
 // @RequireRebelShipMenu true
+// @RequireRebelShipStorage true
 // ==/UserScript==
 /* globals addMenuItem, XMLHttpRequest, Event */
 
@@ -36,10 +37,18 @@
 
     var monitorInterval = null;
     var isModalOpen = false;
-    var modalListenerAttached = false;
+    var userSettingsCache = { data: null, timestamp: 0 };
+    var USER_SETTINGS_CACHE_TTL = 60000; // 1 minute
+    var processedSliderInputs = new WeakSet();
+    var sliderFixTimeout = null;
+    var modalEventListeners = [];
+    var rebelshipMenuClickHandler = null;
 
+    // Check if lock exists (script reload), only reset isProcessing flag
     if (!window._autoAnchorLock) {
         window._autoAnchorLock = { isProcessing: false };
+    } else {
+        window._autoAnchorLock.isProcessing = false;
     }
 
     function log(msg, level) {
@@ -57,15 +66,24 @@
         window.fetch = function(input, fetchInit) {
             var url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
 
+            // Skip interceptor for script-initiated requests (marked with custom header)
+            var isScriptRequest = fetchInit && fetchInit.headers && fetchInit.headers['X-AutoAnchor-Script'];
+
             return originalFetch.apply(this, arguments).then(function(response) {
-                if (url.indexOf('anchor-point/purchase-anchor-points') !== -1) {
-                    response.clone().json().then(function(data) {
-                        handlePurchaseResponse(fetchInit, data);
-                    }).catch(function() {});
-                } else if (url.indexOf('anchor-point/reset-anchor-timing') !== -1) {
-                    response.clone().json().then(function(data) {
-                        handleResetResponse(data);
-                    }).catch(function() {});
+                if (!isScriptRequest) {
+                    if (url.indexOf('anchor-point/purchase-anchor-points') !== -1) {
+                        response.clone().json().then(function(data) {
+                            handlePurchaseResponse(fetchInit, data);
+                        }).catch(function(err) {
+                            log('Fetch interceptor: purchase response parse error: ' + err, 'error');
+                        });
+                    } else if (url.indexOf('anchor-point/reset-anchor-timing') !== -1) {
+                        response.clone().json().then(function(data) {
+                            handleResetResponse(data);
+                        }).catch(function(err) {
+                            log('Fetch interceptor: reset response parse error: ' + err, 'error');
+                        });
+                    }
                 }
                 return response;
             });
@@ -90,14 +108,18 @@
                     try {
                         var data = JSON.parse(xhr.responseText);
                         handlePurchaseResponse({ body: xhr._anchorBody }, data);
-                    } catch {}
+                    } catch (err) {
+                        log('XHR interceptor: purchase response parse error: ' + err, 'error');
+                    }
                 });
             } else if (url && url.indexOf('anchor-point/reset-anchor-timing') !== -1) {
                 xhr.addEventListener('load', function() {
                     try {
                         var data = JSON.parse(xhr.responseText);
                         handleResetResponse(data);
-                    } catch {}
+                    } catch (err) {
+                        log('XHR interceptor: reset response parse error: ' + err, 'error');
+                    }
                 });
             }
 
@@ -224,11 +246,15 @@
     }
 
     // ========== API FUNCTIONS ==========
+    // CSRF Note: credentials: 'include' sends cookies (session auth) automatically.
+    // ShippingManager uses SameSite cookie policy for CSRF protection instead of explicit tokens.
+    // External scripts cannot trigger CSRF since browser enforces SameSite=Lax/Strict on session cookies.
     function fetchWithCookie(url, options) {
         options = options || {};
         var mergedHeaders = Object.assign({
             'Content-Type': 'application/json',
-            'Accept': 'application/json'
+            'Accept': 'application/json',
+            'X-AutoAnchor-Script': 'true' // Mark script requests to skip interceptor
         }, options.headers);
 
         return fetch(url, Object.assign({
@@ -251,9 +277,17 @@
     }
 
     function getUserSettings() {
+        var now = Date.now();
+        if (userSettingsCache.data && (now - userSettingsCache.timestamp) < USER_SETTINGS_CACHE_TTL) {
+            return Promise.resolve(userSettingsCache.data);
+        }
         return fetchWithCookie('https://shippingmanager.cc/api/user/get-user-settings', {
             method: 'POST',
             body: JSON.stringify({})
+        }).then(function(data) {
+            userSettingsCache.data = data;
+            userSettingsCache.timestamp = now;
+            return data;
         });
     }
 
@@ -307,6 +341,7 @@
                 savePending();
             }
 
+            // Parallel API call: fetch price without waiting for settings again
             return getAnchorPrice().then(function(priceData) {
                 var price = priceData.data.price;
                 var cash = priceData.user ? priceData.user.cash : 0;
@@ -373,27 +408,39 @@
     }
 
     function checkAndFixGameModal(node) {
-        var anchorModal = node.querySelector ? node.querySelector('.anchorPoints_purchase, [class*="anchorPoints"]') : null;
+        // Check classList first (fast), only querySelector if node itself doesn't match
+        var anchorModal = null;
         var nodeClass = node.getAttribute ? node.getAttribute('class') : '';
-        if (!anchorModal && node.classList && (node.classList.contains('anchorPoints_purchase') || (nodeClass && nodeClass.indexOf('anchorPoints') !== -1))) {
+        if (node.classList && (node.classList.contains('anchorPoints_purchase') || (nodeClass && nodeClass.indexOf('anchorPoints') !== -1))) {
             anchorModal = node;
+        } else if (node.querySelector) {
+            anchorModal = node.querySelector('.anchorPoints_purchase, [class*="anchorPoints"]');
         }
 
         if (!anchorModal) return;
 
         if (pending.amount === null) return;
 
-        setTimeout(function() {
-            fixGameModalSlider();
+        if (sliderFixTimeout) {
+            clearTimeout(sliderFixTimeout);
+        }
+        sliderFixTimeout = setTimeout(function() {
+            fixGameModalSlider(anchorModal);
+            sliderFixTimeout = null;
         }, 100);
     }
 
-    function fixGameModalSlider() {
+    function fixGameModalSlider(anchorModal) {
         if (pending.amount === null) return;
+        if (!anchorModal) return;
 
-        var sliderInputs = document.querySelectorAll('input[type="range"], .anchorPoints_purchase input');
+        // Scope to anchorModal element only
+        var sliderInputs = anchorModal.querySelectorAll('input[type="range"], input');
         for (var i = 0; i < sliderInputs.length; i++) {
             var input = sliderInputs[i];
+            // Skip already processed inputs
+            if (processedSliderInputs.has(input)) continue;
+
             var parent = input.closest('.anchorPoints_purchase, [class*="anchorPoints"]');
             if (parent) {
                 var targetValue = pending.amount === 10 ? 10 : 1;
@@ -402,6 +449,7 @@
                     input.dispatchEvent(new Event('input', { bubbles: true }));
                     input.dispatchEvent(new Event('change', { bubbles: true }));
                     log('Fixed game modal slider to ' + targetValue);
+                    processedSliderInputs.add(input);
                 }
                 break;
             }
@@ -528,9 +576,24 @@
         document.head.appendChild(style);
     }
 
+    function cleanupModalEventListeners() {
+        for (var i = 0; i < modalEventListeners.length; i++) {
+            var listener = modalEventListeners[i];
+            listener.element.removeEventListener(listener.event, listener.handler);
+        }
+        modalEventListeners = [];
+    }
+
     function closeModal() {
         if (!isModalOpen) return;
         isModalOpen = false;
+
+        // Clear pending timeout
+        if (sliderFixTimeout) {
+            clearTimeout(sliderFixTimeout);
+            sliderFixTimeout = null;
+        }
+
         var modalWrapper = document.getElementById('anchor-modal-wrapper');
         if (modalWrapper) {
             modalWrapper.classList.add('hide');
@@ -538,14 +601,17 @@
     }
 
     function setupModalWatcher() {
-        if (modalListenerAttached) return;
-        modalListenerAttached = true;
-
-        window.addEventListener('rebelship-menu-click', function() {
-            if (isModalOpen) {
-                closeModal();
-            }
-        });
+        // Store listener function, removeEventListener before addEventListener to prevent duplicates
+        if (!rebelshipMenuClickHandler) {
+            rebelshipMenuClickHandler = function() {
+                if (isModalOpen) {
+                    closeModal();
+                }
+            };
+        } else {
+            window.removeEventListener('rebelship-menu-click', rebelshipMenuClickHandler);
+        }
+        window.addEventListener('rebelship-menu-click', rebelshipMenuClickHandler);
     }
 
     function openSettingsModal() {
@@ -565,6 +631,8 @@
                 updateSettingsContent();
                 return;
             }
+            // Cleanup event listeners before removing modal
+            cleanupModalEventListeners();
             existing.remove();
         }
 
@@ -576,7 +644,9 @@
 
         var modalBackground = document.createElement('div');
         modalBackground.id = 'anchor-modal-background';
-        modalBackground.onclick = function() { closeModal(); };
+        var bgClickHandler = function() { closeModal(); };
+        modalBackground.onclick = bgClickHandler;
+        modalEventListeners.push({ element: modalBackground, event: 'click', handler: bgClickHandler });
 
         var modalContentWrapper = document.createElement('div');
         modalContentWrapper.id = 'anchor-modal-content-wrapper';
@@ -598,13 +668,17 @@
         var closeIcon = document.createElement('img');
         closeIcon.className = 'header-icon closeModal';
         closeIcon.src = '/images/icons/close_icon_new.svg';
-        closeIcon.onclick = function() { closeModal(); };
+        var closeClickHandler = function() { closeModal(); };
+        closeIcon.onclick = closeClickHandler;
+        modalEventListeners.push({ element: closeIcon, event: 'click', handler: closeClickHandler });
         closeIcon.onerror = function() {
             this.style.display = 'none';
             var fallback = document.createElement('span');
             fallback.textContent = 'X';
             fallback.style.cssText = 'cursor:pointer;font-weight:bold;padding:0 .5rem;';
-            fallback.onclick = function() { closeModal(); };
+            var fallbackHandler = function() { closeModal(); };
+            fallback.onclick = fallbackHandler;
+            modalEventListeners.push({ element: fallback, event: 'click', handler: fallbackHandler });
             this.parentNode.appendChild(fallback);
         };
 
@@ -733,11 +807,15 @@
                 </div>\
             </div>';
 
-        document.getElementById('anchor-cancel').addEventListener('click', function() {
+        var cancelBtn = document.getElementById('anchor-cancel');
+        var cancelHandler = function() {
             closeModal();
-        });
+        };
+        cancelBtn.addEventListener('click', cancelHandler);
+        modalEventListeners.push({ element: cancelBtn, event: 'click', handler: cancelHandler });
 
-        document.getElementById('anchor-save').addEventListener('click', function() {
+        var saveBtn = document.getElementById('anchor-save');
+        var saveHandler = function() {
             var enabled = document.getElementById('anchor-enabled').checked;
             var amountRadio = document.querySelector('input[name="anchor-amount"]:checked');
             var amount = amountRadio ? parseInt(amountRadio.value, 10) : 1;
@@ -767,7 +845,9 @@
                 showToast('Auto Anchor settings saved');
                 closeModal();
             });
-        });
+        };
+        saveBtn.addEventListener('click', saveHandler);
+        modalEventListeners.push({ element: saveBtn, event: 'click', handler: saveHandler });
     }
 
     // ========== INITIALIZATION ==========
@@ -781,7 +861,28 @@
                 setTimeout(startMonitoring, 3000);
             }
         } else {
-            setTimeout(initBridge, 100);
+            // Use MutationObserver instead of recursive setTimeout
+            var bridgeObserver = new MutationObserver(function() {
+                if (window.RebelShipBridge) {
+                    bridgeObserver.disconnect();
+                    initBridge();
+                }
+            });
+            // Observe window object for RebelShipBridge property (fallback with timeout check)
+            var checkCount = 0;
+            var maxChecks = 50; // 5 seconds max
+            var checkInterval = setInterval(function() {
+                checkCount++;
+                if (window.RebelShipBridge) {
+                    clearInterval(checkInterval);
+                    bridgeObserver.disconnect();
+                    initBridge();
+                } else if (checkCount >= maxChecks) {
+                    clearInterval(checkInterval);
+                    bridgeObserver.disconnect();
+                    log('RebelShipBridge not found after 5 seconds', 'error');
+                }
+            }, 100);
         }
     }
 

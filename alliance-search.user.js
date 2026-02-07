@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name        ShippingManager - Open Alliance Search
 // @description Search all open alliances
-// @version     3.47
+// @version     3.49
 // @author      https://github.com/justonlyforyou/
 // @order        1
 // @match       https://shippingmanager.cc/*
 // @grant       none
 // @run-at      document-end
 // @RequireRebelShipMenu true
+// @RequireRebelShipStorage true
 // @enabled     false
 // ==/UserScript==
 /* globals Event, addMenuItem */
@@ -24,11 +25,13 @@
     var isDownloading = false;
     var isIndexReady = false;
     var PAGE_SIZE = 10;
+    var MAX_DOM_NODES = 1000; // Max alliance items in DOM to prevent memory issues
     var currentResults = [];
     var displayedCount = 0;
     var isLoadingMore = false;
     var isAllianceSearchModalOpen = false;
     var modalListenerAttached = false;
+    var cachedAlliances = null; // In-memory cache to avoid storage reads on every filter
 
     // ==================== Global Modal Registry ====================
     // Shared registry so userscripts don't interfere with each other's modals
@@ -322,9 +325,8 @@
                 offset += limit;
                 page++;
 
-                if (page % 10 === 0) {
-                    await saveDownloadProgress(offset, allAlliances);
-                }
+                // Save progress every page instead of every 10 pages
+                await saveDownloadProgress(offset, allAlliances);
 
                 await new Promise(function(r) { setTimeout(r, 200); });
             }
@@ -333,6 +335,8 @@
                 console.log('[AllianceSearch] Saved', allAlliances.length, 'alliances to storage');
             }
 
+            // Update in-memory cache after successful download
+            cachedAlliances = allAlliances;
             isIndexReady = true;
 
         } catch (e) {
@@ -361,21 +365,31 @@
         }
     }
 
-    // Filter and search alliances (async)
+    // Filter and search alliances (optimized: use in-memory cache, text search first)
     async function filterAlliances(query, minMembers, minContribution, minDepartures) {
-        var alliances = await getStoredAlliances();
+        // Use cached alliances if available, otherwise load from storage
+        if (!cachedAlliances) {
+            cachedAlliances = await getStoredAlliances();
+        }
+        var alliances = cachedAlliances;
 
-        var filtered = alliances.filter(function(a) {
-            if (minMembers > 0 && (a.members || 0) < minMembers) return false;
-            if (minContribution > 0 && (a.contribution_24h || 0) < minContribution) return false;
-            if (minDepartures > 0 && (a.departures_24h || 0) < minDepartures) return false;
-            return true;
-        });
+        var filtered = alliances;
 
+        // Text search first (creates smallest result set, then numeric filters)
         if (query && query.length >= 2) {
             var queryLower = query.toLowerCase();
             filtered = filtered.filter(function(a) {
                 return a.name.toLowerCase().indexOf(queryLower) !== -1;
+            });
+        }
+
+        // Then apply numeric filters on smaller set
+        if (minMembers > 0 || minContribution > 0 || minDepartures > 0) {
+            filtered = filtered.filter(function(a) {
+                if (minMembers > 0 && (a.members || 0) < minMembers) return false;
+                if (minContribution > 0 && (a.contribution_24h || 0) < minContribution) return false;
+                if (minDepartures > 0 && (a.departures_24h || 0) < minDepartures) return false;
+                return true;
             });
         }
 
@@ -387,10 +401,16 @@
     }
 
     // Open alliance search dialog (custom overlay, not game modal)
-    function openAllianceSearchModal() {
+    async function openAllianceSearchModal() {
         console.log('[AllianceSearch] Opening custom dialog');
         isAllianceSearchModalOpen = true;
         window.RebelShipModalRegistry.register(SCRIPT_NAME);
+
+        // Load alliances into cache when modal opens (if not already loaded)
+        if (!cachedAlliances) {
+            cachedAlliances = await getStoredAlliances();
+        }
+
         showDialog();
     }
 
@@ -678,6 +698,8 @@
             var minContrib = parseInt(minContribInput.value) || 0;
             var minDep = parseInt(minDeparturesInput.value) || 0;
 
+            // Clear array before reassignment to help GC
+            currentResults.length = 0;
             currentResults = await filterAlliances(query, minMembers, minContrib, minDep);
             displayedCount = 0;
 
@@ -706,35 +728,27 @@
             searchTimeout = setTimeout(doSearch, 300);
         });
 
-        resultsContainer.addEventListener('scroll', function() {
+        // Shared helper for checking if we need to load more results
+        function checkLoadMore() {
+            if (isLoadingMore) return;
+            if (displayedCount >= currentResults.length) return;
+
             var scrollTop = resultsContainer.scrollTop;
             var scrollHeight = resultsContainer.scrollHeight;
             var clientHeight = resultsContainer.clientHeight;
 
-            if (isLoadingMore) return;
-            if (displayedCount >= currentResults.length) return;
-
             if (scrollTop + clientHeight >= scrollHeight - 50) {
                 loadMoreResults(resultsContainer);
             }
-        });
+        }
 
-        resultsContainer.addEventListener('wheel', function(e) {
-            if (e.deltaY > 0) {
-                var scrollTop = resultsContainer.scrollTop;
-                var scrollHeight = resultsContainer.scrollHeight;
-                var clientHeight = resultsContainer.clientHeight;
-
-                if (scrollTop + clientHeight >= scrollHeight - 50) {
-                    if (!isLoadingMore && displayedCount < currentResults.length) {
-                        loadMoreResults(resultsContainer);
-                    }
-                }
-            }
-        });
+        // Single scroll handler (wheel events trigger scroll anyway)
+        resultsContainer.addEventListener('scroll', checkLoadMore);
 
         refreshBtn.addEventListener('click', function() {
             if (isDownloading) return;
+            // Clear cache so fresh data is loaded after download completes
+            cachedAlliances = null;
             fetchAllAlliances(true);
         });
 
@@ -745,7 +759,7 @@
         return wrapper;
     }
 
-    // Load more results (lazy loading)
+    // Load more results (lazy loading with max DOM node limit)
     function loadMoreResults(container) {
         if (isLoadingMore) return;
 
@@ -756,13 +770,26 @@
             return;
         }
 
+        // Check if we hit the max DOM node limit
+        if (displayedCount >= MAX_DOM_NODES) {
+            var limitMsg = document.createElement('div');
+            limitMsg.style.cssText = 'padding:20px;text-align:center;color:#666;font-size:14px;background:#fff;border-top:2px solid #3b82f6;';
+            limitMsg.innerHTML = '<strong>Showing first ' + MAX_DOM_NODES + ' results</strong><br>' +
+                '<span style="font-size:12px;">Use filters to narrow down results (' +
+                (currentResults.length - MAX_DOM_NODES) + ' more available)</span>';
+            container.appendChild(limitMsg);
+            return;
+        }
+
         isLoadingMore = true;
 
-        var nextBatch = currentResults.slice(displayedCount, displayedCount + PAGE_SIZE);
+        var remainingSlots = MAX_DOM_NODES - displayedCount;
+        var batchSize = Math.min(PAGE_SIZE, remainingSlots);
+        var nextBatch = currentResults.slice(displayedCount, displayedCount + batchSize);
         renderResults(nextBatch, container, true);
         displayedCount += nextBatch.length;
 
-        if (displayedCount < currentResults.length) {
+        if (displayedCount < currentResults.length && displayedCount < MAX_DOM_NODES) {
             var loadMoreBtn = document.createElement('button');
             loadMoreBtn.className = 'load-more-btn';
             loadMoreBtn.textContent = 'Load More (' + (currentResults.length - displayedCount) + ' remaining)';
@@ -776,7 +803,7 @@
         isLoadingMore = false;
     }
 
-    // Render search results (append mode for lazy loading)
+    // Render search results (append mode for lazy loading, optimized with DocumentFragment)
     function renderResults(alliances, container, append) {
         if (!append) {
             container.innerHTML = '';
@@ -789,6 +816,9 @@
             container.appendChild(noResults);
             return;
         }
+
+        // Use DocumentFragment for batch DOM insertion (one reflow instead of N)
+        var fragment = document.createDocumentFragment();
 
         alliances.forEach(function(alliance) {
             var item = document.createElement('div');
@@ -872,8 +902,11 @@
                 }, 200);
             });
 
-            container.appendChild(item);
+            fragment.appendChild(item);
         });
+
+        // Single DOM append at the end (one reflow instead of N)
+        container.appendChild(fragment);
     }
 
     // Start background download (async)

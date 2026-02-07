@@ -2,13 +2,14 @@
 // @name         ShippingManager - API Stats Monitor
 // @namespace    http://tampermonkey.net/
 // @description  Monitor all API calls to shippingmanager.cc in the background
-// @version      1.9
+// @version      1.92
 // @order        2
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-start
 // @RequireRebelShipMenu true
+// @RequireRebelShipStorage true
 // @enabled      false
 // ==/UserScript==
 /* globals addMenuItem, XMLHttpRequest */
@@ -21,10 +22,13 @@
     var MAX_AGE_MS = 61 * 60 * 1000;
     var SAVE_DEBOUNCE_MS = 1000;
     var apiCalls = [];
+    var aggregatedStats = {};
     var modalVisible = false;
     var currentFilter = 5;
     var saveTimeout = null;
+    var updateTimeout = null;
     var bridgeReady = false;
+    var filterButtons = [];
 
     function log(msg) {
         console.log('[ApiStats] ' + msg);
@@ -60,6 +64,7 @@
         if (data && Array.isArray(data)) {
             apiCalls = data;
             cleanupOldCalls();
+            rebuildAggregatedStats();
             log('Loaded ' + apiCalls.length + ' calls from database');
         }
     }
@@ -74,7 +79,6 @@
     }
 
     async function saveToDb() {
-        cleanupOldCalls();
         await dbSet('apiCalls', apiCalls);
     }
 
@@ -82,6 +86,21 @@
         var cutoff = Date.now() - MAX_AGE_MS;
         apiCalls = apiCalls.filter(function(call) {
             return call.timestamp >= cutoff;
+        });
+        rebuildAggregatedStats();
+    }
+
+    function rebuildAggregatedStats() {
+        aggregatedStats = {};
+        apiCalls.forEach(function(call) {
+            if (!aggregatedStats[call.url]) {
+                aggregatedStats[call.url] = { count: 0, lastCall: 0, timestamps: [] };
+            }
+            aggregatedStats[call.url].count++;
+            aggregatedStats[call.url].timestamps.push(call.timestamp);
+            if (call.timestamp > aggregatedStats[call.url].lastCall) {
+                aggregatedStats[call.url].lastCall = call.timestamp;
+            }
         });
     }
 
@@ -121,10 +140,20 @@
 
     function recordApiCall(url) {
         var endpoint = url.replace(/https?:\/\/[^\/]+/, '');
+        var now = Date.now();
+
         apiCalls.push({
             url: endpoint,
-            timestamp: Date.now()
+            timestamp: now
         });
+
+        if (!aggregatedStats[endpoint]) {
+            aggregatedStats[endpoint] = { count: 0, lastCall: 0, timestamps: [] };
+        }
+        aggregatedStats[endpoint].count++;
+        aggregatedStats[endpoint].lastCall = now;
+        aggregatedStats[endpoint].timestamps.push(now);
+
         if (bridgeReady) {
             scheduleSave();
         }
@@ -132,30 +161,21 @@
 
     function getFilteredStats(minutes) {
         var cutoff = Date.now() - (minutes * 60 * 1000);
-        var now = Date.now();
-        var filtered = apiCalls.filter(function(call) {
-            return call.timestamp >= cutoff;
-        });
-        log('getFilteredStats(' + minutes + 'min): total=' + apiCalls.length + ', filtered=' + filtered.length + ', cutoff=' + Math.round((now - cutoff) / 60000) + 'min ago');
-
-        var stats = {};
-        filtered.forEach(function(call) {
-            if (!stats[call.url]) {
-                stats[call.url] = { count: 0, lastCall: 0 };
-            }
-            stats[call.url].count++;
-            if (call.timestamp > stats[call.url].lastCall) {
-                stats[call.url].lastCall = call.timestamp;
-            }
-        });
-
         var result = [];
-        for (var url in stats) {
-            result.push({
-                url: url,
-                count: stats[url].count,
-                lastCall: stats[url].lastCall
+        var totalCalls = 0;
+
+        for (var url in aggregatedStats) {
+            var recentTimestamps = aggregatedStats[url].timestamps.filter(function(t) {
+                return t >= cutoff;
             });
+            if (recentTimestamps.length > 0) {
+                result.push({
+                    url: url,
+                    count: recentTimestamps.length,
+                    lastCall: Math.max.apply(null, recentTimestamps)
+                });
+                totalCalls += recentTimestamps.length;
+            }
         }
 
         result.sort(function(a, b) {
@@ -164,14 +184,17 @@
 
         return {
             endpoints: result,
-            totalCalls: filtered.length
+            totalCalls: totalCalls
         };
     }
 
     function escapeHtml(text) {
-        var div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+        return text
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
     }
 
     function formatTime(timestamp) {
@@ -195,7 +218,11 @@
 
         var header = document.createElement('div');
         header.style.cssText = 'padding:16px 20px;border-bottom:1px solid #3a3a5e;display:flex;justify-content:space-between;align-items:center;';
-        header.innerHTML = '<span style="font-size:18px;font-weight:700;">API Stats Monitor</span>';
+
+        var titleSpan = document.createElement('span');
+        titleSpan.textContent = 'API Stats Monitor';
+        titleSpan.style.cssText = 'font-size:18px;font-weight:700;';
+        header.appendChild(titleSpan);
 
         var closeBtn = document.createElement('button');
         closeBtn.textContent = 'X';
@@ -209,6 +236,7 @@
         var filters = document.createElement('div');
         filters.style.cssText = 'padding:12px 2px;border-bottom:1px solid #3a3a5e;display:flex;flex-wrap:wrap;gap:6px;align-items:center;';
 
+        filterButtons = [];
         [1, 5, 10, 15, 30, 45, 60].forEach(function(mins) {
             var btn = document.createElement('button');
             btn.textContent = mins + 'm';
@@ -217,15 +245,15 @@
                 (currentFilter === mins ? 'background:#4a90d9;color:#fff;' : 'background:#2a2a4e;color:#aaa;');
             btn.onclick = function() {
                 currentFilter = mins;
-                log('Filter changed to ' + mins + ' minutes, apiCalls.length=' + apiCalls.length);
-                updateModalContent();
-                document.querySelectorAll('[id^="api-stats-filter-"]').forEach(function(b) {
+                scheduleUpdate();
+                filterButtons.forEach(function(b) {
                     b.style.background = '#2a2a4e';
                     b.style.color = '#aaa';
                 });
                 btn.style.background = '#4a90d9';
                 btn.style.color = '#fff';
             };
+            filterButtons.push(btn);
             filters.appendChild(btn);
         });
 
@@ -235,7 +263,7 @@
         refreshBtn.onclick = async function() {
             refreshBtn.textContent = '...';
             await loadFromDb();
-            updateModalContent();
+            scheduleUpdate();
             refreshBtn.textContent = 'Refresh';
         };
         filters.appendChild(refreshBtn);
@@ -266,6 +294,11 @@
         updateModalContent();
     }
 
+    function scheduleUpdate() {
+        if (updateTimeout) clearTimeout(updateTimeout);
+        updateTimeout = setTimeout(updateModalContent, 50);
+    }
+
     function updateModalContent() {
         var stats = getFilteredStats(currentFilter);
         var summary = document.getElementById('api-stats-summary');
@@ -273,33 +306,53 @@
 
         if (!summary || !content) return;
 
-        summary.innerHTML = 'Total calls in last ' + currentFilter + ' minutes: <strong style="color:#fff;">' + stats.totalCalls + '</strong> | ' +
-            'Unique endpoints: <strong style="color:#fff;">' + stats.endpoints.length + '</strong> | ' +
-            'Calls/min: <strong style="color:#fff;">' + (stats.totalCalls / currentFilter).toFixed(1) + '</strong>';
+        summary.textContent = '';
+        var summaryText = 'Total calls in last ' + currentFilter + ' minutes: ';
+        var totalCallsStrong = document.createElement('strong');
+        totalCallsStrong.style.color = '#fff';
+        totalCallsStrong.textContent = stats.totalCalls;
+        summary.appendChild(document.createTextNode(summaryText));
+        summary.appendChild(totalCallsStrong);
+
+        summary.appendChild(document.createTextNode(' | Unique endpoints: '));
+        var endpointsStrong = document.createElement('strong');
+        endpointsStrong.style.color = '#fff';
+        endpointsStrong.textContent = stats.endpoints.length;
+        summary.appendChild(endpointsStrong);
+
+        summary.appendChild(document.createTextNode(' | Calls/min: '));
+        var callsPerMinStrong = document.createElement('strong');
+        callsPerMinStrong.style.color = '#fff';
+        callsPerMinStrong.textContent = (stats.totalCalls / currentFilter).toFixed(1);
+        summary.appendChild(callsPerMinStrong);
 
         if (stats.endpoints.length === 0) {
-            content.innerHTML = '<div style="padding:40px;text-align:center;color:#626b90;">No API calls recorded in the last ' + currentFilter + ' minutes</div>';
+            content.textContent = '';
+            var emptyDiv = document.createElement('div');
+            emptyDiv.style.cssText = 'padding:40px;text-align:center;color:#626b90;';
+            emptyDiv.textContent = 'No API calls recorded in the last ' + currentFilter + ' minutes';
+            content.appendChild(emptyDiv);
             return;
         }
 
-        var table = '<table style="width:100%;border-collapse:collapse;font-size:13px;">';
-        table += '<thead><tr style="background:#2a2a4e;position:sticky;top:0;">';
-        table += '<th style="padding:10px 12px;text-align:left;border-bottom:1px solid #3a3a5e;">Endpoint</th>';
-        table += '<th style="padding:10px 12px;text-align:center;border-bottom:1px solid #3a3a5e;width:80px;">Count</th>';
-        table += '<th style="padding:10px 12px;text-align:center;border-bottom:1px solid #3a3a5e;width:100px;">Last Call</th>';
-        table += '</tr></thead><tbody>';
+        var tableRows = ['<table style="width:100%;border-collapse:collapse;font-size:13px;">'];
+        tableRows.push('<thead><tr style="background:#2a2a4e;position:sticky;top:0;">');
+        tableRows.push('<th style="padding:10px 12px;text-align:left;border-bottom:1px solid #3a3a5e;">Endpoint</th>');
+        tableRows.push('<th style="padding:10px 12px;text-align:center;border-bottom:1px solid #3a3a5e;width:80px;">Count</th>');
+        tableRows.push('<th style="padding:10px 12px;text-align:center;border-bottom:1px solid #3a3a5e;width:100px;">Last Call</th>');
+        tableRows.push('</tr></thead><tbody>');
 
         stats.endpoints.forEach(function(ep, idx) {
             var bgColor = idx % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)';
-            table += '<tr style="background:' + bgColor + ';">';
-            table += '<td style="padding:8px 12px;border-bottom:1px solid #2a2a4e;word-break:break-all;color:#aaa;">' + escapeHtml(ep.url) + '</td>';
-            table += '<td style="padding:8px 12px;border-bottom:1px solid #2a2a4e;text-align:center;color:#4a90d9;font-weight:700;">' + ep.count + '</td>';
-            table += '<td style="padding:8px 12px;border-bottom:1px solid #2a2a4e;text-align:center;color:#626b90;">' + formatTime(ep.lastCall) + '</td>';
-            table += '</tr>';
+            tableRows.push('<tr style="background:' + bgColor + ';">');
+            tableRows.push('<td style="padding:8px 12px;border-bottom:1px solid #2a2a4e;word-break:break-all;color:#aaa;">' + escapeHtml(ep.url) + '</td>');
+            tableRows.push('<td style="padding:8px 12px;border-bottom:1px solid #2a2a4e;text-align:center;color:#4a90d9;font-weight:700;">' + ep.count + '</td>');
+            tableRows.push('<td style="padding:8px 12px;border-bottom:1px solid #2a2a4e;text-align:center;color:#626b90;">' + formatTime(ep.lastCall) + '</td>');
+            tableRows.push('</tr>');
         });
 
-        table += '</tbody></table>';
-        content.innerHTML = table;
+        tableRows.push('</tbody></table>');
+        content.innerHTML = tableRows.join('');
     }
 
     function toggleModal() {

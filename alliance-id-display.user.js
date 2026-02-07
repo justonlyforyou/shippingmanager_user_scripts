@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Alliance ID Display
 // @description Shows alliance ID next to alliance name in modal, click to copy
-// @version     1.0
+// @version     1.1
 // @author      https://github.com/justonlyforyou/
 // @order        59
 // @match       https://shippingmanager.cc/*
@@ -15,6 +15,9 @@
     'use strict';
 
     var MARKER_ATTR = 'data-alliance-id-injected';
+    var observer = null;
+    var debounceTimer = null;
+    var badgeCleanupFns = [];
 
     function getPinia() {
         var appEl = document.querySelector('#app');
@@ -72,18 +75,29 @@
         badge.title = 'Click to copy Alliance ID';
         badge.style.cssText = 'color:#626b90;font-size:inherit;font-weight:400;margin-left:5px;cursor:pointer;opacity:0.8;';
 
-        badge.addEventListener('mouseenter', function() {
+        var onMouseEnter = function() {
             badge.style.opacity = '1';
             badge.style.textDecoration = 'underline';
-        });
-        badge.addEventListener('mouseleave', function() {
+        };
+        var onMouseLeave = function() {
             badge.style.opacity = '0.8';
             badge.style.textDecoration = 'none';
-        });
-        badge.addEventListener('click', function(e) {
+        };
+        var onClick = function(e) {
             e.preventDefault();
             e.stopPropagation();
             copyToClipboard(String(allianceId));
+        };
+
+        badge.addEventListener('mouseenter', onMouseEnter);
+        badge.addEventListener('mouseleave', onMouseLeave);
+        badge.addEventListener('click', onClick);
+
+        // Store cleanup function
+        badgeCleanupFns.push(function() {
+            badge.removeEventListener('mouseenter', onMouseEnter);
+            badge.removeEventListener('mouseleave', onMouseLeave);
+            badge.removeEventListener('click', onClick);
         });
 
         return badge;
@@ -100,14 +114,26 @@
         var modalContainer = document.querySelector('#modal-container');
         if (!modalContainer) return;
 
+        // Early exit: check if badge already exists
         if (modalContainer.querySelector('[' + MARKER_ATTR + ']')) return;
 
-        var allDivs = modalContainer.querySelectorAll('div');
+        // More specific selector: look for divs that likely contain alliance name
+        // These are typically larger text divs with specific styling
+        var allDivs = modalContainer.querySelectorAll('div[class*="text"], div[class*="title"], div[class*="header"], div[class*="name"]');
+
+        // Fallback to all divs if no class-based divs found
+        if (allDivs.length === 0) {
+            allDivs = modalContainer.querySelectorAll('div');
+        }
+
         for (var i = 0; i < allDivs.length; i++) {
             var div = allDivs[i];
+
+            // Extract direct text content (not from child elements)
             var directText = '';
-            for (var j = 0; j < div.childNodes.length; j++) {
-                var node = div.childNodes[j];
+            var childNodes = div.childNodes;
+            for (var j = 0; j < childNodes.length; j++) {
+                var node = childNodes[j];
                 if (node.nodeType === Node.TEXT_NODE) {
                     directText += node.textContent.trim();
                 }
@@ -120,14 +146,73 @@
         }
     }
 
-    var observer = new MutationObserver(function() {
-        injectAllianceId();
+    function debouncedInject() {
+        if (debounceTimer) {
+            clearTimeout(debounceTimer);
+        }
+        debounceTimer = setTimeout(function() {
+            injectAllianceId();
+            debounceTimer = null;
+        }, 200);
+    }
+
+    function startObserver() {
+        if (observer) return; // Already running
+
+        var modalContainer = document.querySelector('#modal-container');
+        if (!modalContainer) return;
+
+        observer = new MutationObserver(debouncedInject);
+        observer.observe(modalContainer, {
+            childList: true,
+            subtree: true
+        });
+    }
+
+    function stopObserver() {
+        if (observer) {
+            observer.disconnect();
+            observer = null;
+        }
+        if (debounceTimer) {
+            clearTimeout(debounceTimer);
+            debounceTimer = null;
+        }
+        // Clean up event listeners
+        for (var i = 0; i < badgeCleanupFns.length; i++) {
+            badgeCleanupFns[i]();
+        }
+        badgeCleanupFns = [];
+    }
+
+    // Watch for modal-container appearing/disappearing
+    var bodyObserver = new MutationObserver(function() {
+        var modalContainer = document.querySelector('#modal-container');
+
+        if (modalContainer) {
+            // Modal is visible
+            var hasContent = modalContainer.children.length > 0;
+            if (hasContent) {
+                startObserver();
+                injectAllianceId();
+            } else {
+                stopObserver();
+            }
+        } else {
+            // Modal is gone
+            stopObserver();
+        }
     });
 
-    observer.observe(document.body, {
+    bodyObserver.observe(document.body, {
         childList: true,
         subtree: true
     });
 
-    setInterval(injectAllianceId, 1000);
+    // Initial check
+    var initialModal = document.querySelector('#modal-container');
+    if (initialModal && initialModal.children.length > 0) {
+        startObserver();
+        injectAllianceId();
+    }
 })();

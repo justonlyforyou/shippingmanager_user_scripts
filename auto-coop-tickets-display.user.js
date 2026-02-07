@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Auto Co-Op & Co-Op Header Display
 // @description Shows open Co-Op tickets, auto-sends COOP vessels to alliance members
-// @version     5.38
+// @version     5.41
 // @author      https://github.com/justonlyforyou/
 // @order        3
 // @match       https://shippingmanager.cc/*
@@ -10,6 +10,7 @@
 // @enabled     false
 // @background-job-required true
 // @RequireRebelShipMenu true
+// @RequireRebelShipStorage true
 // ==/UserScript==
 /* globals addMenuItem */
 
@@ -157,9 +158,9 @@
         var result = { totalSent: 0, totalRequested: 0, results: [] };
 
         return Promise.all([
-            fetchCoopData(),
-            fetchContacts(),
-            fetchMemberSettings()
+            getCachedOrFetch('coop', fetchCoopData),
+            getCachedOrFetch('contacts', fetchContacts),
+            getCachedOrFetch('members', fetchMemberSettings)
         ]).then(function(responses) {
             var coopData = responses[0];
             var contactData = responses[1];
@@ -355,21 +356,46 @@
         sendSystemNotification(SCRIPT_NAME, message);
     }
 
-    function getToastStore() {
+    function getPiniaStore(storeName) {
         try {
             var appEl = document.querySelector('#app');
             if (!appEl || !appEl.__vue_app__) return null;
             var app = appEl.__vue_app__;
             var pinia = app._context.provides.pinia || app.config.globalProperties.$pinia;
             if (!pinia || !pinia._s) return null;
-            return pinia._s.get('toast');
+            return pinia._s.get(storeName);
         } catch {
             return null;
         }
     }
 
+    function getToastStore() {
+        return getPiniaStore('toast');
+    }
+
     // Cache for coop data from API
     var coopCache = { available: 0, cap: 0, lastFetch: 0 };
+    var coopCacheFails = 0;
+
+    // API cache with TTL for all 3 API calls
+    var apiCache = {
+        coop: { data: null, timestamp: 0 },
+        contacts: { data: null, timestamp: 0 },
+        members: { data: null, timestamp: 0 }
+    };
+    var CACHE_TTL = 2 * 60 * 1000; // 2 minutes
+
+    function getCachedOrFetch(cacheKey, fetchFn) {
+        var now = Date.now();
+        var cached = apiCache[cacheKey];
+        if (cached.data && (now - cached.timestamp) < CACHE_TTL) {
+            return Promise.resolve(cached.data);
+        }
+        return fetchFn().then(function(data) {
+            apiCache[cacheKey] = { data: data, timestamp: now };
+            return data;
+        });
+    }
 
     function refreshCoopCache() {
         return fetchCoopData().then(function(data) {
@@ -378,10 +404,14 @@
                 // coop_boost takes priority over cap (alliance benefit)
                 coopCache.cap = data.data.coop.coop_boost || data.data.coop.cap;
                 coopCache.lastFetch = Date.now();
+                coopCacheFails = 0; // Reset on success
             }
             return coopCache;
         }).catch(function() {
-            // Ignore fetch errors, use cached data
+            coopCacheFails++;
+            if (coopCacheFails > 3) {
+                coopCache.lastFetch = 0; // Cache invalidieren nach 3 Fails
+            }
             return coopCache;
         });
     }
@@ -411,22 +441,25 @@
 
     function openAllianceCoopTab() {
         var allianceBtn = document.getElementById('alliance-modal-btn');
-        if (allianceBtn) {
-            allianceBtn.click();
-            // Wait for #top-nav to appear, then click after modal is stable
-            var attempts = 0;
-            var maxAttempts = 20;
-            var checkInterval = setInterval(function() {
-                attempts++;
-                if (clickCoopTab()) {
-                    clearInterval(checkInterval);
-                } else if (attempts >= maxAttempts) {
-                    clearInterval(checkInterval);
-                }
-            }, 150);
-        }
+        if (!allianceBtn) return;
+
+        allianceBtn.click();
+
+        var observer = new MutationObserver(function(mutations, obs) {
+            if (clickCoopTab()) {
+                obs.disconnect();
+            }
+        });
+
+        observer.observe(document.body, { childList: true, subtree: true });
+
+        // Timeout nach 5 Sekunden
+        setTimeout(function() { observer.disconnect(); }, 5000);
     }
 
+
+    // Cache for CO2 container element
+    var co2ContainerCache = null;
 
     /**
      * Create 2-line coop display (like bunker):
@@ -437,12 +470,18 @@
     function createCoopDisplay() {
         if (coopElement) return coopElement;
 
-        // Find CO2 container - this is always present whether bunker script runs or not
-        var co2Container = document.querySelector('.content.led.cursor-pointer');
-        if (!co2Container || !co2Container.parentNode) {
+        // Find CO2 container - cache it on first success
+        if (!co2ContainerCache) {
+            co2ContainerCache = document.querySelector('.content.led.cursor-pointer');
+        }
+
+        if (!co2ContainerCache || !co2ContainerCache.parentNode) {
+            co2ContainerCache = null; // Reset on failure
             log('CO2 container not found, retrying...');
             return null;
         }
+
+        var co2Container = co2ContainerCache;
 
         // Create container
         coopElement = document.createElement('div');
@@ -469,36 +508,66 @@
         return coopElement;
     }
 
-    var coopDisplayRetries = 0;
+    function waitForCoopContainer() {
+        return new Promise(function(resolve, reject) {
+            var container = document.querySelector('.content.led.cursor-pointer');
+            if (container) {
+                resolve(container);
+                return;
+            }
+
+            var observer = new MutationObserver(function(mutations, obs) {
+                container = document.querySelector('.content.led.cursor-pointer');
+                if (container) {
+                    obs.disconnect();
+                    resolve(container);
+                }
+            });
+
+            observer.observe(document.body, { childList: true, subtree: true });
+
+            setTimeout(function() {
+                observer.disconnect();
+                reject(new Error('Timeout'));
+            }, 20000);
+        });
+    }
 
     function updateCoopDisplay() {
-        return refreshCoopCache().then(function() {
-            var available = coopCache.available;
-            var cap = coopCache.cap;
+        // Use cached data instead of re-fetching
+        var available = coopCache.available;
+        var cap = coopCache.cap;
 
-            // Hide if no coop data (not in alliance)
-            if (cap === 0) {
-                if (coopElement) coopElement.style.display = 'none';
-                return;
-            }
+        // If cache is empty (first initialization), then fetch
+        if (coopCache.lastFetch === 0) {
+            return refreshCoopCache().then(updateCoopDisplay);
+        }
 
-            if (!coopElement) createCoopDisplay();
-            if (!coopElement) {
-                // Retry a few times if element not created yet
-                coopDisplayRetries++;
-                if (coopDisplayRetries < 10) {
-                    setTimeout(updateCoopDisplay, 2000);
-                }
-                return;
-            }
+        // Hide if no coop data (not in alliance)
+        if (cap === 0) {
+            if (coopElement) coopElement.style.display = 'none';
+            return Promise.resolve();
+        }
 
-            coopElement.style.display = '';
-            if (coopValueElement) {
-                coopValueElement.textContent = available + '/' + cap;
-                // Red if available > 0 (tickets waiting), green if 0
-                coopValueElement.style.color = available > 0 ? '#ef4444' : '#4ade80';
-            }
-        });
+        if (!coopElement) createCoopDisplay();
+        if (!coopElement) {
+            // Use MutationObserver instead of polling retries
+            return waitForCoopContainer().then(function() {
+                co2ContainerCache = null; // Reset cache to refetch
+                return updateCoopDisplay();
+            }).catch(function() {
+                log('Timeout waiting for CO2 container');
+            });
+        }
+
+        coopElement.style.display = '';
+        if (coopValueElement) {
+            coopValueElement.textContent = available + '/' + cap;
+            // Red if available > 0 (tickets waiting), green if 0
+            coopValueElement.style.color = available > 0 ? '#ef4444' : '#4ade80';
+        }
+
+        return Promise.resolve();
     }
 
     // ========== UI: SETTINGS MODAL (Game-style custom modal) ==========
@@ -558,16 +627,7 @@
     }
 
     function getModalStore() {
-        try {
-            var appEl = document.querySelector('#app');
-            if (!appEl || !appEl.__vue_app__) return null;
-            var app = appEl.__vue_app__;
-            var pinia = app._context.provides.pinia || app.config.globalProperties.$pinia;
-            if (!pinia || !pinia._s) return null;
-            return pinia._s.get('modal');
-        } catch {
-            return null;
-        }
+        return getPiniaStore('modal');
     }
 
     function openSettingsModal() {
@@ -753,10 +813,14 @@
         // Load settings in background then continue initialization
         loadSettings().then(function() {
             setupCoopModalWatcher();
-            updateCoopDisplay();
 
-            // Update display every 15 minutes (Android background job compatible)
-            setInterval(updateCoopDisplay, RUN_INTERVAL);
+            // Initial display update and cache population
+            refreshCoopCache().then(updateCoopDisplay);
+
+            // Update cache every 15 minutes, then refresh display
+            setInterval(function() {
+                refreshCoopCache().then(updateCoopDisplay);
+            }, RUN_INTERVAL);
 
             // Run auto-send every 15 minutes
             setInterval(scheduledRun, RUN_INTERVAL);
@@ -774,13 +838,21 @@
         });
     };
 
-    // Listen for header resize event to reinitialize display
-    window.addEventListener('rebelship-header-resize', function() {
+    // Store header resize handler for cleanup
+    var headerResizeHandler = function() {
         coopElement = null;
         coopValueElement = null;
-        coopDisplayRetries = 0;
-        setTimeout(updateCoopDisplay, 250);
-    });
+        co2ContainerCache = null;
+        refreshCoopCache().then(updateCoopDisplay);
+    };
+
+    // Listen for header resize event to reinitialize display
+    window.addEventListener('rebelship-header-resize', headerResizeHandler);
+
+    // Optional: Cleanup-Funktion für Userscript-Neuladen
+    window.rebelshipCleanupAutoCoop = function() {
+        window.removeEventListener('rebelship-header-resize', headerResizeHandler);
+    };
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Auto Marketing & Reputation Header Display
 // @description Shows reputation in header, auto-renews campaigns when expired with the most expensive possible one.
-// @version     5.29
+// @version     5.31
 // @author      joseywales - Pimped by https://github.com/justonlyforyou/
 // @order        6
 // @match       https://shippingmanager.cc/*
@@ -9,6 +9,7 @@
 // @run-at      document-end
 // @enabled     false
 // @RequireRebelShipMenu true
+// @RequireRebelShipStorage true
 // ==/UserScript==
 /* globals addMenuItem */
 
@@ -20,12 +21,19 @@
     var SCRIPT_NAME = 'AutoReputation';
     var STORE_NAME = 'data';
 
+    // API base URL (best practice: centralized API endpoint management)
+    var API_BASE = 'https://shippingmanager.cc/api';
+
     var reputationElement = null;
     var reputationValueElement = null;
     var isProcessing = false;
+    var isUpdating = false;
     var displayRetries = 0;
     var isReputationModalOpen = false;
     var modalListenerAttached = false;
+
+    // Campaign cache with 5 min TTL
+    var campaignCache = { data: null, timestamp: 0, ttl: 5 * 60 * 1000 };
 
     // ========== SETTINGS ==========
     var settings = {
@@ -100,27 +108,38 @@
     }
 
     function fetchUserSettings() {
-        return fetchWithCookie('https://shippingmanager.cc/api/user/get-user-settings', {
+        return fetchWithCookie(API_BASE + '/user/get-user-settings', {
             method: 'GET'
         });
     }
 
     function fetchCampaigns() {
-        return fetchWithCookie('https://shippingmanager.cc/api/marketing-campaign/get-marketing', {
+        return fetchWithCookie(API_BASE + '/marketing-campaign/get-marketing', {
             method: 'POST',
             body: JSON.stringify({})
         });
     }
 
+    function getCachedCampaigns() {
+        if (campaignCache.data && Date.now() - campaignCache.timestamp < campaignCache.ttl) {
+            return Promise.resolve(campaignCache.data);
+        }
+        return fetchCampaigns().then(function(data) {
+            campaignCache.data = data;
+            campaignCache.timestamp = Date.now();
+            return data;
+        });
+    }
+
     function activateCampaign(campaignId) {
-        return fetchWithCookie('https://shippingmanager.cc/api/marketing-campaign/activate-marketing-campaign', {
+        return fetchWithCookie(API_BASE + '/marketing-campaign/activate-marketing-campaign', {
             method: 'POST',
             body: JSON.stringify({ campaign_id: campaignId })
         });
     }
 
     // ========== AUTO RENEWAL LOGIC ==========
-    function runAutoRenewal(manual) {
+    function runAutoRenewal(manual, cachedUserSettings) {
         if (isProcessing) {
             log('Already processing, skipping');
             return Promise.resolve({ skipped: true });
@@ -133,7 +152,7 @@
         isProcessing = true;
         log('Starting auto campaign renewal...');
 
-        return fetchCampaigns()
+        return getCachedCampaigns()
             .then(function(campaignData) {
                 if (!campaignData || !campaignData.data) {
                     log('Failed to fetch campaigns');
@@ -166,7 +185,11 @@
                     return { renewed: [] };
                 }
 
-                return fetchUserSettings().then(function(userSettings) {
+                var userSettingsPromise = cachedUserSettings
+                    ? Promise.resolve(cachedUserSettings)
+                    : fetchUserSettings();
+
+                return userSettingsPromise.then(function(userSettings) {
                     var currentCash = userSettings.user ? userSettings.user.cash : 0;
 
                     if (currentCash < settings.minCash) {
@@ -315,6 +338,11 @@
         var modalWrapper = document.getElementById('reputation-modal-wrapper');
         if (modalWrapper) {
             modalWrapper.classList.add('hide');
+            setTimeout(function() {
+                if (modalWrapper.parentNode) {
+                    modalWrapper.parentNode.removeChild(modalWrapper);
+                }
+            }, 200);
         }
     }
 
@@ -410,17 +438,20 @@
         reputationElement.style.cssText = 'display:flex;flex-direction:column;align-items:center;line-height:1.2;cursor:pointer;margin-left:8px;';
         reputationElement.addEventListener('click', openFinanceMarketing);
 
+        var fragment = document.createDocumentFragment();
+
         var label = document.createElement('span');
         label.style.cssText = 'display:block;color:#9ca3af;font-size:12px;';
         label.textContent = 'Rep';
-        reputationElement.appendChild(label);
+        fragment.appendChild(label);
 
         reputationValueElement = document.createElement('span');
         reputationValueElement.id = 'reputation-value';
         reputationValueElement.style.cssText = 'display:block;font-weight:bold;font-size:12px;';
         reputationValueElement.textContent = '...%';
-        reputationElement.appendChild(reputationValueElement);
+        fragment.appendChild(reputationValueElement);
 
+        reputationElement.appendChild(fragment);
         insertAfter.parentNode.insertBefore(reputationElement, insertAfter.nextSibling);
 
         return reputationElement;
@@ -433,7 +464,8 @@
         if (!reputationElement) {
             displayRetries++;
             if (displayRetries < 10) {
-                setTimeout(function() { updateReputationDisplay(rep); }, 2000);
+                var retryDelay = Math.min(1000 * Math.pow(2, displayRetries), 10000);
+                setTimeout(function() { updateReputationDisplay(rep); }, retryDelay);
             }
             return;
         }
@@ -538,62 +570,149 @@
         var settingsContent = document.getElementById('reputation-settings-content');
         if (!settingsContent) return;
 
-        settingsContent.innerHTML = '\
-            <div style="padding:20px;max-width:400px;margin:0 auto;font-family:Lato,sans-serif;color:#01125d;">\
-                <div style="margin-bottom:20px;">\
-                    <label style="display:flex;align-items:center;cursor:pointer;font-weight:700;font-size:16px;">\
-                        <input type="checkbox" id="rep-auto-renewal" ' + (settings.autoRenewalEnabled ? 'checked' : '') + '\
-                               style="width:20px;height:20px;margin-right:12px;accent-color:#0db8f4;cursor:pointer;">\
-                        <span>Auto-Renew Campaigns</span>\
-                    </label>\
-                    <div style="font-size:12px;color:#626b90;margin-top:6px;margin-left:32px;">\
-                        Automatically renews reputation, awareness, and green campaigns when they expire. Buys the most expensive campaign you can afford while respecting your minimum cash balance.\
-                    </div>\
-                </div>\
-                <div style="margin-bottom:20px;">\
-                    <label style="display:block;font-weight:700;font-size:14px;margin-bottom:8px;">Minimum Cash Balance</label>\
-                    <input type="number" id="rep-min-cash" value="' + settings.minCash + '"\
-                           style="width:100%;padding:10px;border:1px solid #ccc;border-radius:6px;font-size:14px;box-sizing:border-box;" placeholder="0">\
-                    <div style="font-size:12px;color:#626b90;margin-top:6px;">\
-                        Only renew campaigns if cash balance is above this amount\
-                    </div>\
-                </div>\
-                <div style="margin-bottom:24px;">\
-                    <div style="font-weight:700;font-size:14px;margin-bottom:12px;color:#01125d;">Notifications</div>\
-                    <div style="display:flex;gap:24px;">\
-                        <label style="display:flex;align-items:center;cursor:pointer;">\
-                            <input type="checkbox" id="rep-notify-ingame" ' + (settings.notifyIngame ? 'checked' : '') + '\
-                                   style="width:18px;height:18px;margin-right:8px;accent-color:#0db8f4;cursor:pointer;">\
-                            <span style="font-size:13px;">Ingame</span>\
-                        </label>\
-                        <label style="display:flex;align-items:center;cursor:pointer;">\
-                            <input type="checkbox" id="rep-notify-system" ' + (settings.notifySystem ? 'checked' : '') + '\
-                                   style="width:18px;height:18px;margin-right:8px;accent-color:#0db8f4;cursor:pointer;">\
-                            <span style="font-size:13px;">System</span>\
-                        </label>\
-                    </div>\
-                </div>\
-                <div style="display:flex;gap:12px;justify-content:space-between;margin-top:30px;">\
-                    <button id="rep-run-now" style="padding:10px 24px;background:linear-gradient(180deg,#3b82f6,#1d4ed8);border:0;border-radius:6px;color:#fff;cursor:pointer;font-size:14px;font-weight:500;">Run Now</button>\
-                    <button id="rep-save" style="padding:10px 24px;background:linear-gradient(180deg,#46ff33,#129c00);border:0;border-radius:6px;color:#fff;cursor:pointer;font-size:16px;font-weight:500;">Save</button>\
-                </div>\
-            </div>';
+        settingsContent.textContent = '';
 
-        document.getElementById('rep-run-now').addEventListener('click', function() {
-            var btn = this;
-            btn.disabled = true;
-            btn.textContent = 'Running...';
+        var container = document.createElement('div');
+        container.style.cssText = 'padding:20px;max-width:400px;margin:0 auto;font-family:Lato,sans-serif;color:#01125d;';
+
+        // Auto-renewal section
+        var autoRenewalSection = document.createElement('div');
+        autoRenewalSection.style.cssText = 'margin-bottom:20px;';
+
+        var autoRenewalLabel = document.createElement('label');
+        autoRenewalLabel.style.cssText = 'display:flex;align-items:center;cursor:pointer;font-weight:700;font-size:16px;';
+
+        var autoRenewalCheckbox = document.createElement('input');
+        autoRenewalCheckbox.type = 'checkbox';
+        autoRenewalCheckbox.id = 'rep-auto-renewal';
+        autoRenewalCheckbox.checked = settings.autoRenewalEnabled;
+        autoRenewalCheckbox.style.cssText = 'width:20px;height:20px;margin-right:12px;accent-color:#0db8f4;cursor:pointer;';
+
+        var autoRenewalText = document.createElement('span');
+        autoRenewalText.textContent = 'Auto-Renew Campaigns';
+
+        autoRenewalLabel.appendChild(autoRenewalCheckbox);
+        autoRenewalLabel.appendChild(autoRenewalText);
+
+        var autoRenewalDesc = document.createElement('div');
+        autoRenewalDesc.style.cssText = 'font-size:12px;color:#626b90;margin-top:6px;margin-left:32px;';
+        autoRenewalDesc.textContent = 'Automatically renews reputation, awareness, and green campaigns when they expire. Buys the most expensive campaign you can afford while respecting your minimum cash balance.';
+
+        autoRenewalSection.appendChild(autoRenewalLabel);
+        autoRenewalSection.appendChild(autoRenewalDesc);
+
+        // Min cash section
+        var minCashSection = document.createElement('div');
+        minCashSection.style.cssText = 'margin-bottom:20px;';
+
+        var minCashLabel = document.createElement('label');
+        minCashLabel.style.cssText = 'display:block;font-weight:700;font-size:14px;margin-bottom:8px;';
+        minCashLabel.textContent = 'Minimum Cash Balance';
+
+        var minCashInput = document.createElement('input');
+        minCashInput.type = 'number';
+        minCashInput.id = 'rep-min-cash';
+        minCashInput.value = settings.minCash;
+        minCashInput.placeholder = '0';
+        minCashInput.style.cssText = 'width:100%;padding:10px;border:1px solid #ccc;border-radius:6px;font-size:14px;box-sizing:border-box;';
+
+        var minCashDesc = document.createElement('div');
+        minCashDesc.style.cssText = 'font-size:12px;color:#626b90;margin-top:6px;';
+        minCashDesc.textContent = 'Only renew campaigns if cash balance is above this amount';
+
+        minCashSection.appendChild(minCashLabel);
+        minCashSection.appendChild(minCashInput);
+        minCashSection.appendChild(minCashDesc);
+
+        // Notifications section
+        var notifySection = document.createElement('div');
+        notifySection.style.cssText = 'margin-bottom:24px;';
+
+        var notifyTitle = document.createElement('div');
+        notifyTitle.style.cssText = 'font-weight:700;font-size:14px;margin-bottom:12px;color:#01125d;';
+        notifyTitle.textContent = 'Notifications';
+
+        var notifyOptions = document.createElement('div');
+        notifyOptions.style.cssText = 'display:flex;gap:24px;';
+
+        var ingameLabel = document.createElement('label');
+        ingameLabel.style.cssText = 'display:flex;align-items:center;cursor:pointer;';
+
+        var ingameCheckbox = document.createElement('input');
+        ingameCheckbox.type = 'checkbox';
+        ingameCheckbox.id = 'rep-notify-ingame';
+        ingameCheckbox.checked = settings.notifyIngame;
+        ingameCheckbox.style.cssText = 'width:18px;height:18px;margin-right:8px;accent-color:#0db8f4;cursor:pointer;';
+
+        var ingameText = document.createElement('span');
+        ingameText.style.cssText = 'font-size:13px;';
+        ingameText.textContent = 'Ingame';
+
+        ingameLabel.appendChild(ingameCheckbox);
+        ingameLabel.appendChild(ingameText);
+
+        var systemLabel = document.createElement('label');
+        systemLabel.style.cssText = 'display:flex;align-items:center;cursor:pointer;';
+
+        var systemCheckbox = document.createElement('input');
+        systemCheckbox.type = 'checkbox';
+        systemCheckbox.id = 'rep-notify-system';
+        systemCheckbox.checked = settings.notifySystem;
+        systemCheckbox.style.cssText = 'width:18px;height:18px;margin-right:8px;accent-color:#0db8f4;cursor:pointer;';
+
+        var systemText = document.createElement('span');
+        systemText.style.cssText = 'font-size:13px;';
+        systemText.textContent = 'System';
+
+        systemLabel.appendChild(systemCheckbox);
+        systemLabel.appendChild(systemText);
+
+        notifyOptions.appendChild(ingameLabel);
+        notifyOptions.appendChild(systemLabel);
+
+        notifySection.appendChild(notifyTitle);
+        notifySection.appendChild(notifyOptions);
+
+        // Buttons section
+        var buttonsSection = document.createElement('div');
+        buttonsSection.style.cssText = 'display:flex;gap:12px;justify-content:space-between;margin-top:30px;';
+
+        var runNowBtn = document.createElement('button');
+        runNowBtn.id = 'rep-run-now';
+        runNowBtn.style.cssText = 'padding:10px 24px;background:linear-gradient(180deg,#3b82f6,#1d4ed8);border:0;border-radius:6px;color:#fff;cursor:pointer;font-size:14px;font-weight:500;';
+        runNowBtn.textContent = 'Run Now';
+
+        var saveBtn = document.createElement('button');
+        saveBtn.id = 'rep-save';
+        saveBtn.style.cssText = 'padding:10px 24px;background:linear-gradient(180deg,#46ff33,#129c00);border:0;border-radius:6px;color:#fff;cursor:pointer;font-size:16px;font-weight:500;';
+        saveBtn.textContent = 'Save';
+
+        buttonsSection.appendChild(runNowBtn);
+        buttonsSection.appendChild(saveBtn);
+
+        // Assemble all sections
+        container.appendChild(autoRenewalSection);
+        container.appendChild(minCashSection);
+        container.appendChild(notifySection);
+        container.appendChild(buttonsSection);
+
+        settingsContent.appendChild(container);
+
+        // Event listeners
+        runNowBtn.addEventListener('click', function() {
+            this.disabled = true;
+            this.textContent = 'Running...';
             runAutoRenewal(true).then(function() {
-                btn.textContent = 'Run Now';
-                btn.disabled = false;
+                runNowBtn.textContent = 'Run Now';
+                runNowBtn.disabled = false;
             });
         });
 
-        document.getElementById('rep-save').addEventListener('click', function() {
-            settings.autoRenewalEnabled = document.getElementById('rep-auto-renewal').checked;
-            settings.minCash = parseInt(document.getElementById('rep-min-cash').value, 10) || 0;
-            settings.notifyIngame = document.getElementById('rep-notify-ingame').checked;
-            settings.notifySystem = document.getElementById('rep-notify-system').checked;
+        saveBtn.addEventListener('click', function() {
+            settings.autoRenewalEnabled = autoRenewalCheckbox.checked;
+            settings.minCash = parseInt(minCashInput.value, 10) || 0;
+            settings.notifyIngame = ingameCheckbox.checked;
+            settings.notifySystem = systemCheckbox.checked;
             if (settings.notifySystem) {
                 requestNotificationPermission();
             }
@@ -605,6 +724,18 @@
 
     // ========== MAIN UPDATE LOOP ==========
     function updateReputation() {
+        if (isUpdating) {
+            log('Update already in progress, skipping');
+            return;
+        }
+
+        if (document.hidden) {
+            log('Tab inactive, skipping update');
+            return;
+        }
+
+        isUpdating = true;
+
         fetchUserSettings()
             .then(function(data) {
                 var rep = data && data.user ? data.user.reputation : null;
@@ -614,7 +745,7 @@
                 }
 
                 if (settings.autoRenewalEnabled) {
-                    return fetchCampaigns().then(function(campaignData) {
+                    return getCachedCampaigns().then(function(campaignData) {
                         if (campaignData && campaignData.data) {
                             var activeCampaigns = campaignData.data.active_campaigns ?? [];
                             var activeCampaignTypes = {};
@@ -627,7 +758,7 @@
 
                             if (missingTypes.length > 0) {
                                 log('Missing campaign types: ' + missingTypes.join(', ') + ' - triggering renewal');
-                                return runAutoRenewal(false);
+                                return runAutoRenewal(false, data);
                             }
                         }
                     });
@@ -635,6 +766,9 @@
             })
             .catch(function(e) {
                 console.error('[Reputation] Error:', e);
+            })
+            .finally(function() {
+                isUpdating = false;
             });
     }
 
@@ -666,10 +800,17 @@
     }
 
     window.addEventListener('rebelship-header-resize', function() {
+        if (reputationElement && reputationElement.parentNode) {
+            reputationElement.parentNode.removeChild(reputationElement);
+        }
         reputationElement = null;
         reputationValueElement = null;
         displayRetries = 0;
         setTimeout(updateReputation, 350);
+    });
+
+    window.addEventListener('beforeunload', function() {
+        modalListenerAttached = false;
     });
 
     if (document.readyState === 'loading') {

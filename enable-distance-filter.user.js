@@ -2,7 +2,7 @@
 // @name         ShippingManager - Distance Filter for Route Planner
 // @namespace    http://tampermonkey.net/
 // @description  Filter ports by distance when creating new routes!
-// @version      9.19
+// @version      9.22
 // @order        55
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
@@ -214,10 +214,20 @@
         dropdownOpen = true;
     }
 
+    function isShowAllPortsStep(container) {
+        var buttons = container.querySelectorAll('button');
+        for (var i = 0; i < buttons.length; i++) {
+            var text = (buttons[i].textContent || '').trim().toLowerCase();
+            if (text.indexOf('show all ports') !== -1) return true;
+        }
+        return false;
+    }
+
     function inject() {
         if (injected) return;
         var container = document.querySelector("#createRoutePopup .buttonContainer");
         if (!container || document.getElementById("rebel-dist-btn")) return;
+        if (!isShowAllPortsStep(container)) return;
 
         var btn = document.createElement("button");
         btn.id = "rebel-dist-btn";
@@ -254,8 +264,18 @@
 
     var obs = new MutationObserver(function() {
         var popup = document.querySelector("#createRoutePopup");
-        if (popup && !document.getElementById("rebel-dist-btn")) inject();
-        if (!popup && injected) reset();
+        if (!popup) {
+            if (injected) reset();
+            return;
+        }
+        var container = popup.querySelector('.buttonContainer');
+        if (!container) return;
+        if (!isShowAllPortsStep(container)) return;
+        if (!container.querySelector('#rebel-dist-btn')) {
+            injected = false;
+            dropdownOpen = false;
+            inject();
+        }
     });
     obs.observe(document.body, { childList: true, subtree: true });
 

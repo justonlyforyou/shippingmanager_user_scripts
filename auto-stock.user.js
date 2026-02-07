@@ -2,7 +2,7 @@
 // @name         ShippingManager - Auto Stock
 // @namespace    http://tampermonkey.net/
 // @description  IPO Alerts and Investments tabs in Finance modal
-// @version      2.9
+// @version      2.92
 // @order        61
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
@@ -10,6 +10,7 @@
 // @run-at       document-end
 // @RequireRebelShipMenu true
 // @background-job-required true
+// @RequireRebelShipStorage true
 // @enabled      false
 // ==/UserScript==
 /* globals addMenuItem */
@@ -236,24 +237,45 @@
     }
 
     async function getRecentIpos() {
-        return await apiPost('/stock/get-market', {
+        var result = await apiPost('/stock/get-market', {
             filter: 'recent-ipo',
             page: 1,
             limit: 40,
             search_by: ''
         });
+
+        // Validate API response structure
+        if (result && result.data && Array.isArray(result.data.market)) {
+            result.data.market = result.data.market.filter(function(ipo) {
+                return ipo &&
+                       typeof ipo.id === 'number' &&
+                       typeof ipo.company_name === 'string' &&
+                       typeof ipo.stock === 'number';
+            });
+        }
+
+        return result;
     }
 
     async function getCompanyAge(userId) {
         var result = await apiPost('/user/get-company', { user_id: userId });
         if (result && result.data && result.data.company && result.data.company.created_at) {
             var createdAt = new Date(result.data.company.created_at).getTime();
+            if (isNaN(createdAt)) return null;
+
             var ageMs = Date.now() - createdAt;
             var ageDays = Math.floor(ageMs / (24 * 60 * 60 * 1000));
+            var stockForSale = result.data.company.stock_for_sale;
+
+            // Validate types
+            if (typeof stockForSale !== 'number') {
+                stockForSale = parseInt(stockForSale, 10) || 0;
+            }
+
             return {
                 createdAt: result.data.company.created_at,
                 ageDays: ageDays,
-                stockForSale: result.data.company.stock_for_sale || 0
+                stockForSale: stockForSale
             };
         }
         return null;
@@ -262,7 +284,21 @@
     async function getFinanceOverview() {
         var userId = getUserId();
         if (!userId) return null;
-        return await apiPost('/stock/get-finance-overview', { user_id: userId });
+        var result = await apiPost('/stock/get-finance-overview', { user_id: userId });
+
+        // Validate investments structure
+        if (result && result.data && result.data.investments) {
+            var validatedInvestments = {};
+            Object.keys(result.data.investments).forEach(function(key) {
+                var inv = result.data.investments[key];
+                if (inv && typeof inv.id !== 'undefined' && typeof inv.current_value !== 'undefined') {
+                    validatedInvestments[key] = inv;
+                }
+            });
+            result.data.investments = validatedInvestments;
+        }
+
+        return result;
     }
 
     async function sellStock(stockUserId, amount) {
@@ -293,13 +329,13 @@
     async function runAutoBuy() {
         if (!settings.autoBuyEnabled) return;
 
-        var cash = await getUserCash();
-        if (cash === null) {
+        var currentCash = await getUserCash();
+        if (currentCash === null) {
             log('Auto-Buy: Could not get cash balance');
             return;
         }
 
-        var availableCash = cash - settings.minCashReserve;
+        var availableCash = currentCash - settings.minCashReserve;
         if (availableCash <= 0) {
             return;
         }
@@ -316,8 +352,6 @@
             if (ipo.stock > settings.maxStockPrice) continue;
             if (!ipo.stock_for_sale || ipo.stock_for_sale <= 0) continue;
 
-            var currentCash = await getUserCash();
-            if (currentCash === null) break;
             availableCash = currentCash - settings.minCashReserve;
             if (availableCash <= 0) break;
 
@@ -332,6 +366,10 @@
             if (result && result.data && !result.error) {
                 purchasedIpoIds.add(ipo.id);
                 log('Auto-Buy: SUCCESS - Bought ' + sharesToBuy + ' shares of ' + ipo.company_name);
+
+                // Only re-fetch cash after successful purchase
+                currentCash = await getUserCash();
+                if (currentCash === null) break;
 
                 var buyMsg = 'Bought ' + formatNumber(sharesToBuy) + ' shares of ' + ipo.company_name + ' for ' + formatMoney(totalCost);
                 if (settings.inAppAlerts) {
@@ -417,8 +455,16 @@
     // ============================================
     // FRESH IPO FETCHING & CACHING
     // ============================================
+    var refreshIpoCachePromise = null;
+
     async function refreshIpoCache() {
-        var result = await getRecentIpos();
+        // Deduplicate concurrent calls
+        if (refreshIpoCachePromise) {
+            return refreshIpoCachePromise;
+        }
+
+        refreshIpoCachePromise = (async function() {
+            var result = await getRecentIpos();
         if (!result || !result.data || !result.data.market) {
             log('Failed to fetch market data');
             return false;
@@ -461,7 +507,7 @@
         // Notify about new IPOs
         if (newIpos.length > 0) {
             log('IPO cache: ' + freshIpos.length + ' fresh, ' + newIpos.length + ' new');
-            var ipoNames = newIpos.map(function(item) { return item.company_name; }).join(', ');
+            var ipoNames = newIpos.map(function(item) { return escapeHtml(item.company_name); }).join(', ');
             var alertMsg = newIpos.length + ' new IPO' + (newIpos.length > 1 ? 's' : '') + ': ' + ipoNames;
 
             if (settings.inAppAlerts) {
@@ -471,6 +517,13 @@
         }
 
         return true;
+        })();
+
+        try {
+            return await refreshIpoCachePromise;
+        } finally {
+            refreshIpoCachePromise = null;
+        }
     }
 
     function getCachedFreshIpos() {
@@ -491,6 +544,10 @@
     }
 
     function getTrendIcon(trend) {
+        // Validate trend value to prevent potential injection
+        if (trend !== 'up' && trend !== 'down') {
+            return '<span style="color:#94a3b8;">&#9644;</span>';
+        }
         if (trend === 'up') return '<span style="color:#22c55e;">&#9650;</span>';
         if (trend === 'down') return '<span style="color:#ef4444;">&#9660;</span>';
         return '<span style="color:#94a3b8;">&#9644;</span>';
@@ -545,7 +602,11 @@
             '#autostock-modal-container .header-icon.closeModal{height:19px;width:19px}',
             '#autostock-modal-container #autostock-modal-content{height:calc(100% - 31px);max-width:inherit;overflow:hidden;display:flex;flex-direction:column}',
             '#autostock-modal-container #autostock-central-container{background-color:#e9effd;margin:0;overflow-x:hidden;overflow-y:auto;width:100%;flex:1;padding:10px 15px}',
-            '#autostock-modal-wrapper.hide{pointer-events:none}'
+            '#autostock-modal-wrapper.hide{pointer-events:none}',
+            '.as-input{width:100%;height:2.5rem;padding:0 1rem;background:#ebe9ea;border:0;border-radius:7px;color:#01125d;font-size:16px;font-family:Lato,sans-serif;text-align:center;box-sizing:border-box}',
+            '.as-section{margin-bottom:24px;padding-bottom:16px;border-bottom:1px solid #ddd}',
+            '.as-label-row{display:flex;align-items:center;gap:10px;margin-bottom:12px;cursor:pointer}',
+            '.as-checkbox{width:20px;height:20px;cursor:pointer;accent-color:#129c00}'
         ].join('');
         document.head.appendChild(style);
     }
@@ -554,6 +615,7 @@
         if (!isModalOpen) return;
         log('Closing modal');
         isModalOpen = false;
+        removeSettingsEventListeners();
         var modalWrapper = document.getElementById('autostock-modal-wrapper');
         if (modalWrapper) {
             modalWrapper.classList.add('hide');
@@ -657,63 +719,60 @@
         updateSettingsContent();
     }
 
+    var settingsEventListeners = [];
+
     function updateSettingsContent() {
         var settingsContent = document.getElementById('autostock-settings-content');
         if (!settingsContent) return;
 
-        var checkboxStyle = 'width:20px;height:20px;cursor:pointer;accent-color:#129c00;';
-        var labelRowStyle = 'display:flex;align-items:center;gap:10px;margin-bottom:12px;cursor:pointer;';
-        var inputStyle = 'width:100%;height:2.5rem;padding:0 1rem;background:#ebe9ea;border:0;border-radius:7px;color:#01125d;font-size:16px;font-family:Lato,sans-serif;text-align:center;box-sizing:border-box;';
-        var sectionStyle = 'margin-bottom:24px;padding-bottom:16px;border-bottom:1px solid #ddd;';
-
         settingsContent.innerHTML = '\
             <div style="padding:20px;max-width:420px;margin:0 auto;font-family:Lato,sans-serif;color:#01125d;">\
-                <div style="' + sectionStyle + '">\
+                <div class="as-section">\
                     <div style="font-size:16px;font-weight:700;margin-bottom:12px;color:#01125d;">Autopilot - The Purser</div>\
                     <div style="font-size:12px;color:#626b90;margin-bottom:16px;">Automatically buy stocks from fresh IPOs matching your threshold. Checks every 5 minutes.</div>\
-                    <label style="' + labelRowStyle + '">\
-                        <input type="checkbox" id="as-autobuy-enabled" ' + (settings.autoBuyEnabled ? 'checked' : '') + ' style="' + checkboxStyle + '">\
+                    <label class="as-label-row">\
+                        <input type="checkbox" id="as-autobuy-enabled" ' + (settings.autoBuyEnabled ? 'checked' : '') + ' class="as-checkbox">\
                         <span style="font-size:14px;">Enable Auto-Buy</span>\
                     </label>\
                     <div style="margin-bottom:16px;">\
                         <label style="display:block;margin-bottom:6px;font-size:13px;">Min Cash Reserve ($)</label>\
-                        <input type="number" id="as-min-cash" min="0" value="' + settings.minCashReserve + '" style="' + inputStyle + '">\
+                        <input type="number" id="as-min-cash" min="0" value="' + settings.minCashReserve + '" class="as-input">\
                     </div>\
                     <div style="margin-bottom:16px;">\
                         <label style="display:block;margin-bottom:6px;font-size:13px;">Max Stock Price ($/share)</label>\
-                        <input type="number" id="as-max-price" min="1" value="' + settings.maxStockPrice + '" style="' + inputStyle + '">\
+                        <input type="number" id="as-max-price" min="1" value="' + settings.maxStockPrice + '" class="as-input">\
                     </div>\
-                    <label style="' + labelRowStyle + '">\
-                        <input type="checkbox" id="as-autosell-enabled" ' + (settings.autoSellEnabled ? 'checked' : '') + ' style="' + checkboxStyle + '">\
+                    <label class="as-label-row">\
+                        <input type="checkbox" id="as-autosell-enabled" ' + (settings.autoSellEnabled ? 'checked' : '') + ' class="as-checkbox">\
                         <span style="font-size:14px;">Enable Auto-Sell (sell when stock falls)</span>\
                     </label>\
                     <div style="margin-bottom:16px;">\
                         <label style="display:block;margin-bottom:6px;font-size:13px;">Auto-Sell: Drop Threshold (%)</label>\
-                        <input type="number" id="as-drop-percent" min="1" max="100" value="' + settings.autoSellDropPercent + '" style="' + inputStyle + '">\
+                        <input type="number" id="as-drop-percent" min="1" max="100" value="' + settings.autoSellDropPercent + '" class="as-input">\
                         <div style="font-size:11px;color:#626b90;margin-top:4px;">Sell if stock drops X% from purchase price</div>\
                     </div>\
                 </div>\
-                <div style="' + sectionStyle + '">\
+                <div class="as-section">\
                     <div style="font-size:16px;font-weight:700;margin-bottom:12px;color:#01125d;">IPO Alert Settings</div>\
                     <div style="margin-bottom:16px;">\
                         <label style="display:block;margin-bottom:6px;font-size:13px;">IPO Max Age (days)</label>\
-                        <input type="number" id="as-max-age" min="1" max="365" value="' + settings.ipoMaxAgeDays + '" style="' + inputStyle + '">\
+                        <input type="number" id="as-max-age" min="1" max="365" value="' + settings.ipoMaxAgeDays + '" class="as-input">\
                         <div style="font-size:11px;color:#626b90;margin-top:4px;">Show IPOs from accounts younger than X days</div>\
                     </div>\
                     <div style="margin-bottom:16px;">\
                         <label style="display:block;margin-bottom:6px;font-size:13px;">IPO Check Limit</label>\
-                        <input type="number" id="as-check-limit" min="5" max="40" value="' + settings.ipoCheckLimit + '" style="' + inputStyle + '">\
+                        <input type="number" id="as-check-limit" min="5" max="40" value="' + settings.ipoCheckLimit + '" class="as-input">\
                         <div style="font-size:11px;color:#626b90;margin-top:4px;">How many recent IPOs to check</div>\
                     </div>\
                 </div>\
-                <div style="' + sectionStyle + '">\
+                <div class="as-section">\
                     <div style="font-size:16px;font-weight:700;margin-bottom:12px;color:#01125d;">Notifications</div>\
-                    <label style="' + labelRowStyle + '">\
-                        <input type="checkbox" id="as-inapp-alerts" ' + (settings.inAppAlerts ? 'checked' : '') + ' style="' + checkboxStyle + '">\
+                    <label class="as-label-row">\
+                        <input type="checkbox" id="as-inapp-alerts" ' + (settings.inAppAlerts ? 'checked' : '') + ' class="as-checkbox">\
                         <span style="font-size:14px;">Enable in-app alerts</span>\
                     </label>\
-                    <label style="' + labelRowStyle + '">\
-                        <input type="checkbox" id="as-desktop-notif" ' + (settings.desktopNotifications ? 'checked' : '') + ' style="' + checkboxStyle + '">\
+                    <label class="as-label-row">\
+                        <input type="checkbox" id="as-desktop-notif" ' + (settings.desktopNotifications ? 'checked' : '') + ' class="as-checkbox">\
                         <span style="font-size:14px;">Enable desktop notifications</span>\
                     </label>\
                 </div>\
@@ -733,18 +792,16 @@
                 </div>\
             </div>';
 
-        document.getElementById('as-cancel').addEventListener('click', function() {
+        var cancelHandler = function() {
             closeModal();
-        });
-
-        document.getElementById('as-clear-seen').addEventListener('click', async function() {
+        };
+        var clearSeenHandler = async function() {
             cachedData.seenIpoIds = [];
             await saveCachedData();
             this.textContent = 'Cleared!';
             this.style.background = '#22c55e';
-        });
-
-        document.getElementById('as-save').addEventListener('click', async function() {
+        };
+        var saveHandler = async function() {
             var maxAge = parseInt(document.getElementById('as-max-age').value, 10);
             var checkLimit = parseInt(document.getElementById('as-check-limit').value, 10);
             var minCash = parseInt(document.getElementById('as-min-cash').value, 10);
@@ -786,7 +843,27 @@
             await saveSettings();
             showToast('Settings saved!', 'success');
             closeModal();
+        };
+
+        document.getElementById('as-cancel').addEventListener('click', cancelHandler);
+        document.getElementById('as-clear-seen').addEventListener('click', clearSeenHandler);
+        document.getElementById('as-save').addEventListener('click', saveHandler);
+
+        settingsEventListeners.push(
+            { element: 'as-cancel', handler: cancelHandler, type: 'click' },
+            { element: 'as-clear-seen', handler: clearSeenHandler, type: 'click' },
+            { element: 'as-save', handler: saveHandler, type: 'click' }
+        );
+    }
+
+    function removeSettingsEventListeners() {
+        settingsEventListeners.forEach(function(item) {
+            var el = document.getElementById(item.element);
+            if (el) {
+                el.removeEventListener(item.type, item.handler);
+            }
         });
+        settingsEventListeners = [];
     }
 
     // ============================================
@@ -885,6 +962,8 @@
     }
 
     function closeCustomContent() {
+        stopSellTimers();
+        removeTabEventListeners();
         var customContent = document.getElementById('autostock-tabs-content');
         if (customContent) customContent.remove();
         showOriginalContent();
@@ -963,28 +1042,34 @@
         attachProfileHandlers(content);
     }
 
+    var tabEventListeners = [];
+
     function attachBuyHandlers(content) {
-        content.querySelectorAll('.as-buy-btn').forEach(function(btn) {
-            btn.addEventListener('click', function() {
-                var userId = parseInt(btn.getAttribute('data-id'));
-                var input = content.querySelector('.as-buy-amount[data-id="' + userId + '"]');
-                var amount = parseInt(input.value);
+        var buyHandler = function(e) {
+            var btn = e.target;
+            if (!btn.classList.contains('as-buy-btn')) return;
 
-                if (isNaN(amount) || amount <= 0) {
-                    showToast('Invalid amount', 'error');
-                    return;
-                }
+            var userId = parseInt(btn.getAttribute('data-id'));
+            var input = content.querySelector('.as-buy-amount[data-id="' + userId + '"]');
+            var amount = parseInt(input.value);
 
-                var freshIpos = getCachedFreshIpos();
-                var ipo = freshIpos.find(function(i) { return i.id === userId; });
-                if (!ipo) {
-                    showToast('IPO not found', 'error');
-                    return;
-                }
+            if (isNaN(amount) || amount <= 0) {
+                showToast('Invalid amount', 'error');
+                return;
+            }
 
-                openPurchaseDialog(ipo, amount);
-            });
-        });
+            var freshIpos = getCachedFreshIpos();
+            var ipo = freshIpos.find(function(i) { return i.id === userId; });
+            if (!ipo) {
+                showToast('IPO not found', 'error');
+                return;
+            }
+
+            openPurchaseDialog(ipo, amount);
+        };
+
+        content.addEventListener('click', buyHandler);
+        tabEventListeners.push({ element: content, handler: buyHandler, type: 'click' });
     }
 
     function openPurchaseDialog(ipo, amount) {
@@ -1085,18 +1170,31 @@
     }
 
     function attachProfileHandlers(content) {
-        content.querySelectorAll('.as-open-profile').forEach(function(link) {
-            link.addEventListener('click', function(e) {
-                e.preventDefault();
-                var userId = parseInt(link.getAttribute('data-user-id'));
-                var modalStore = getModalStore();
-                if (modalStore && modalStore.open) {
-                    modalStore.open('user', { user_id: userId });
-                } else {
-                    log('Could not open profile modal');
-                }
-            });
+        var profileHandler = function(e) {
+            var link = e.target;
+            if (!link.classList.contains('as-open-profile')) return;
+
+            e.preventDefault();
+            var userId = parseInt(link.getAttribute('data-user-id'));
+            var modalStore = getModalStore();
+            if (modalStore && modalStore.open) {
+                modalStore.open('user', { user_id: userId });
+            } else {
+                log('Could not open profile modal');
+            }
+        };
+
+        content.addEventListener('click', profileHandler);
+        tabEventListeners.push({ element: content, handler: profileHandler, type: 'click' });
+    }
+
+    function removeTabEventListeners() {
+        tabEventListeners.forEach(function(item) {
+            if (item.element) {
+                item.element.removeEventListener(item.type, item.handler);
+            }
         });
+        tabEventListeners = [];
     }
 
     function attachRefreshHandler(content) {
@@ -1206,8 +1304,11 @@
 
         content.innerHTML = html + refreshBtn;
 
-        content.querySelectorAll('.as-sell-btn').forEach(function(btn) {
-            btn.addEventListener('click', async function() {
+        var sellHandler = function(e) {
+            var btn = e.target;
+            if (!btn.classList.contains('as-sell-btn')) return;
+
+            (async function() {
                 var id = parseInt(btn.getAttribute('data-id'));
                 var amount = parseInt(btn.getAttribute('data-amount'));
                 btn.textContent = '...';
@@ -1222,12 +1323,20 @@
                     btn.textContent = 'Failed';
                     btn.style.background = '#ef4444';
                 }
-            });
-        });
+            })();
+        };
 
-        document.getElementById('as-refresh-investments').addEventListener('click', function() {
+        var refreshHandler = function() {
             openTab('investments');
-        });
+        };
+
+        content.addEventListener('click', sellHandler);
+        document.getElementById('as-refresh-investments').addEventListener('click', refreshHandler);
+
+        tabEventListeners.push(
+            { element: content, handler: sellHandler, type: 'click' },
+            { element: document.getElementById('as-refresh-investments'), handler: refreshHandler, type: 'click' }
+        );
 
         startSellTimers(content);
     }
@@ -1235,11 +1344,12 @@
     var sellTimerInterval = null;
 
     function startSellTimers(container) {
-        if (sellTimerInterval) {
-            clearInterval(sellTimerInterval);
-        }
+        stopSellTimers();
 
         var updateTimers = function() {
+            // Check if page is visible using Page Visibility API
+            if (document.hidden) return;
+
             var timers = container.querySelectorAll('.as-timer');
             var now = Math.floor(Date.now() / 1000);
 
@@ -1253,34 +1363,41 @@
                 } else {
                     var hours = Math.floor(remaining / 3600);
                     var minutes = Math.floor((remaining % 3600) / 60);
-                    var seconds = remaining % 60;
 
                     var text = timer.textContent.indexOf('+') === 0 ? '+' : '';
                     if (hours > 0) {
                         timer.textContent = text + hours + 'h ' + minutes + 'm';
-                    } else if (minutes > 0) {
-                        timer.textContent = text + minutes + 'm ' + seconds + 's';
                     } else {
-                        timer.textContent = text + seconds + 's';
+                        timer.textContent = text + minutes + 'm';
                     }
                 }
             });
 
-            if (timers.length === 0 && sellTimerInterval) {
-                clearInterval(sellTimerInterval);
-                sellTimerInterval = null;
+            if (timers.length === 0) {
+                stopSellTimers();
             }
         };
 
         updateTimers();
-        sellTimerInterval = setInterval(updateTimers, 1000);
+        // Increased interval to 5 seconds (was 1s)
+        sellTimerInterval = setInterval(updateTimers, 5000);
+    }
+
+    function stopSellTimers() {
+        if (sellTimerInterval) {
+            clearInterval(sellTimerInterval);
+            sellTimerInterval = null;
+        }
     }
 
     // ============================================
     // WATCHER
     // ============================================
     function watchFinanceModal() {
-        setInterval(function() {
+        var checkModal = function() {
+            // Skip check if page is hidden
+            if (document.hidden) return;
+
             var bottomNav = document.getElementById('bottom-nav');
             var stockBtn = bottomNav && bottomNav.querySelector('#stock-page-btn');
 
@@ -1290,8 +1407,19 @@
 
             if (!stockBtn && tabsInjected) {
                 removeTabs();
+                closeCustomContent();
             }
-        }, 500);
+        };
+
+        // Increased interval to 2000ms (was 500ms)
+        setInterval(checkModal, 2000);
+
+        // Stop interval when page becomes hidden
+        document.addEventListener('visibilitychange', function() {
+            if (document.hidden && sellTimerInterval) {
+                stopSellTimers();
+            }
+        });
     }
 
     // ============================================

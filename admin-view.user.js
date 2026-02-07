@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Admin View
 // @description Enable admin/moderator UI elements (client-side only - just for look and feel). HAS NO ADMIN FUNCTIONS IN BACKEND!
-// @version     8.7
+// @version     8.8
 // @author      https://github.com/justonlyforyou/
 // @order        50
 // @match       https://shippingmanager.cc/*
@@ -16,46 +16,50 @@
     const script = document.createElement('script');
     script.textContent = `
 (function() {
-    if (window.__ADMIN_VIEW_87__) return;
-    window.__ADMIN_VIEW_87__ = true;
+    if (window.__ADMIN_VIEW_88__) return;
+    window.__ADMIN_VIEW_88__ = true;
 
-    var origParse = JSON.parse;
-    JSON.parse = function(text) {
-        var result = origParse.apply(this, arguments);
-        if (result?.admin_login !== undefined) {
-            result.admin_login = true;
-        }
-        if (result?.data?.admin_login !== undefined) {
-            result.data.admin_login = true;
-        }
-        if (result?.data && 'forum_user' in result.data) {
-            if (result.data.forum_user) {
-                result.data.forum_user.role = 'admin';
-            } else {
-                result.data.forum_user = { role: 'admin', id: 1 };
-            }
-        }
-        if (result?.forum_user) {
-            result.forum_user.role = 'admin';
-        }
-        return result;
-    };
-
+    // Targeted fetch interceptor instead of global JSON.parse override
     var originalFetch = window.fetch;
-    window.fetch = async function(...args) {
-        var url = args[0]?.url || args[0] || '';
-        var response = await originalFetch.apply(this, args);
-        if (typeof url === 'string' && url.includes('forum')) {
-            var origJson = response.json.bind(response);
-            response.json = async function() {
-                var data = await origJson();
-                if (data?.data?.forum_user) {
+    window.fetch = async function() {
+        var url = arguments[0]?.url || arguments[0] || '';
+        var response = await originalFetch.apply(this, arguments);
+        if (typeof url !== 'string') return response;
+
+        var needsPatch = url.includes('/user/') || url.includes('/game/') || url.includes('forum');
+        if (!needsPatch) return response;
+
+        var clone = response.clone();
+        var patchedResponse = new Response(clone.body, {
+            status: clone.status,
+            statusText: clone.statusText,
+            headers: clone.headers
+        });
+
+        patchedResponse.json = async function() {
+            var data;
+            try { data = await clone.json(); } catch(e) { return {}; }
+
+            if (data?.admin_login !== undefined) {
+                data.admin_login = true;
+            }
+            if (data?.data?.admin_login !== undefined) {
+                data.data.admin_login = true;
+            }
+            if (data?.data && 'forum_user' in data.data) {
+                if (data.data.forum_user) {
                     data.data.forum_user.role = 'admin';
+                } else {
+                    data.data.forum_user = { role: 'admin', id: 1 };
                 }
-                return data;
-            };
-        }
-        return response;
+            }
+            if (data?.forum_user) {
+                data.forum_user.role = 'admin';
+            }
+            return data;
+        };
+
+        return patchedResponse;
     };
 
     function getVueApp() {
@@ -79,34 +83,50 @@
         return true;
     }
 
-    function getAllComponentInstances(instance, results) {
-        results = results || [];
-        if (!instance) return results;
-        results.push(instance);
+    // Early-return component search: stop as soon as forum component found
+    var cachedForumComponent = null;
+
+    function findForumComponentInTree(instance) {
+        if (!instance) return null;
+        var ctx = instance.ctx || instance.proxy;
+        if (ctx && 'forumUser' in ctx) return instance;
+        if (instance.data && 'forumUser' in instance.data) return instance;
+
         if (instance.subTree) {
-            walkVnode(instance.subTree, results);
+            var found = walkVnodeForForum(instance.subTree);
+            if (found) return found;
         }
-        return results;
+        return null;
     }
 
-    function walkVnode(vnode, results) {
-        if (!vnode) return;
+    function walkVnodeForForum(vnode) {
+        if (!vnode) return null;
         if (vnode.component) {
-            getAllComponentInstances(vnode.component, results);
+            var found = findForumComponentInTree(vnode.component);
+            if (found) return found;
         }
         if (Array.isArray(vnode.children)) {
             for (var i = 0; i < vnode.children.length; i++) {
-                walkVnode(vnode.children[i], results);
+                var found = walkVnodeForForum(vnode.children[i]);
+                if (found) return found;
             }
         }
         if (vnode.dynamicChildren) {
             for (var j = 0; j < vnode.dynamicChildren.length; j++) {
-                walkVnode(vnode.dynamicChildren[j], results);
+                var found = walkVnodeForForum(vnode.dynamicChildren[j]);
+                if (found) return found;
             }
         }
+        return null;
     }
 
     function findForumComponent() {
+        if (cachedForumComponent) {
+            var ctx = cachedForumComponent.ctx || cachedForumComponent.proxy;
+            if (ctx && 'forumUser' in ctx) return cachedForumComponent;
+            cachedForumComponent = null;
+        }
+
         var forumContainer = document.querySelector('.forumContainer');
         if (forumContainer) {
             var keys = Object.keys(forumContainer);
@@ -115,41 +135,39 @@
                 if (key.startsWith('__vue')) {
                     var val = forumContainer[key];
                     if (val?.ctx && 'forumUser' in val.ctx) {
+                        cachedForumComponent = val;
                         return val;
                     }
                     if (val?.component?.ctx && 'forumUser' in val.component.ctx) {
+                        cachedForumComponent = val.component;
                         return val.component;
                     }
                 }
             }
+            // Parent traversal with depth limit of 10
             var el = forumContainer;
-            while (el && el !== document.body) {
+            var depth = 0;
+            while (el && el !== document.body && depth < 10) {
                 var elKeys = Object.keys(el);
                 for (var j = 0; j < elKeys.length; j++) {
                     var k = elKeys[j];
                     if (k.startsWith('__vue') && el[k]?.ctx) {
                         if ('forumUser' in el[k].ctx) {
+                            cachedForumComponent = el[k];
                             return el[k];
                         }
                     }
                 }
                 el = el.parentElement;
+                depth++;
             }
         }
+
         var app = getVueApp();
         if (!app?._instance) return null;
-        var allInstances = getAllComponentInstances(app._instance);
-        for (var n = 0; n < allInstances.length; n++) {
-            var instance = allInstances[n];
-            var ctx = instance.ctx || instance.proxy;
-            if (ctx && 'forumUser' in ctx) {
-                return instance;
-            }
-            if (instance.data && 'forumUser' in instance.data) {
-                return instance;
-            }
-        }
-        return null;
+        var found = findForumComponentInTree(app._instance);
+        if (found) cachedForumComponent = found;
+        return found;
     }
 
     function patchForumComponent() {
@@ -177,6 +195,13 @@
         return true;
     }
 
+    // Debounced MutationObserver: single call per 300ms instead of triple setTimeout
+    var patchDebounceTimer = null;
+    function debouncedPatch() {
+        if (patchDebounceTimer) clearTimeout(patchDebounceTimer);
+        patchDebounceTimer = setTimeout(patchForumComponent, 300);
+    }
+
     var observer = new MutationObserver(function(mutations) {
         for (var m = 0; m < mutations.length; m++) {
             var addedNodes = mutations[m].addedNodes;
@@ -194,11 +219,13 @@
                 if (className.includes('forum') ||
                     className.includes('Forum') ||
                     className.includes('modal') ||
-                    node.id === 'modal-container' ||
-                    node.querySelector?.('.forumContainer')) {
-                    setTimeout(patchForumComponent, 100);
-                    setTimeout(patchForumComponent, 500);
-                    setTimeout(patchForumComponent, 1500);
+                    node.id === 'modal-container') {
+                    debouncedPatch();
+                    return;
+                }
+                if (node.classList && (node.classList.contains('forumContainer') || node.classList.contains('modal-wrapper'))) {
+                    debouncedPatch();
+                    return;
                 }
             }
         }

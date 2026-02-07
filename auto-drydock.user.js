@@ -2,7 +2,7 @@
 // @name         ShippingManager - Auto Drydock
 // @namespace    http://tampermonkey.net/
 // @description  Automatic drydock management with bug prevention and moor option
-// @version      1.6
+// @version      1.62
 // @order        4
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
@@ -10,6 +10,7 @@
 // @run-at       document-end
 // @enabled      false
 // @RequireRebelShipMenu true
+// @RequireRebelShipStorage true
 // ==/UserScript==
 /* globals addMenuItem */
 
@@ -23,6 +24,11 @@
     var isModalOpen = false;
     var autoDrydockRunning = false;
     var cachedVessels = null;
+    var cachedVesselsTimestamp = 0;
+    var VESSEL_CACHE_TTL = 15000; // 15 seconds
+    var handleVesselDataDebounceTimer = null;
+    var VESSEL_DATA_DEBOUNCE_MS = 10000; // 10 seconds
+    var modalTemplateCreated = false;
 
     // Default settings
     var DEFAULT_SETTINGS = {
@@ -90,7 +96,7 @@
     }
 
     // Shared storage with DepartManager for pendingRouteSettings and drydockVessels
-    var RETRY_DELAYS = [500, 1000, 2000, 4000];
+    var RETRY_DELAYS = Object.freeze([500, 1000, 2000, 4000]);
 
     async function dbGetShared(retryCount) {
         retryCount = retryCount || 0;
@@ -133,12 +139,22 @@
 
     async function loadSettings() {
         var saved = await dbGetOwn('settings');
-        settingsCache = Object.assign({}, DEFAULT_SETTINGS, saved);
+        settingsCache = {};
+        for (var key in DEFAULT_SETTINGS) {
+            settingsCache[key] = DEFAULT_SETTINGS[key];
+        }
+        if (saved) {
+            for (var savedKey in saved) {
+                settingsCache[savedKey] = saved[savedKey];
+            }
+        }
         return settingsCache;
     }
 
     async function saveSettings(newSettings) {
-        settingsCache = Object.assign({}, settingsCache, newSettings);
+        for (var key in newSettings) {
+            settingsCache[key] = newSettings[key];
+        }
         await dbSetOwn('settings', settingsCache);
     }
 
@@ -298,9 +314,14 @@
     }
 
     async function fetchVesselData() {
+        var now = Date.now();
+        if (cachedVessels && (now - cachedVesselsTimestamp) < VESSEL_CACHE_TTL) {
+            return cachedVessels;
+        }
         var data = await apiFetch('/vessel/get-all-user-vessels', { include_routes: true });
         if (data && data.data && data.data.user_vessels) {
             cachedVessels = data.data.user_vessels;
+            cachedVesselsTimestamp = now;
             return cachedVessels;
         }
         return [];
@@ -356,14 +377,25 @@
         if (!options || !options.body) return;
 
         try {
-            var body = JSON.parse(options.body);
-            var vesselIds = JSON.parse(body.vessel_ids);
+            var body;
+            var vesselIds;
+            try {
+                body = JSON.parse(options.body);
+                vesselIds = JSON.parse(body.vessel_ids);
+            } catch (parseError) {
+                log('JSON parse error in handleDrydockRequest: ' + parseError.message, 'error');
+                return;
+            }
             if (!vesselIds || vesselIds.length === 0) return;
 
             log('Drydock request detected for ' + vesselIds.length + ' vessel(s)');
 
             var MAX_RETRIES = 3;
             var RETRY_DELAY_MS = 750;
+
+            // Fetch vessel data once before the loop
+            var vessels = await fetchVesselData();
+            var vesselMap = new Map(vessels.map(function(v) { return [v.id, v]; }));
 
             for (var i = 0; i < vesselIds.length; i++) {
                 var vesselId = vesselIds[i];
@@ -372,21 +404,23 @@
                 var validData = false;
 
                 while (retryCount < MAX_RETRIES && !validData) {
-                    var vessels = await fetchVesselData();
                     if (!vessels || vessels.length === 0) {
                         retryCount++;
                         log('Retry ' + retryCount + '/' + MAX_RETRIES + ': No vessel data received');
                         await new Promise(function(r) { setTimeout(r, RETRY_DELAY_MS); });
+                        vessels = await fetchVesselData();
+                        vesselMap = new Map(vessels.map(function(v) { return [v.id, v]; }));
                         continue;
                     }
 
-                    var vesselMap = new Map(vessels.map(function(v) { return [v.id, v]; }));
                     vessel = vesselMap.get(vesselId);
 
                     if (!vessel) {
                         retryCount++;
                         log('Retry ' + retryCount + '/' + MAX_RETRIES + ': Vessel ' + vesselId + ' not found');
                         await new Promise(function(r) { setTimeout(r, RETRY_DELAY_MS); });
+                        vessels = await fetchVesselData();
+                        vesselMap = new Map(vessels.map(function(v) { return [v.id, v]; }));
                         continue;
                     }
 
@@ -397,6 +431,8 @@
                         retryCount++;
                         log('Retry ' + retryCount + '/' + MAX_RETRIES + ': ' + vessel.name + ' has incomplete data');
                         await new Promise(function(r) { setTimeout(r, RETRY_DELAY_MS); });
+                        vessels = await fetchVesselData();
+                        vesselMap = new Map(vessels.map(function(v) { return [v.id, v]; }));
                         continue;
                     }
 
@@ -441,7 +477,7 @@
         }
     }
 
-    async function handleVesselDataResponse(data) {
+    async function handleVesselDataResponseImpl(data) {
         var vessels = [];
         if (data && data.data && data.data.user_vessels) {
             vessels = data.data.user_vessels;
@@ -449,6 +485,12 @@
             vessels = data.vessels;
         }
         if (vessels.length === 0) return;
+
+        // Check if any tracking is active before processing
+        var storage = await dbGetShared();
+        if (!storage || !storage.drydockVessels || Object.keys(storage.drydockVessels).length === 0) {
+            return;
+        }
 
         var vesselMap = new Map(vessels.map(function(v) { return [v.id, v]; }));
 
@@ -461,6 +503,7 @@
                 await deleteDrydockVessel(bugEntry.vesselId);
                 continue;
             }
+            // Cache vessel lookup for this iteration
             if (bugVessel.status === 'anchor') {
                 log(bugEntry.data.name + ': Bug-use complete (anchored)');
                 await deleteDrydockVessel(bugEntry.vesselId);
@@ -474,6 +517,7 @@
             var preVessel = vesselMap.get(preEntry.vesselId);
             if (!preVessel) continue;
 
+            // Cache vessel lookup for this iteration
             if (preVessel.route_dry_operation === 1) continue;
             if (preVessel.status === 'maintenance') continue;
 
@@ -493,10 +537,21 @@
             var pastVessel = vesselMap.get(pastEntry.vesselId);
             if (!pastVessel) continue;
 
+            // Cache vessel lookup for this iteration
             if ((pastVessel.status === 'port' || pastVessel.status === 'anchor') && !pastVessel.is_parked) {
                 await restoreDrydockSettings(pastEntry.vesselId, pastEntry.data, pastVessel);
             }
         }
+    }
+
+    function handleVesselDataResponse(data) {
+        if (handleVesselDataDebounceTimer) {
+            clearTimeout(handleVesselDataDebounceTimer);
+        }
+        handleVesselDataDebounceTimer = setTimeout(function() {
+            handleVesselDataResponseImpl(data);
+            handleVesselDataDebounceTimer = null;
+        }, VESSEL_DATA_DEBOUNCE_MS);
     }
 
     async function restoreDrydockSettings(vesselId, savedData, currentVessel) {
@@ -627,6 +682,10 @@
             // NORMAL DRYDOCK FLOW
             log(needsDrydock.length + ' vessel(s) need drydock');
 
+            var vesselIds = needsDrydock.map(function(v) { return v.id; });
+            var costSpeedValue = settings.autoDrydockSpeed === 'maximum' ? 'maximum' : 'minimum';
+
+            // Fetch user data only when needed
             var userData = await fetchUserData();
             if (!userData || !userData.user) {
                 if (manual) notify('Could not fetch user data', 'error');
@@ -635,10 +694,8 @@
 
             var cash = userData.user.cash;
             var minCash = settings.autoDrydockMinCash;
-            var vesselIds = needsDrydock.map(function(v) { return v.id; });
 
-            var costSpeedValue = settings.autoDrydockSpeed === 'maximum' ? 'maximum' : 'minimum';
-
+            // Get maintenance cost after moor check
             var costData = await getMaintenanceCost(vesselIds, costSpeedValue, settings.autoDrydockType);
             if (!costData) {
                 if (manual) notify('Could not get maintenance cost', 'error');
@@ -683,8 +740,12 @@
             var result = await sendToDrydock(vesselIds, speedValue, settings.autoDrydockType);
 
             if (result) {
-                var vesselNames = needsDrydock.map(function(v) { return v.name; }).join(', ');
-                log('Sent ' + needsDrydock.length + ' vessel(s) to drydock: ' + vesselNames);
+                if (manual) {
+                    var vesselNames = needsDrydock.map(function(v) { return v.name; }).join(', ');
+                    log('Sent ' + needsDrydock.length + ' vessel(s) to drydock: ' + vesselNames);
+                } else {
+                    log('Sent ' + needsDrydock.length + ' vessel(s) to drydock');
+                }
                 notify('Sent ' + needsDrydock.length + ' vessel(s) to drydock', 'success');
             }
 
@@ -835,17 +896,15 @@
         updateDrydockSettingsContent();
     }
 
-    function updateDrydockSettingsContent() {
+    function createModalTemplate() {
         var settingsContent = document.getElementById('drydock-settings-content');
         if (!settingsContent) return;
-
-        var settings = getSettings();
 
         settingsContent.innerHTML = '\
             <div style="padding:20px;max-width:400px;margin:0 auto;font-family:Lato,sans-serif;color:#01125d;">\
                 <div style="margin-bottom:20px;">\
                     <label style="display:flex;align-items:center;cursor:pointer;font-weight:700;font-size:16px;">\
-                        <input type="checkbox" id="ad-enabled" ' + (settings.autoDrydockEnabled ? 'checked' : '') + '\
+                        <input type="checkbox" id="ad-enabled"\
                                style="width:20px;height:20px;margin-right:12px;accent-color:#0db8f4;cursor:pointer;">\
                         <span>Enable Auto-Drydock</span>\
                     </label>\
@@ -854,7 +913,7 @@
                     <label style="display:block;margin-bottom:8px;font-size:14px;font-weight:700;color:#01125d;">\
                         Hours Threshold\
                     </label>\
-                    <input type="number" id="ad-threshold" min="1" max="999" value="' + settings.autoDrydockThreshold + '"\
+                    <input type="number" id="ad-threshold" min="1" max="999"\
                            class="redesign" style="width:100%;height:2.5rem;padding:0 1rem;background:#ebe9ea;border:0;border-radius:7px;color:#01125d;font-size:16px;font-family:Lato,sans-serif;text-align:center;box-sizing:border-box;">\
                     <div style="font-size:12px;color:#626b90;margin-top:6px;">\
                         Trigger when hours drop below this value\
@@ -865,19 +924,19 @@
                         Action Mode\
                     </label>\
                     <select id="ad-mode" class="redesign" style="width:100%;height:2.5rem;padding:0 1rem;background:#ebe9ea;border:0;border-radius:7px;color:#01125d;font-size:16px;font-family:Lato,sans-serif;box-sizing:border-box;">\
-                        <option value="drydock"' + (!settings.moorInsteadOfDrydock ? ' selected' : '') + '>Send to Drydock</option>\
-                        <option value="moor"' + (settings.moorInsteadOfDrydock ? ' selected' : '') + '>Moor (Park) Vessel</option>\
+                        <option value="drydock">Send to Drydock</option>\
+                        <option value="moor">Moor (Park) Vessel</option>\
                     </select>\
                     <div style="font-size:12px;color:#626b90;margin-top:6px;">\
                         Choose what happens when threshold is reached\
                     </div>\
                 </div>\
-                <div id="ad-drydock-options" style="' + (settings.moorInsteadOfDrydock ? 'display:none;' : '') + '">\
+                <div id="ad-drydock-options">\
                     <div style="margin-bottom:20px;">\
                         <label style="display:block;margin-bottom:8px;font-size:14px;font-weight:700;color:#01125d;">\
                             Minimum Cash Balance\
                         </label>\
-                        <input type="number" id="ad-mincash" min="0" step="100000" value="' + settings.autoDrydockMinCash + '"\
+                        <input type="number" id="ad-mincash" min="0" step="100000"\
                                class="redesign" style="width:100%;height:2.5rem;padding:0 1rem;background:#ebe9ea;border:0;border-radius:7px;color:#01125d;font-size:16px;font-family:Lato,sans-serif;text-align:center;box-sizing:border-box;">\
                         <div style="font-size:12px;color:#626b90;margin-top:6px;">\
                             Keep at least this much cash after drydock costs\
@@ -888,8 +947,8 @@
                             Drydock Speed\
                         </label>\
                         <select id="ad-speed" class="redesign" style="width:100%;height:2.5rem;padding:0 1rem;background:#ebe9ea;border:0;border-radius:7px;color:#01125d;font-size:16px;font-family:Lato,sans-serif;box-sizing:border-box;">\
-                            <option value="minimum"' + (settings.autoDrydockSpeed === 'minimum' ? ' selected' : '') + '>Minimum (slower, cheaper)</option>\
-                            <option value="maximum"' + (settings.autoDrydockSpeed === 'maximum' ? ' selected' : '') + '>Maximum (fast, expensive)</option>\
+                            <option value="minimum">Minimum (slower, cheaper)</option>\
+                            <option value="maximum">Maximum (fast, expensive)</option>\
                         </select>\
                     </div>\
                     <div style="margin-bottom:20px;">\
@@ -897,8 +956,8 @@
                             Maintenance Type\
                         </label>\
                         <select id="ad-type" class="redesign" style="width:100%;height:2.5rem;padding:0 1rem;background:#ebe9ea;border:0;border-radius:7px;color:#01125d;font-size:16px;font-family:Lato,sans-serif;box-sizing:border-box;">\
-                            <option value="major"' + (settings.autoDrydockType === 'major' ? ' selected' : '') + '>Major (100% antifouling)</option>\
-                            <option value="minor"' + (settings.autoDrydockType === 'minor' ? ' selected' : '') + '>Minor (60% antifouling)</option>\
+                            <option value="major">Major (100% antifouling)</option>\
+                            <option value="minor">Minor (60% antifouling)</option>\
                         </select>\
                     </div>\
                 </div>\
@@ -906,12 +965,12 @@
                     <div style="font-weight:700;font-size:14px;margin-bottom:12px;color:#01125d;">Notifications</div>\
                     <div style="display:flex;gap:24px;">\
                         <label style="display:flex;align-items:center;cursor:pointer;">\
-                            <input type="checkbox" id="ad-notify-ingame" ' + (settings.notifyIngame ? 'checked' : '') + '\
+                            <input type="checkbox" id="ad-notify-ingame"\
                                    style="width:18px;height:18px;margin-right:8px;accent-color:#0db8f4;cursor:pointer;">\
                             <span style="font-size:13px;">Ingame</span>\
                         </label>\
                         <label style="display:flex;align-items:center;cursor:pointer;">\
-                            <input type="checkbox" id="ad-notify-system" ' + (settings.notifySystem ? 'checked' : '') + '\
+                            <input type="checkbox" id="ad-notify-system"\
                                    style="width:18px;height:18px;margin-right:8px;accent-color:#0db8f4;cursor:pointer;">\
                             <span style="font-size:13px;">System</span>\
                         </label>\
@@ -928,67 +987,109 @@
                 </div>\
             </div>';
 
-        // Toggle drydock options visibility based on mode
-        document.getElementById('ad-mode').addEventListener('change', function() {
-            var drydockOpts = document.getElementById('ad-drydock-options');
-            if (this.value === 'moor') {
-                drydockOpts.style.display = 'none';
-            } else {
-                drydockOpts.style.display = '';
+        // Event delegation for mode change
+        settingsContent.addEventListener('change', function(e) {
+            if (e.target.id === 'ad-mode') {
+                var drydockOpts = document.getElementById('ad-drydock-options');
+                if (e.target.value === 'moor') {
+                    drydockOpts.style.display = 'none';
+                } else {
+                    drydockOpts.style.display = '';
+                }
             }
         });
 
-        document.getElementById('ad-run-now').addEventListener('click', function() {
-            var btn = this;
-            btn.disabled = true;
-            btn.textContent = 'Running...';
-            runAutoDrydock(true).then(function() {
-                btn.textContent = 'Run Now';
-                btn.disabled = false;
-            }).catch(function() {
-                btn.textContent = 'Run Now';
-                btn.disabled = false;
-            });
+        // Event delegation for button clicks
+        settingsContent.addEventListener('click', function(e) {
+            if (e.target.id === 'ad-run-now') {
+                var btn = e.target;
+                if (btn.disabled) return;
+                btn.disabled = true;
+                btn.textContent = 'Running...';
+                runAutoDrydock(true).then(function() {
+                    btn.textContent = 'Run Now';
+                    btn.disabled = false;
+                }).catch(function() {
+                    btn.textContent = 'Run Now';
+                    btn.disabled = false;
+                });
+            } else if (e.target.id === 'ad-save') {
+                var btn = e.target;
+                if (btn.disabled) return;
+                btn.disabled = true;
+
+                var enabled = document.getElementById('ad-enabled').checked;
+                var mode = document.getElementById('ad-mode').value;
+                var moorInstead = mode === 'moor';
+                var threshold = parseInt(document.getElementById('ad-threshold').value, 10);
+                var minCash = parseInt(document.getElementById('ad-mincash').value, 10);
+                var speed = document.getElementById('ad-speed').value;
+                var type = document.getElementById('ad-type').value;
+                var notifyIngame = document.getElementById('ad-notify-ingame').checked;
+                var notifySystem = document.getElementById('ad-notify-system').checked;
+
+                // Validate
+                if (isNaN(threshold) || threshold < 1 || threshold > 999) {
+                    alert('Hours threshold must be between 1 and 999');
+                    btn.disabled = false;
+                    return;
+                }
+                if (!moorInstead && (isNaN(minCash) || minCash < 0)) {
+                    alert('Minimum cash must be 0 or greater');
+                    btn.disabled = false;
+                    return;
+                }
+
+                var newSettings = {
+                    autoDrydockEnabled: enabled,
+                    moorInsteadOfDrydock: moorInstead,
+                    autoDrydockThreshold: threshold,
+                    autoDrydockMinCash: minCash,
+                    autoDrydockSpeed: speed,
+                    autoDrydockType: type,
+                    notifyIngame: notifyIngame,
+                    notifySystem: notifySystem
+                };
+
+                saveSettings(newSettings).then(function() {
+                    log('Settings saved');
+                    notify('Auto Drydock settings saved', 'success');
+                    btn.disabled = false;
+                    closeModal();
+                });
+            }
         });
 
-        document.getElementById('ad-save').addEventListener('click', function() {
-            var enabled = document.getElementById('ad-enabled').checked;
-            var mode = document.getElementById('ad-mode').value;
-            var moorInstead = mode === 'moor';
-            var threshold = parseInt(document.getElementById('ad-threshold').value, 10);
-            var minCash = parseInt(document.getElementById('ad-mincash').value, 10);
-            var speed = document.getElementById('ad-speed').value;
-            var type = document.getElementById('ad-type').value;
-            var notifyIngame = document.getElementById('ad-notify-ingame').checked;
-            var notifySystem = document.getElementById('ad-notify-system').checked;
+        modalTemplateCreated = true;
+    }
 
-            // Validate
-            if (isNaN(threshold) || threshold < 1 || threshold > 999) {
-                alert('Hours threshold must be between 1 and 999');
-                return;
-            }
-            if (!moorInstead && (isNaN(minCash) || minCash < 0)) {
-                alert('Minimum cash must be 0 or greater');
-                return;
-            }
+    function updateDrydockSettingsContent() {
+        if (!modalTemplateCreated) {
+            createModalTemplate();
+        }
 
-            var newSettings = {
-                autoDrydockEnabled: enabled,
-                moorInsteadOfDrydock: moorInstead,
-                autoDrydockThreshold: threshold,
-                autoDrydockMinCash: minCash,
-                autoDrydockSpeed: speed,
-                autoDrydockType: type,
-                notifyIngame: notifyIngame,
-                notifySystem: notifySystem
-            };
+        var settings = getSettings();
 
-            saveSettings(newSettings).then(function() {
-                log('Settings saved');
-                notify('Auto Drydock settings saved', 'success');
-                closeModal();
-            });
-        });
+        // Update values only
+        var enabledEl = document.getElementById('ad-enabled');
+        var thresholdEl = document.getElementById('ad-threshold');
+        var modeEl = document.getElementById('ad-mode');
+        var minCashEl = document.getElementById('ad-mincash');
+        var speedEl = document.getElementById('ad-speed');
+        var typeEl = document.getElementById('ad-type');
+        var notifyIngameEl = document.getElementById('ad-notify-ingame');
+        var notifySystemEl = document.getElementById('ad-notify-system');
+        var drydockOptsEl = document.getElementById('ad-drydock-options');
+
+        if (enabledEl) enabledEl.checked = settings.autoDrydockEnabled;
+        if (thresholdEl) thresholdEl.value = settings.autoDrydockThreshold;
+        if (modeEl) modeEl.value = settings.moorInsteadOfDrydock ? 'moor' : 'drydock';
+        if (minCashEl) minCashEl.value = settings.autoDrydockMinCash;
+        if (speedEl) speedEl.value = settings.autoDrydockSpeed;
+        if (typeEl) typeEl.value = settings.autoDrydockType;
+        if (notifyIngameEl) notifyIngameEl.checked = settings.notifyIngame;
+        if (notifySystemEl) notifySystemEl.checked = settings.notifySystem;
+        if (drydockOptsEl) drydockOptsEl.style.display = settings.moorInsteadOfDrydock ? 'none' : '';
     }
 
     // ============================================

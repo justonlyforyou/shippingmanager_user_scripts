@@ -2,7 +2,7 @@
 // @name        ShippingManager - Depart All Loop Button
 // @description Clicks Depart All button repeatedly until all vessels departed
 // @author      https://github.com/justonlyforyou/
-// @version     2.6
+// @version     2.7
 // @order        54
 // @match       https://shippingmanager.cc/*
 // @grant       none
@@ -16,6 +16,7 @@
     var running = false;
     var loopBtn = null;
     var lastDepartError = null;
+    var stylesInjected = false;
 
     // Intercept fetch to catch depart-all API errors
     var originalFetch = window.fetch;
@@ -28,16 +29,21 @@
         // Check depart-all response for errors
         if (urlStr.includes('/route/depart-all')) {
             try {
-                var clone = response.clone();
-                var data = await clone.json();
+                var bodyText = await response.text();
+                var data = JSON.parse(bodyText);
                 if (data.error) {
                     lastDepartError = data.error;
                     console.log('[DepartLoop] API error:', data.error);
                 } else {
                     lastDepartError = null;
                 }
+                return new window.Response(bodyText, {
+                    status: response.status,
+                    statusText: response.statusText,
+                    headers: response.headers
+                });
             } catch {
-                // ignore
+                // ignore parse errors
             }
         }
 
@@ -49,22 +55,27 @@
     }
 
     async function getVesselsAtPort() {
-        const res = await fetch('/api/vessel/get-all-user-vessels', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({ include_routes: false })
-        });
-        const data = await res.json();
-        const vessels = data.data?.user_vessels || [];
+        try {
+            const res = await fetch('/api/vessel/get-all-user-vessels', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ include_routes: false })
+            });
+            const data = await res.json();
+            const vessels = data.data?.user_vessels || [];
 
-        const atPort = vessels.filter(v =>
-            v.status === 'port' &&
-            !v.is_parked &&
-            v.route_name
-        );
+            const atPort = vessels.filter(v =>
+                v.status === 'port' &&
+                !v.is_parked &&
+                v.route_name
+            );
 
-        return atPort.length;
+            return atPort.length;
+        } catch (err) {
+            console.warn('[DepartLoop] API request failed:', err.message);
+            return -1;
+        }
     }
 
     function updateButtonState() {
@@ -86,9 +97,24 @@
         running = true;
         updateButtonState();
 
+        var maxIterations = 100;
+        var iterations = 0;
+
         while (running) {
+            iterations++;
+            if (iterations > maxIterations) {
+                console.log('[Loop] Max iterations reached (' + maxIterations + '), stopping');
+                break;
+            }
+
             const count = await getVesselsAtPort();
-            console.log('[Loop] Vessels at port:', count);
+            console.log('[Loop] Vessels at port:', count, '(iteration ' + iterations + '/' + maxIterations + ')');
+
+            if (count === -1) {
+                console.log('[Loop] API error, retrying in 3s...');
+                await new Promise(r => setTimeout(r, 3000));
+                continue;
+            }
 
             if (count === 0) {
                 console.log('[Loop] All vessels departed');
@@ -101,6 +127,7 @@
                 break;
             }
 
+            lastDepartError = null;
             departBtn.click();
 
             // Wait for response
@@ -124,10 +151,10 @@
     }
 
     function injectStyles() {
-        if (document.getElementById('depart-loop-style')) return;
+        if (stylesInjected) return;
+        stylesInjected = true;
 
         const style = document.createElement('style');
-        style.id = 'depart-loop-style';
         style.textContent = '.bottomWrapper.btn-group { position: absolute !important; bottom: 0 !important; left: 0 !important; width: 100% !important; } .buttonWrapper { position: absolute !important; bottom: 46px !important; left: 0 !important; width: 100% !important; padding: 0 2px !important; box-sizing: border-box !important; gap: 2px !important; }';
         document.head.appendChild(style);
     }
@@ -162,5 +189,36 @@
         buttonWrapper.appendChild(wrapper);
     }
 
-    setInterval(addButton, 1000);
+    var buttonInserted = false;
+    var addButtonTimer = null;
+
+    function debouncedAddButton() {
+        if (buttonInserted) return;
+        if (addButtonTimer) clearTimeout(addButtonTimer);
+        addButtonTimer = setTimeout(function() {
+            addButton();
+            if (document.getElementById('depart-loop-btn')) {
+                buttonInserted = true;
+            }
+        }, 200);
+    }
+
+    var observer = new MutationObserver(function(mutations) {
+        if (buttonInserted) return;
+        for (var i = 0; i < mutations.length; i++) {
+            var added = mutations[i].addedNodes;
+            for (var j = 0; j < added.length; j++) {
+                var node = added[j];
+                if (node.nodeType !== 1) continue;
+                if (node.classList && node.classList.contains('buttonWrapper') || node.querySelector && node.querySelector('.buttonWrapper')) {
+                    debouncedAddButton();
+                    return;
+                }
+            }
+        }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    // Initial check in case DOM is already ready
+    debouncedAddButton();
 })();

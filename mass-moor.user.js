@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Mass-Moore/Resume
 // @namespace    http://tampermonkey.net/
-// @version      4.15
+// @version      4.16
 // @description  Mass Moor and Resume vessels with checkbox selection
 // @author       https://github.com/justonlyforyou/
 // @order        60
@@ -142,11 +142,24 @@
         var vesselName = nameEl.textContent.trim();
         if (!vesselName) return null;
 
-        // Get vessel ID from vesselStore by matching name
+        // Get vessel ID from vesselStore by matching name with tab-based pre-filtering
         var vesselStore = getVesselStore();
         if (!vesselStore || !vesselStore.userVessels) return null;
 
-        var vessel = vesselStore.userVessels.find(function(v) {
+        var header = document.querySelector('#notifications-vessels-listing .header-text .text-center');
+        var headerText = header ? header.textContent.trim().toLowerCase() : '';
+        var candidates;
+        if (headerText.includes('at port')) {
+            candidates = vesselStore.userVessels.filter(function(v) { return v.status === 'port' && !v.is_parked; });
+        } else if (headerText.includes('anchored')) {
+            candidates = vesselStore.userVessels.filter(function(v) { return v.is_parked === true; });
+        } else if (headerText.includes('at sea')) {
+            candidates = vesselStore.userVessels.filter(function(v) { return v.status !== 'port' && !v.is_parked; });
+        } else {
+            candidates = vesselStore.userVessels;
+        }
+
+        var vessel = candidates.find(function(v) {
             return v.name === vesselName;
         });
 
@@ -186,13 +199,31 @@
         var vesselStore = getVesselStore();
         var userVessels = vesselStore && vesselStore.userVessels ? vesselStore.userVessels : [];
 
+        // Pre-filter vessels by current tab to prevent wrong matches with duplicate names
+        var filteredVessels;
+        if (isAtPort) {
+            filteredVessels = userVessels.filter(function(v) { return v.status === 'port' && !v.is_parked; });
+        } else if (isAnchored) {
+            filteredVessels = userVessels.filter(function(v) { return v.is_parked === true; });
+        } else if (isAtSea) {
+            filteredVessels = userVessels.filter(function(v) { return v.status !== 'port' && !v.is_parked; });
+        } else {
+            filteredVessels = userVessels;
+        }
+        var matchedIds = new Set();
+        vesselIdMap.clear();
+
         var vesselRows = vesselList.querySelectorAll('.vesselRow');
         vesselRows.forEach(function(row) {
             var nameEl = row.querySelector('.vesselName .nameValue');
             if (!nameEl) return;
             var vesselName = nameEl.textContent.trim();
 
-            var vessel = userVessels.find(function(v) { return v.name === vesselName; });
+            var vessel = filteredVessels.find(function(v) { return v.name === vesselName && !matchedIds.has(v.id); });
+            if (vessel) {
+                matchedIds.add(vessel.id);
+                vesselIdMap.set(row, vessel.id);
+            }
             var existingCheckbox = row.querySelector('.fleet-manager-checkbox');
 
             // In anchored tab, only show checkbox for moored vessels (is_parked === true)

@@ -2,7 +2,7 @@
 // @name         ShippingManager - ChatBot
 // @namespace    http://tampermonkey.net/
 // @description  Automated chatbot for alliance chat and DMs with command system
-// @version      2.16
+// @version      2.18
 // @order        60
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
@@ -10,6 +10,7 @@
 // @run-at       document-end
 // @RequireRebelShipMenu true
 // @background-job-required true
+// @RequireRebelShipStorage true
 // @enabled      false
 // ==/UserScript==
 /* globals addMenuItem */
@@ -47,6 +48,10 @@
     var modalListenerAttached = false;
     var chatUserIdCache = {}; // chat_id -> user_id mapping
     var cachedAllianceId = null;
+    var cachedAllianceIdTime = 0;
+    var MAX_PROCESSED_IDS = 500;
+    var MAX_CHAT_USER_ID_CACHE = 200;
+    var ALLIANCE_ID_TTL_MS = 3600000; // 1 hour
 
     // Command registry - other scripts can register commands
     var registeredCommands = {};
@@ -164,16 +169,23 @@
     }
 
     async function getAllianceId() {
-        if (cachedAllianceId) return cachedAllianceId;
+        var now = Date.now();
+        if (cachedAllianceId && (now - cachedAllianceIdTime) < ALLIANCE_ID_TTL_MS) {
+            return cachedAllianceId;
+        }
         try {
             var response = await apiCall('/alliance/get-user-alliance', 'POST', {});
             if (response && response.data && response.data.alliance && response.data.alliance.id) {
                 cachedAllianceId = response.data.alliance.id;
+                cachedAllianceIdTime = now;
                 log('Fetched alliance ID: ' + cachedAllianceId);
                 return cachedAllianceId;
             }
         } catch (e) {
             log('Failed to fetch alliance ID: ' + e, 'error');
+            // Invalidate cache on error (could indicate alliance change)
+            cachedAllianceId = null;
+            cachedAllianceIdTime = 0;
         }
         return null;
     }
@@ -251,6 +263,12 @@
             for (var i = 0; i < chat.messages.length; i++) {
                 var msg = chat.messages[i];
                 if (msg.user_id && msg.user_id !== myUserId) {
+                    // Limit cache size
+                    var cacheKeys = Object.keys(chatUserIdCache);
+                    if (cacheKeys.length >= MAX_CHAT_USER_ID_CACHE) {
+                        // Remove oldest entry (first key)
+                        delete chatUserIdCache[cacheKeys[0]];
+                    }
                     chatUserIdCache[chatId] = msg.user_id;
                     log('Cached user_id ' + msg.user_id + ' for chat ' + chatId);
                     return msg.user_id;
@@ -409,12 +427,6 @@
             return sendAllianceMessage(message);
         }
     };
-
-    function escapeHtml(text) {
-        var div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
 
     function parseCommand(message) {
         if (!settings) return null;
@@ -649,7 +661,14 @@
             // Use time_last_message as unique ID
             var messageId = chat.id + '_' + chat.time_last_message;
             if (processedDmIds.has(messageId)) continue;
+
+            // Limit Set size before adding
+            if (processedDmIds.size >= MAX_PROCESSED_IDS) {
+                var dmArray = Array.from(processedDmIds);
+                processedDmIds = new Set(dmArray.slice(-MAX_PROCESSED_IDS + 1));
+            }
             processedDmIds.add(messageId);
+
             // chat.body contains the last message text directly!
             var messageText = chat.body || '';
             var parsed = parseCommand(messageText);
@@ -682,7 +701,14 @@
             if (!msg.startsWith(settings.commandPrefix)) continue;
             var messageId = item.user_id + '_' + item.time_created;
             if (processedAllianceIds.has(messageId)) continue;
+
+            // Limit Set size before adding
+            if (processedAllianceIds.size >= MAX_PROCESSED_IDS) {
+                var allianceArray = Array.from(processedAllianceIds);
+                processedAllianceIds = new Set(allianceArray.slice(-MAX_PROCESSED_IDS + 1));
+            }
             processedAllianceIds.add(messageId);
+
             var parsed = parseCommand(msg);
             if (parsed) {
                 log('Command: !' + parsed.command + ' from user ' + item.user_id);
@@ -776,7 +802,15 @@
         if (!isModalOpen) return;
         isModalOpen = false;
         var wrapper = document.getElementById('chatbot-modal-wrapper');
-        if (wrapper) wrapper.classList.add('hide');
+        if (wrapper) {
+            wrapper.classList.add('hide');
+            // Remove from DOM after animation completes
+            setTimeout(function() {
+                if (wrapper.parentNode) {
+                    wrapper.parentNode.removeChild(wrapper);
+                }
+            }, 200);
+        }
     }
 
     function setupModalWatcher() {
@@ -870,212 +904,412 @@
         updateSettingsContent();
     }
 
+    // Helper functions for DOM creation
+    function createElement(tag, attrs, children) {
+        var el = document.createElement(tag);
+        if (attrs) {
+            for (var key in attrs) {
+                if (key === 'style' && typeof attrs[key] === 'object') {
+                    for (var styleKey in attrs[key]) {
+                        el.style[styleKey] = attrs[key][styleKey];
+                    }
+                } else if (key === 'textContent') {
+                    el.textContent = attrs[key];
+                } else {
+                    el.setAttribute(key, attrs[key]);
+                }
+            }
+        }
+        if (children) {
+            for (var i = 0; i < children.length; i++) {
+                if (typeof children[i] === 'string') {
+                    el.appendChild(document.createTextNode(children[i]));
+                } else if (children[i]) {
+                    el.appendChild(children[i]);
+                }
+            }
+        }
+        return el;
+    }
+
+    function createCustomCommandItem(cmd, idx) {
+        var outputLen = (cmd.outputText || '').length;
+
+        var nameInput = createElement('input', {
+            type: 'text',
+            value: cmd.name || '',
+            placeholder: 'e.g. status',
+            class: 'cmd-name',
+            style: { width: '120px', padding: '6px 8px', background: '#fff', border: '1px solid #c0c8e0', borderRadius: '4px', fontSize: '13px' }
+        });
+
+        var deleteBtn = createElement('button', {
+            class: 'cmd-delete',
+            textContent: 'Remove',
+            style: { padding: '4px 10px', background: '#dc3545', color: '#fff', border: '0', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }
+        });
+
+        var textarea = createElement('textarea', {
+            class: 'cmd-output',
+            placeholder: 'Response text (max 1000 chars, use Shift+Enter for line breaks)',
+            maxlength: '1000',
+            textContent: cmd.outputText || '',
+            style: { width: '100%', minHeight: '60px', padding: '8px', background: '#fff', border: '1px solid #c0c8e0', borderRadius: '4px', fontSize: '13px', resize: 'vertical', boxSizing: 'border-box' }
+        });
+
+        var charCount = createElement('span', { class: 'cmd-char-count', textContent: String(outputLen) });
+        var charCountDiv = createElement('div', {
+            style: { textAlign: 'right', fontSize: '11px', color: '#626b90', marginTop: '2px' }
+        }, [charCount, ' / 1000']);
+
+        var roleSelect = createElement('select', {
+            class: 'cmd-role',
+            style: { padding: '5px 8px', background: '#fff', border: '1px solid #c0c8e0', borderRadius: '4px', fontSize: '12px' }
+        });
+        var roles = [['all', 'All Members'], ['member', 'Member'], ['management', 'Management'], ['coo', 'COO'], ['ceo', 'CEO']];
+        for (var i = 0; i < roles.length; i++) {
+            var opt = createElement('option', { value: roles[i][0], textContent: roles[i][1] });
+            if (cmd.minRole === roles[i][0]) opt.selected = true;
+            roleSelect.appendChild(opt);
+        }
+
+        var dmCheckbox = createElement('input', {
+            type: 'checkbox',
+            class: 'cmd-dm',
+            checked: cmd.dmEnabled !== false,
+            style: { width: '14px', height: '14px', marginRight: '4px', accentColor: '#0db8f4' }
+        });
+        var dmLabel = createElement('label', {
+            style: { display: 'flex', alignItems: 'center', marginLeft: '8px', fontSize: '11px' }
+        }, [dmCheckbox, 'DM']);
+
+        var allianceCheckbox = createElement('input', {
+            type: 'checkbox',
+            class: 'cmd-alliance',
+            checked: cmd.allianceEnabled !== false,
+            style: { width: '14px', height: '14px', marginRight: '4px', accentColor: '#0db8f4' }
+        });
+        var allianceLabel = createElement('label', {
+            style: { display: 'flex', alignItems: 'center', fontSize: '11px' }
+        }, [allianceCheckbox, 'Alliance']);
+
+        var item = createElement('div', {
+            class: 'custom-cmd-item',
+            'data-idx': String(idx),
+            style: { marginBottom: '12px', padding: '12px', background: '#d0d8f0', borderRadius: '6px' }
+        }, [
+            createElement('div', {
+                style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }
+            }, [
+                createElement('div', {
+                    style: { display: 'flex', alignItems: 'center', gap: '8px' }
+                }, [
+                    createElement('span', { style: { fontSize: '12px', color: '#626b90' }, textContent: 'Command:' }),
+                    nameInput
+                ]),
+                deleteBtn
+            ]),
+            createElement('div', { style: { marginBottom: '8px' } }, [textarea, charCountDiv]),
+            createElement('div', {
+                style: { display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }
+            }, [
+                createElement('span', { style: { fontSize: '12px', color: '#626b90' }, textContent: 'Min Role:' }),
+                roleSelect,
+                dmLabel,
+                allianceLabel
+            ])
+        ]);
+
+        return item;
+    }
+
     function updateSettingsContent() {
         var content = document.getElementById('chatbot-settings-content');
         if (!content) return;
 
-        var customCmdsHtml = '';
-        for (var i = 0; i < settings.customCommands.length; i++) {
-            var cmd = settings.customCommands[i];
-            var outputLen = (cmd.outputText || '').length;
-            var customDmChecked = cmd.dmEnabled !== false ? 'checked' : '';
-            var customAllianceChecked = cmd.allianceEnabled !== false ? 'checked' : '';
-            customCmdsHtml += '<div class="custom-cmd-item" data-idx="' + i + '" style="margin-bottom:12px;padding:12px;background:#d0d8f0;border-radius:6px;">' +
-                '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
-                    '<div style="display:flex;align-items:center;gap:8px;">' +
-                        '<span style="font-size:12px;color:#626b90;">Command:</span>' +
-                        '<input type="text" value="' + escapeHtml(cmd.name || '') + '" placeholder="e.g. status" class="cmd-name" style="width:120px;padding:6px 8px;background:#fff;border:1px solid #c0c8e0;border-radius:4px;font-size:13px;">' +
-                    '</div>' +
-                    '<button class="cmd-delete" style="padding:4px 10px;background:#dc3545;color:#fff;border:0;border-radius:4px;cursor:pointer;font-size:12px;">Remove</button>' +
-                '</div>' +
-                '<div style="margin-bottom:8px;">' +
-                    '<textarea class="cmd-output" placeholder="Response text (max 1000 chars, use Shift+Enter for line breaks)" maxlength="1000" style="width:100%;min-height:60px;padding:8px;background:#fff;border:1px solid #c0c8e0;border-radius:4px;font-size:13px;resize:vertical;box-sizing:border-box;">' + (cmd.outputText || '').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</textarea>' +
-                    '<div style="text-align:right;font-size:11px;color:#626b90;margin-top:2px;"><span class="cmd-char-count">' + outputLen + '</span> / 1000</div>' +
-                '</div>' +
-                '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">' +
-                    '<span style="font-size:12px;color:#626b90;">Min Role:</span>' +
-                    '<select class="cmd-role" style="padding:5px 8px;background:#fff;border:1px solid #c0c8e0;border-radius:4px;font-size:12px;">' +
-                        '<option value="all"' + (cmd.minRole === 'all' ? ' selected' : '') + '>All Members</option>' +
-                        '<option value="member"' + (cmd.minRole === 'member' ? ' selected' : '') + '>Member</option>' +
-                        '<option value="management"' + (cmd.minRole === 'management' ? ' selected' : '') + '>Management</option>' +
-                        '<option value="coo"' + (cmd.minRole === 'coo' ? ' selected' : '') + '>COO</option>' +
-                        '<option value="ceo"' + (cmd.minRole === 'ceo' ? ' selected' : '') + '>CEO</option>' +
-                    '</select>' +
-                    '<label style="display:flex;align-items:center;margin-left:8px;font-size:11px;">' +
-                        '<input type="checkbox" class="cmd-dm" ' + customDmChecked + ' style="width:14px;height:14px;margin-right:4px;accent-color:#0db8f4;">DM' +
-                    '</label>' +
-                    '<label style="display:flex;align-items:center;font-size:11px;">' +
-                        '<input type="checkbox" class="cmd-alliance" ' + customAllianceChecked + ' style="width:14px;height:14px;margin-right:4px;accent-color:#0db8f4;">Alliance' +
-                    '</label>' +
-                '</div>' +
-            '</div>';
-        }
+        // Clear existing content
+        content.textContent = '';
 
-        // Build registered commands HTML
-        var registeredCmdsHtml = '';
+        var mainContainer = createElement('div', {
+            style: { padding: '15px', fontFamily: 'Lato,sans-serif', color: '#01125d' }
+        });
+
+        // Enable checkbox
+        var enableCheckbox = createElement('input', {
+            type: 'checkbox',
+            id: 'cb-enabled',
+            checked: settings.enabled,
+            style: { width: '20px', height: '20px', marginRight: '12px', accentColor: '#0db8f4', cursor: 'pointer' }
+        });
+        var enableLabel = createElement('label', {
+            style: { display: 'flex', alignItems: 'center', cursor: 'pointer', fontWeight: '700', fontSize: '16px' }
+        }, [enableCheckbox, createElement('span', { textContent: 'Enable ChatBot' })]);
+        mainContainer.appendChild(createElement('div', { style: { marginBottom: '16px' } }, [enableLabel]));
+
+        // Command prefix
+        var prefixInput = createElement('input', {
+            type: 'text',
+            id: 'cb-prefix',
+            value: settings.commandPrefix,
+            style: { width: '60px', padding: '8px', background: '#ebe9ea', border: '0', borderRadius: '4px', textAlign: 'center', fontSize: '16px' }
+        });
+        mainContainer.appendChild(createElement('div', { style: { marginBottom: '16px' } }, [
+            createElement('label', {
+                style: { display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: '700' },
+                textContent: 'Command Prefix'
+            }),
+            prefixInput
+        ]));
+
+        // Built-in commands
+        var helpCheckbox = createElement('input', {
+            type: 'checkbox',
+            id: 'cb-cmd-help',
+            checked: settings.commands.help.enabled,
+            style: { width: '18px', height: '18px', accentColor: '#0db8f4' }
+        });
+        var helpRoleSelect = createElement('select', {
+            id: 'cb-cmd-help-role',
+            style: { padding: '6px', background: '#ebe9ea', border: '0', borderRadius: '4px', fontSize: '12px' }
+        });
+        var helpRoles = [['all', 'All'], ['member', 'Member'], ['management', 'Management'], ['coo', 'COO'], ['ceo', 'CEO']];
+        for (var i = 0; i < helpRoles.length; i++) {
+            var opt = createElement('option', { value: helpRoles[i][0], textContent: helpRoles[i][1] });
+            if (settings.commands.help.minRole === helpRoles[i][0]) opt.selected = true;
+            helpRoleSelect.appendChild(opt);
+        }
+        var helpDmCheckbox = createElement('input', {
+            type: 'checkbox',
+            id: 'cb-cmd-help-dm',
+            checked: settings.commands.help.dmEnabled !== false,
+            style: { width: '14px', height: '14px', marginRight: '4px', accentColor: '#0db8f4' }
+        });
+        var helpAllianceCheckbox = createElement('input', {
+            type: 'checkbox',
+            id: 'cb-cmd-help-alliance',
+            checked: settings.commands.help.allianceEnabled !== false,
+            style: { width: '14px', height: '14px', marginRight: '4px', accentColor: '#0db8f4' }
+        });
+
+        mainContainer.appendChild(createElement('div', { style: { marginBottom: '16px' } }, [
+            createElement('div', {
+                style: { fontWeight: '700', fontSize: '14px', marginBottom: '8px' },
+                textContent: 'Built-in Commands'
+            }),
+            createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } }, [
+                createElement('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } }, [
+                    helpCheckbox,
+                    createElement('span', { style: { fontSize: '13px', width: '60px' }, textContent: '!help' }),
+                    helpRoleSelect,
+                    createElement('label', {
+                        style: { display: 'flex', alignItems: 'center', marginLeft: '8px', fontSize: '11px' }
+                    }, [helpDmCheckbox, 'DM']),
+                    createElement('label', {
+                        style: { display: 'flex', alignItems: 'center', fontSize: '11px' }
+                    }, [helpAllianceCheckbox, 'Alliance'])
+                ])
+            ])
+        ]));
+
+        // Registered commands
         var regCmdNames = Object.keys(registeredCommands);
         if (regCmdNames.length > 0) {
-            registeredCmdsHtml = '<div style="margin-bottom:16px;">' +
-                '<div style="font-weight:700;font-size:14px;margin-bottom:8px;">Script Commands</div>' +
-                '<div style="display:flex;flex-direction:column;gap:8px;">';
-
+            var regCmdContainer = createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } });
             for (var j = 0; j < regCmdNames.length; j++) {
                 var cmdName = regCmdNames[j];
                 var regCmd = registeredCommands[cmdName];
                 var cmdSettings = settings.registeredCommandSettings[cmdName];
                 var isEnabled = cmdSettings ? cmdSettings.enabled !== false : true;
                 var currentRole = (cmdSettings && cmdSettings.minRole) ? cmdSettings.minRole : regCmd.minRole;
-
                 var regDmEnabled = cmdSettings ? cmdSettings.dmEnabled !== false : true;
                 var regAllianceEnabled = cmdSettings ? cmdSettings.allianceEnabled !== false : true;
 
-                registeredCmdsHtml += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">' +
-                    '<input type="checkbox" class="reg-cmd-enabled" data-cmd="' + cmdName + '" ' + (isEnabled ? 'checked' : '') +
-                    ' style="width:18px;height:18px;accent-color:#0db8f4;">' +
-                    '<span style="font-size:13px;width:60px;">!' + cmdName + '</span>' +
-                    '<select class="reg-cmd-role" data-cmd="' + cmdName + '" style="padding:6px;background:#ebe9ea;border:0;border-radius:4px;font-size:12px;">' +
-                        '<option value="all"' + (currentRole === 'all' ? ' selected' : '') + '>All</option>' +
-                        '<option value="member"' + (currentRole === 'member' ? ' selected' : '') + '>Member</option>' +
-                        '<option value="management"' + (currentRole === 'management' ? ' selected' : '') + '>Management</option>' +
-                        '<option value="coo"' + (currentRole === 'coo' ? ' selected' : '') + '>COO</option>' +
-                        '<option value="ceo"' + (currentRole === 'ceo' ? ' selected' : '') + '>CEO</option>' +
-                    '</select>' +
-                    '<label style="display:flex;align-items:center;margin-left:8px;font-size:11px;">' +
-                        '<input type="checkbox" class="reg-cmd-dm" data-cmd="' + cmdName + '" ' + (regDmEnabled ? 'checked' : '') +
-                        ' style="width:14px;height:14px;margin-right:4px;accent-color:#0db8f4;">DM' +
-                    '</label>' +
-                    '<label style="display:flex;align-items:center;font-size:11px;">' +
-                        '<input type="checkbox" class="reg-cmd-alliance" data-cmd="' + cmdName + '" ' + (regAllianceEnabled ? 'checked' : '') +
-                        ' style="width:14px;height:14px;margin-right:4px;accent-color:#0db8f4;">Alliance' +
-                    '</label>' +
-                    '<span style="font-size:11px;color:#626b90;margin-left:4px;">' + (regCmd.description || '') + '</span>' +
-                '</div>';
+                var regCheckbox = createElement('input', {
+                    type: 'checkbox',
+                    class: 'reg-cmd-enabled',
+                    'data-cmd': cmdName,
+                    checked: isEnabled,
+                    style: { width: '18px', height: '18px', accentColor: '#0db8f4' }
+                });
+                var regRoleSelect = createElement('select', {
+                    class: 'reg-cmd-role',
+                    'data-cmd': cmdName,
+                    style: { padding: '6px', background: '#ebe9ea', border: '0', borderRadius: '4px', fontSize: '12px' }
+                });
+                var regRoles = [['all', 'All'], ['member', 'Member'], ['management', 'Management'], ['coo', 'COO'], ['ceo', 'CEO']];
+                for (var k = 0; k < regRoles.length; k++) {
+                    var regOpt = createElement('option', { value: regRoles[k][0], textContent: regRoles[k][1] });
+                    if (currentRole === regRoles[k][0]) regOpt.selected = true;
+                    regRoleSelect.appendChild(regOpt);
+                }
+                var regDmCheckbox = createElement('input', {
+                    type: 'checkbox',
+                    class: 'reg-cmd-dm',
+                    'data-cmd': cmdName,
+                    checked: regDmEnabled,
+                    style: { width: '14px', height: '14px', marginRight: '4px', accentColor: '#0db8f4' }
+                });
+                var regAllianceCheckbox = createElement('input', {
+                    type: 'checkbox',
+                    class: 'reg-cmd-alliance',
+                    'data-cmd': cmdName,
+                    checked: regAllianceEnabled,
+                    style: { width: '14px', height: '14px', marginRight: '4px', accentColor: '#0db8f4' }
+                });
+
+                regCmdContainer.appendChild(createElement('div', {
+                    style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }
+                }, [
+                    regCheckbox,
+                    createElement('span', { style: { fontSize: '13px', width: '60px' }, textContent: '!' + cmdName }),
+                    regRoleSelect,
+                    createElement('label', {
+                        style: { display: 'flex', alignItems: 'center', marginLeft: '8px', fontSize: '11px' }
+                    }, [regDmCheckbox, 'DM']),
+                    createElement('label', {
+                        style: { display: 'flex', alignItems: 'center', fontSize: '11px' }
+                    }, [regAllianceCheckbox, 'Alliance']),
+                    createElement('span', {
+                        style: { fontSize: '11px', color: '#626b90', marginLeft: '4px' },
+                        textContent: regCmd.description || ''
+                    })
+                ]));
 
                 // Add settings container if command has renderSettings
                 if (regCmd.renderSettings) {
-                    registeredCmdsHtml += '<div class="reg-cmd-settings" data-cmd="' + cmdName + '" style="margin-left:26px;margin-bottom:8px;"></div>';
+                    var settingsContainer = createElement('div', {
+                        class: 'reg-cmd-settings',
+                        'data-cmd': cmdName,
+                        style: { marginLeft: '26px', marginBottom: '8px' }
+                    });
+                    var settingsHtml = regCmd.renderSettings();
+                    if (settingsHtml) {
+                        settingsContainer.innerHTML = settingsHtml;
+                    }
+                    regCmdContainer.appendChild(settingsContainer);
                 }
             }
-
-            registeredCmdsHtml += '</div></div>';
+            mainContainer.appendChild(createElement('div', { style: { marginBottom: '16px' } }, [
+                createElement('div', {
+                    style: { fontWeight: '700', fontSize: '14px', marginBottom: '8px' },
+                    textContent: 'Script Commands'
+                }),
+                regCmdContainer
+            ]));
         }
 
-        content.innerHTML = '\
-            <div style="padding:15px;font-family:Lato,sans-serif;color:#01125d;">\
-                <div style="margin-bottom:16px;">\
-                    <label style="display:flex;align-items:center;cursor:pointer;font-weight:700;font-size:16px;">\
-                        <input type="checkbox" id="cb-enabled" ' + (settings.enabled ? 'checked' : '') + '\
-                               style="width:20px;height:20px;margin-right:12px;accent-color:#0db8f4;cursor:pointer;">\
-                        <span>Enable ChatBot</span>\
-                    </label>\
-                </div>\
-                <div style="margin-bottom:16px;">\
-                    <label style="display:block;margin-bottom:6px;font-size:14px;font-weight:700;">Command Prefix</label>\
-                    <input type="text" id="cb-prefix" value="' + settings.commandPrefix + '"\
-                           style="width:60px;padding:8px;background:#ebe9ea;border:0;border-radius:4px;text-align:center;font-size:16px;">\
-                </div>\
-                <div style="margin-bottom:16px;">\
-                    <div style="font-weight:700;font-size:14px;margin-bottom:8px;">Built-in Commands</div>\
-                    <div style="display:flex;flex-direction:column;gap:8px;">\
-                        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">\
-                            <input type="checkbox" id="cb-cmd-help" ' + (settings.commands.help.enabled ? 'checked' : '') + '\
-                                   style="width:18px;height:18px;accent-color:#0db8f4;">\
-                            <span style="font-size:13px;width:60px;">!help</span>\
-                            <select id="cb-cmd-help-role" style="padding:6px;background:#ebe9ea;border:0;border-radius:4px;font-size:12px;">\
-                                <option value="all"' + (settings.commands.help.minRole === 'all' ? ' selected' : '') + '>All</option>\
-                                <option value="member"' + (settings.commands.help.minRole === 'member' ? ' selected' : '') + '>Member</option>\
-                                <option value="management"' + (settings.commands.help.minRole === 'management' ? ' selected' : '') + '>Management</option>\
-                                <option value="coo"' + (settings.commands.help.minRole === 'coo' ? ' selected' : '') + '>COO</option>\
-                                <option value="ceo"' + (settings.commands.help.minRole === 'ceo' ? ' selected' : '') + '>CEO</option>\
-                            </select>\
-                            <label style="display:flex;align-items:center;margin-left:8px;font-size:11px;">\
-                                <input type="checkbox" id="cb-cmd-help-dm" ' + (settings.commands.help.dmEnabled !== false ? 'checked' : '') + '\
-                                       style="width:14px;height:14px;margin-right:4px;accent-color:#0db8f4;">DM\
-                            </label>\
-                            <label style="display:flex;align-items:center;font-size:11px;">\
-                                <input type="checkbox" id="cb-cmd-help-alliance" ' + (settings.commands.help.allianceEnabled !== false ? 'checked' : '') + '\
-                                       style="width:14px;height:14px;margin-right:4px;accent-color:#0db8f4;">Alliance\
-                            </label>\
-                        </div>\
-                    </div>\
-                </div>\
-                ' + registeredCmdsHtml + '\
-                <div style="margin-bottom:16px;">\
-                    <div style="font-weight:700;font-size:14px;margin-bottom:8px;">Custom Commands</div>\
-                    <div id="custom-commands-list">' + customCmdsHtml + '</div>\
-                    <button id="cb-add-cmd" style="padding:8px 16px;background:#0db8f4;color:#fff;border:0;border-radius:4px;cursor:pointer;margin-top:8px;">+ Add Command</button>\
-                </div>\
-                <div style="margin-bottom:16px;">\
-                    <div style="font-weight:700;font-size:14px;margin-bottom:8px;">Notifications</div>\
-                    <div style="display:flex;gap:20px;">\
-                        <label style="display:flex;align-items:center;cursor:pointer;">\
-                            <input type="checkbox" id="cb-notify-ingame" ' + (settings.notifyIngame ? 'checked' : '') + '\
-                                   style="width:18px;height:18px;margin-right:8px;accent-color:#0db8f4;">\
-                            <span style="font-size:13px;">Ingame</span>\
-                        </label>\
-                        <label style="display:flex;align-items:center;cursor:pointer;">\
-                            <input type="checkbox" id="cb-notify-system" ' + (settings.notifySystem ? 'checked' : '') + '\
-                                   style="width:18px;height:18px;margin-right:8px;accent-color:#0db8f4;">\
-                            <span style="font-size:13px;">System</span>\
-                        </label>\
-                    </div>\
-                </div>\
-                <div style="font-size:11px;color:#626b90;margin-bottom:16px;padding:10px;background:#d0d8f0;border-radius:4px;">\
-                    <strong>Rate Limits:</strong> DM 45s, Alliance 30s, Command delay 5s<br>\
-                    <strong>Max message:</strong> 1000 chars<br>\
-                    <strong>Polling:</strong> Every 10 seconds<br>\
-                    <strong>Mobile:</strong> When app is in background, polling is 60 seconds<br>\
-                    <strong>Registered external commands:</strong> ' + Object.keys(registeredCommands).length + '\
-                </div>\
-                <div style="display:flex;gap:12px;justify-content:space-between;">\
-                    <button id="cb-cancel" style="padding:10px 24px;background:linear-gradient(90deg,#d7d8db,#95969b);border:0;border-radius:6px;color:#393939;cursor:pointer;font-size:14px;font-weight:500;">Cancel</button>\
-                    <button id="cb-save" style="padding:10px 24px;background:linear-gradient(180deg,#46ff33,#129c00);border:0;border-radius:6px;color:#fff;cursor:pointer;font-size:14px;font-weight:500;">Save</button>\
-                </div>\
-            </div>';
-
-        // Event listeners
-        document.getElementById('cb-cancel').addEventListener('click', function() {
-            closeModal();
+        // Custom commands
+        var customCommandsList = createElement('div', { id: 'custom-commands-list' });
+        for (var m = 0; m < settings.customCommands.length; m++) {
+            customCommandsList.appendChild(createCustomCommandItem(settings.customCommands[m], m));
+        }
+        var addCmdBtn = createElement('button', {
+            id: 'cb-add-cmd',
+            textContent: '+ Add Command',
+            style: { padding: '8px 16px', background: '#0db8f4', color: '#fff', border: '0', borderRadius: '4px', cursor: 'pointer', marginTop: '8px' }
         });
+        mainContainer.appendChild(createElement('div', { style: { marginBottom: '16px' } }, [
+            createElement('div', {
+                style: { fontWeight: '700', fontSize: '14px', marginBottom: '8px' },
+                textContent: 'Custom Commands'
+            }),
+            customCommandsList,
+            addCmdBtn
+        ]));
 
-        // Render custom settings for registered commands
-        var settingsContainers = document.querySelectorAll('.reg-cmd-settings');
-        settingsContainers.forEach(function(container) {
-            var containerCmdName = container.getAttribute('data-cmd');
-            var containerRegCmd = registeredCommands[containerCmdName];
-            if (containerRegCmd && containerRegCmd.renderSettings) {
-                var settingsHtml = containerRegCmd.renderSettings();
-                if (settingsHtml) {
-                    container.innerHTML = settingsHtml;
-                }
+        // Notifications
+        var notifyIngameCheckbox = createElement('input', {
+            type: 'checkbox',
+            id: 'cb-notify-ingame',
+            checked: settings.notifyIngame,
+            style: { width: '18px', height: '18px', marginRight: '8px', accentColor: '#0db8f4' }
+        });
+        var notifySystemCheckbox = createElement('input', {
+            type: 'checkbox',
+            id: 'cb-notify-system',
+            checked: settings.notifySystem,
+            style: { width: '18px', height: '18px', marginRight: '8px', accentColor: '#0db8f4' }
+        });
+        mainContainer.appendChild(createElement('div', { style: { marginBottom: '16px' } }, [
+            createElement('div', {
+                style: { fontWeight: '700', fontSize: '14px', marginBottom: '8px' },
+                textContent: 'Notifications'
+            }),
+            createElement('div', { style: { display: 'flex', gap: '20px' } }, [
+                createElement('label', {
+                    style: { display: 'flex', alignItems: 'center', cursor: 'pointer' }
+                }, [notifyIngameCheckbox, createElement('span', { style: { fontSize: '13px' }, textContent: 'Ingame' })]),
+                createElement('label', {
+                    style: { display: 'flex', alignItems: 'center', cursor: 'pointer' }
+                }, [notifySystemCheckbox, createElement('span', { style: { fontSize: '13px' }, textContent: 'System' })])
+            ])
+        ]));
+
+        // Info box
+        var infoText = 'Rate Limits: DM 45s, Alliance 30s, Command delay 5s\nMax message: 1000 chars\nPolling: Every 10 seconds\nMobile: When app is in background, polling is 60 seconds\nRegistered external commands: ' + Object.keys(registeredCommands).length;
+        var infoParts = infoText.split('\n');
+        var infoChildren = [];
+        for (var p = 0; p < infoParts.length; p++) {
+            var parts = infoParts[p].split(': ');
+            if (parts.length === 2) {
+                infoChildren.push(createElement('strong', { textContent: parts[0] + ':' }));
+                infoChildren.push(' ' + parts[1]);
+            } else {
+                infoChildren.push(infoParts[p]);
+            }
+            if (p < infoParts.length - 1) {
+                infoChildren.push(createElement('br'));
+            }
+        }
+        mainContainer.appendChild(createElement('div', {
+            style: { fontSize: '11px', color: '#626b90', marginBottom: '16px', padding: '10px', background: '#d0d8f0', borderRadius: '4px' }
+        }, infoChildren));
+
+        // Buttons
+        var cancelBtn = createElement('button', {
+            id: 'cb-cancel',
+            textContent: 'Cancel',
+            style: { padding: '10px 24px', background: 'linear-gradient(90deg,#d7d8db,#95969b)', border: '0', borderRadius: '6px', color: '#393939', cursor: 'pointer', fontSize: '14px', fontWeight: '500' }
+        });
+        var saveBtn = createElement('button', {
+            id: 'cb-save',
+            textContent: 'Save',
+            style: { padding: '10px 24px', background: 'linear-gradient(180deg,#46ff33,#129c00)', border: '0', borderRadius: '6px', color: '#fff', cursor: 'pointer', fontSize: '14px', fontWeight: '500' }
+        });
+        mainContainer.appendChild(createElement('div', {
+            style: { display: 'flex', gap: '12px', justifyContent: 'space-between' }
+        }, [cancelBtn, saveBtn]));
+
+        content.appendChild(mainContainer);
+
+        // Event delegation for custom commands
+        customCommandsList.addEventListener('click', function(e) {
+            if (e.target.classList.contains('cmd-delete')) {
+                var item = e.target.closest('.custom-cmd-item');
+                var idx = parseInt(item.getAttribute('data-idx'));
+                settings.customCommands.splice(idx, 1);
+                updateSettingsContent();
             }
         });
 
-        document.getElementById('cb-add-cmd').addEventListener('click', function() {
+        customCommandsList.addEventListener('input', function(e) {
+            if (e.target.classList.contains('cmd-output')) {
+                var item = e.target.closest('.custom-cmd-item');
+                var counter = item.querySelector('.cmd-char-count');
+                if (counter) counter.textContent = e.target.value.length;
+            }
+        });
+
+        addCmdBtn.addEventListener('click', function() {
             settings.customCommands.push({ name: '', outputText: '', minRole: 'all', enabled: true, dmEnabled: true, allianceEnabled: true });
             updateSettingsContent();
         });
 
-        var deleteButtons = document.querySelectorAll('.cmd-delete');
-        deleteButtons.forEach(function(btn) {
-            btn.addEventListener('click', function() {
-                var item = this.closest('.custom-cmd-item');
-                var idx = parseInt(item.getAttribute('data-idx'));
-                settings.customCommands.splice(idx, 1);
-                updateSettingsContent();
-            });
+        cancelBtn.addEventListener('click', function() {
+            closeModal();
         });
 
-        var textareas = document.querySelectorAll('.cmd-output');
-        textareas.forEach(function(ta) {
-            ta.addEventListener('input', function() {
-                var item = this.closest('.custom-cmd-item');
-                var counter = item.querySelector('.cmd-char-count');
-                if (counter) counter.textContent = this.value.length;
-            });
-        });
-
-        document.getElementById('cb-save').addEventListener('click', function() {
+        saveBtn.addEventListener('click', function() {
             var wasEnabled = settings.enabled;
             settings.enabled = document.getElementById('cb-enabled').checked;
             settings.commandPrefix = document.getElementById('cb-prefix').value || '!';
