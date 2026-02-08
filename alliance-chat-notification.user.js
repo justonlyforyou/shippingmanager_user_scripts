@@ -1,15 +1,18 @@
 // ==UserScript==
 // @name        ShippingManager - Alliance Chat Notification
 // @description Shows a red dot on Alliance button when there are unread messages
-// @version     2.16
+// @version     2.22
 // @author      https://github.com/justonlyforyou/
 // @order        51
 // @match       https://shippingmanager.cc/*
 // @run-at      document-end
 // @grant       none
-// @RequireRebelShipStorage true
 // @enabled     false
+// @RequireRebelShipMenu true
+// @RequireRebelShipStorage true
+// @background-job-required true
 // ==/UserScript==
+/* globals addMenuItem */
 
 (function() {
     'use strict';
@@ -29,6 +32,16 @@
     var dotObserver = null;
     var modalObserver = null;
     var clickHandler = null;
+
+    // Settings
+    var settings = {
+        inAppAlerts: true,
+        desktopNotifications: true
+    };
+
+    function log(msg) {
+        console.log('[AllianceChatNotify] ' + msg);
+    }
 
     // ============================================
     // Utility Functions
@@ -75,32 +88,230 @@
     }
 
     // ============================================
-    // Load/Save Functions
+    // Settings Functions
     // ============================================
 
-    // Load last read timestamp
-    async function loadLastRead() {
-        try {
-            var stored = await dbGet('lastRead');
-            if (stored) {
-                lastReadTimestamp = stored;
-            }
-        } catch (e) {
-            console.error('[AllianceChatNotify] Failed to load last read:', e);
+    async function loadSettings() {
+        var stored = await dbGet('settings');
+        if (stored) {
+            if (typeof stored.inAppAlerts === 'boolean') settings.inAppAlerts = stored.inAppAlerts;
+            if (typeof stored.desktopNotifications === 'boolean') settings.desktopNotifications = stored.desktopNotifications;
         }
     }
 
-    // Save last read timestamp
+    async function saveSettings() {
+        await dbSet('settings', settings);
+    }
+
+    // ============================================
+    // Notification Functions
+    // ============================================
+
+    function showToast(message, type) {
+        try {
+            var appEl = document.querySelector('#app');
+            if (!appEl || !appEl.__vue_app__) return;
+            var app = appEl.__vue_app__;
+            var pinia = app._context.provides.pinia || app.config.globalProperties.$pinia;
+            if (!pinia || !pinia._s) return;
+            var toastStore = pinia._s.get('toast');
+            if (toastStore && toastStore.addToast) {
+                toastStore.addToast({ message: message, type: type || 'info' });
+            }
+        } catch (e) {
+            log('showToast error: ' + e.message);
+        }
+    }
+
+    function sendSystemNotification(title, message) {
+        if (!settings.desktopNotifications) return;
+
+        if (typeof window.RebelShipNotify !== 'undefined' && window.RebelShipNotify.notify) {
+            try {
+                window.RebelShipNotify.notify(title + ': ' + message);
+                return;
+            } catch (e) {
+                log('RebelShipNotify failed: ' + e.message);
+            }
+        }
+
+        if ('Notification' in window) {
+            if (Notification.permission === 'granted') {
+                try {
+                    new Notification(title, {
+                        body: message,
+                        icon: 'https://shippingmanager.cc/favicon.ico',
+                        tag: 'alliance-chat'
+                    });
+                } catch (e) {
+                    log('Web notification failed: ' + e.message);
+                }
+            } else if (Notification.permission !== 'denied') {
+                Notification.requestPermission().then(function(permission) {
+                    if (permission === 'granted') {
+                        sendSystemNotification(title, message);
+                    }
+                });
+            }
+        }
+    }
+
+    // ============================================
+    // Settings Modal
+    // ============================================
+
+    function openSettingsModal() {
+        var existing = document.getElementById('acn-settings-wrapper');
+        if (existing) existing.remove();
+
+        var wrapper = document.createElement('div');
+        wrapper.id = 'acn-settings-wrapper';
+        wrapper.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;z-index:100001;display:flex;align-items:center;justify-content:center;';
+
+        var bg = document.createElement('div');
+        bg.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);';
+        bg.addEventListener('click', function() { wrapper.remove(); });
+        wrapper.appendChild(bg);
+
+        var contentWrapper = document.createElement('div');
+        contentWrapper.style.cssText = 'position:relative;z-index:1;animation:acn-fade-in 0.2s ease-out;';
+        wrapper.appendChild(contentWrapper);
+
+        var container = document.createElement('div');
+        container.style.cssText = 'background:#c6cbdb;border-radius:12px;overflow:hidden;width:400px;max-width:95vw;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 4px 20px rgba(0,0,0,0.3);';
+        contentWrapper.appendChild(container);
+
+        // Header
+        var header = document.createElement('div');
+        header.style.cssText = 'background:#626b90;color:#fff;padding:16px 20px;display:flex;justify-content:space-between;align-items:center;';
+        header.innerHTML = '<span style="font-size:18px;font-weight:700;">Chat Notification</span>';
+        var closeBtn = document.createElement('button');
+        closeBtn.textContent = 'X';
+        closeBtn.style.cssText = 'background:none;border:none;color:#fff;font-size:20px;cursor:pointer;padding:0;width:30px;height:30px;';
+        closeBtn.addEventListener('click', function() { wrapper.remove(); });
+        header.appendChild(closeBtn);
+        container.appendChild(header);
+
+        // Content
+        var content = document.createElement('div');
+        content.style.cssText = 'flex:1;overflow-y:auto;padding:0;';
+        container.appendChild(content);
+
+        var central = document.createElement('div');
+        central.style.cssText = 'background:#e9effd;margin:16px;border-radius:8px;padding:20px;';
+        content.appendChild(central);
+
+        central.innerHTML =
+            '<div style="margin-bottom:16px;">' +
+                '<label style="display:flex;align-items:center;cursor:pointer;">' +
+                    '<input type="checkbox" id="acn-inapp"' + (settings.inAppAlerts ? ' checked' : '') +
+                    ' style="width:20px;height:20px;margin-right:12px;accent-color:#0db8f4;cursor:pointer;">' +
+                    '<span style="font-weight:600;">Ingame Toast Notifications</span>' +
+                '</label>' +
+                '<div style="font-size:12px;color:#666;margin-top:4px;margin-left:32px;">Show toast when new alliance chat messages arrive</div>' +
+            '</div>' +
+            '<div style="margin-bottom:20px;">' +
+                '<label style="display:flex;align-items:center;cursor:pointer;">' +
+                    '<input type="checkbox" id="acn-desktop"' + (settings.desktopNotifications ? ' checked' : '') +
+                    ' style="width:20px;height:20px;margin-right:12px;accent-color:#0db8f4;cursor:pointer;">' +
+                    '<span style="font-weight:600;">System Notifications</span>' +
+                '</label>' +
+                '<div style="font-size:12px;color:#666;margin-top:4px;margin-left:32px;">Desktop / Android push notification for new messages</div>' +
+            '</div>' +
+            '<div style="text-align:center;">' +
+                '<button id="acn-save" style="padding:10px 24px;background:linear-gradient(180deg,#46ff33,#129c00);border:0;border-radius:6px;color:#fff;cursor:pointer;font-size:16px;font-weight:500;font-family:Lato,sans-serif;">Save</button>' +
+            '</div>';
+
+        // Save handler
+        setTimeout(function() {
+            var saveBtn = document.getElementById('acn-save');
+            if (saveBtn) {
+                saveBtn.addEventListener('click', function() {
+                    settings.inAppAlerts = document.getElementById('acn-inapp').checked;
+                    settings.desktopNotifications = document.getElementById('acn-desktop').checked;
+                    saveSettings();
+                    showToast('Chat Notification settings saved', 'success');
+                    wrapper.remove();
+                });
+            }
+        }, 0);
+
+        // Animation CSS
+        var style = document.createElement('style');
+        style.textContent = '@keyframes acn-fade-in { from { opacity:0; transform:scale(0.95); } to { opacity:1; transform:scale(1); } }';
+        wrapper.appendChild(style);
+
+        document.body.appendChild(wrapper);
+    }
+
+    // ============================================
+    // Load/Save Functions
+    // ============================================
+
+    // Load last read timestamp from Bridge DB + localStorage (dual source)
+    async function loadLastRead() {
+        var fromLocalStorage = 0;
+        var fromBridge = 0;
+
+        // 1. Read from localStorage (always available, synchronous)
+        try {
+            var lsValue = localStorage.getItem('acn_lastRead');
+            if (lsValue) {
+                fromLocalStorage = parseInt(lsValue, 10) || 0;
+            }
+            // Also check crash-recovery key
+            var pending = localStorage.getItem('acn_pendingLastRead');
+            if (pending) {
+                var recovered = parseInt(JSON.parse(pending), 10) || 0;
+                localStorage.removeItem('acn_pendingLastRead');
+                if (recovered > fromLocalStorage) {
+                    fromLocalStorage = recovered;
+                }
+            }
+        } catch { /* ignore localStorage errors */ }
+
+        // 2. Read from Bridge storage
+        try {
+            var stored = await dbGet('lastRead');
+            if (stored) {
+                fromBridge = parseInt(stored, 10) || 0;
+            }
+        } catch (e) {
+            log('Bridge dbGet lastRead failed: ' + e.message);
+        }
+
+        // Use whichever is newer
+        lastReadTimestamp = Math.max(fromLocalStorage, fromBridge);
+        log('loadLastRead: localStorage=' + fromLocalStorage + ' bridge=' + fromBridge + ' using=' + lastReadTimestamp);
+
+        // Sync: if localStorage has newer value, push to Bridge
+        if (fromLocalStorage > fromBridge) {
+            dbSet('lastRead', fromLocalStorage).catch(function() {});
+        }
+        // If Bridge has newer value, push to localStorage
+        if (fromBridge > fromLocalStorage) {
+            try { localStorage.setItem('acn_lastRead', String(fromBridge)); } catch {}
+        }
+    }
+
+    // Save last read timestamp to BOTH Bridge DB and localStorage
     async function saveLastRead(timestamp) {
+        if (!timestamp || timestamp <= 0) return;
         lastReadTimestamp = timestamp;
         hasUnread = false;
         updateNotificationDots();
 
+        // 1. localStorage first (synchronous, always works)
         try {
-            await dbSet('lastRead', timestamp);
-            console.log('[AllianceChatNotify] Saved last read timestamp');
+            localStorage.setItem('acn_lastRead', String(timestamp));
+        } catch { /* ignore */ }
+
+        // 2. Bridge storage (async, may fail silently)
+        try {
+            var ok = await dbSet('lastRead', timestamp);
+            log('saveLastRead: ' + timestamp + ' bridge=' + (ok ? 'ok' : 'FAIL'));
         } catch (e) {
-            console.error('[AllianceChatNotify] Failed to save last read:', e);
+            log('saveLastRead bridge error: ' + e.message);
         }
     }
 
@@ -224,10 +435,10 @@
                     cacheTimestamp = Date.now();
                     return cachedAllianceId;
                 }
-                console.log('[AllianceChatNotify] No alliance found in API response');
+                log('No alliance found in API response');
                 return null;
             }).catch(function(e) {
-                console.log('[AllianceChatNotify] fetchAllianceId attempt ' + attemptNum + '/' + maxRetries + ' failed:', e.message);
+                log('fetchAllianceId attempt ' + attemptNum + '/' + maxRetries + ' failed: ' + e.message);
                 if (attemptNum < maxRetries) {
                     // Exponential backoff: 500ms, 1000ms, 2000ms
                     var delay = Math.pow(2, attemptNum - 1) * 500;
@@ -249,7 +460,7 @@
         if (!cachedAllianceId || Date.now() - cacheTimestamp >= CACHE_TTL) {
             return fetchAllianceId().then(function(allianceId) {
                 if (!allianceId) {
-                    console.log('[AllianceChatNotify] No alliance ID - user may not be in an alliance');
+                    log('No alliance ID - user may not be in an alliance');
                     return;
                 }
                 return performChatCheck(allianceId, maxRetries);
@@ -276,7 +487,7 @@
             }).then(function(data) {
                 // API returns data.chat_feed not data.messages
                 if (!data || !data.data || !data.data.chat_feed) {
-                    console.log('[AllianceChatNotify] No chat_feed data');
+                    log('No chat_feed data');
                     return;
                 }
 
@@ -288,23 +499,54 @@
                 }
 
                 // Find the newest message timestamp (only type: "chat", not "feed")
-                newestMessageTimestamp = 0;
+                // Use local var first, only assign to global after processing
+                var checkNewest = 0;
+                var newestSender = '';
                 chatFeed.forEach(function(msg) {
                     // Only count actual chat messages, not feed items like "member_left"
                     if (msg.type === 'chat') {
                         var msgTime = msg.time_created || 0;
-                        if (msgTime > newestMessageTimestamp) {
-                            newestMessageTimestamp = msgTime;
+                        if (msgTime > checkNewest) {
+                            checkNewest = msgTime;
+                            newestSender = msg.user_name || 'Someone';
                         }
                     }
                 });
 
+                // Update global newest ONLY if we found messages (never reset to 0)
+                if (checkNewest > 0) {
+                    newestMessageTimestamp = checkNewest;
+                }
+
+                // First run: no lastRead ever saved → treat all existing messages as read
+                if (lastReadTimestamp === 0 && checkNewest > 0) {
+                    log('First run: initializing lastRead to newest message ' + checkNewest);
+                    saveLastRead(checkNewest);
+                    return;
+                }
+
+                // Count unread messages
+                var unreadCount = 0;
+                if (checkNewest > lastReadTimestamp) {
+                    chatFeed.forEach(function(msg) {
+                        if (msg.type === 'chat' && (msg.time_created || 0) > lastReadTimestamp) {
+                            unreadCount++;
+                        }
+                    });
+                }
+
                 // Check if there are unread messages
                 var wasUnread = hasUnread;
-                if (newestMessageTimestamp > lastReadTimestamp) {
+                if (checkNewest > lastReadTimestamp) {
                     hasUnread = true;
                     if (!wasUnread) {
-                        console.log('[AllianceChatNotify] Unread messages detected! Newest:', newestMessageTimestamp, 'Last read:', lastReadTimestamp);
+                        log('Unread messages detected! Newest: ' + checkNewest + ' Last read: ' + lastReadTimestamp);
+                        // Send notifications only on state change (first detection)
+                        var notifyMsg = unreadCount + ' new alliance chat message' + (unreadCount > 1 ? 's' : '') + ' (latest from ' + newestSender + ')';
+                        if (settings.inAppAlerts) {
+                            showToast(notifyMsg, 'info');
+                        }
+                        sendSystemNotification('Alliance Chat', notifyMsg);
                     }
                 } else {
                     hasUnread = false;
@@ -312,7 +554,7 @@
 
                 updateNotificationDots();
             }).catch(function(e) {
-                console.log('[AllianceChatNotify] checkForUnreadMessages attempt ' + attemptNum + '/' + maxRetries + ' failed:', e.message);
+                log('checkForUnreadMessages attempt ' + attemptNum + '/' + maxRetries + ' failed: ' + e.message);
                 if (attemptNum < maxRetries) {
                     // Exponential backoff: 500ms, 1000ms, 2000ms
                     var delay = Math.pow(2, attemptNum - 1) * 500;
@@ -388,9 +630,14 @@
             var isModalVisible = modalWrapper && modalWrapper.offsetParent !== null;
 
             if (!isModalVisible && lastModalVisible) {
-                // Modal just closed
+                // Modal just closed - save immediately if chat was active
+                if (isChatTabActive && newestMessageTimestamp > 0 && newestMessageTimestamp > lastReadTimestamp) {
+                    cancelMarkAsRead();
+                    saveLastRead(newestMessageTimestamp);
+                } else {
+                    cancelMarkAsRead();
+                }
                 isChatTabActive = false;
-                cancelMarkAsRead();
             }
 
             lastModalVisible = isModalVisible;
@@ -411,18 +658,22 @@
             });
         }
 
-        // Fallback: observe body for modal wrapper appearance
-        var bodyObserver = new MutationObserver(function() {
-            var foundWrapper = document.getElementById('modal-wrapper');
-            if (foundWrapper && !modalObserver) {
-                modalObserver = new MutationObserver(checkModalState);
-                modalObserver.observe(foundWrapper, {
-                    attributes: true,
-                    attributeFilter: ['style', 'class']
-                });
-            }
-        });
-        bodyObserver.observe(document.body, { childList: true, subtree: true });
+        // Fallback: observe modal-container for modal wrapper appearance
+        var modalContainer = document.getElementById('modal-container');
+        if (modalContainer && !modalWrapper) {
+            var containerObserver = new MutationObserver(function() {
+                var foundWrapper = document.getElementById('modal-wrapper');
+                if (foundWrapper && !modalObserver) {
+                    modalObserver = new MutationObserver(checkModalState);
+                    modalObserver.observe(foundWrapper, {
+                        attributes: true,
+                        attributeFilter: ['style', 'class']
+                    });
+                    containerObserver.disconnect();
+                }
+            });
+            containerObserver.observe(modalContainer, { childList: true });
+        }
     }
 
     // ============================================
@@ -430,6 +681,9 @@
     // ============================================
 
     async function init() {
+        addMenuItem('Chat Notification', openSettingsModal, 51);
+
+        await loadSettings();
         await loadLastRead();
 
         // Setup monitors
@@ -442,16 +696,50 @@
         // Periodic check for new messages
         setInterval(checkForUnreadMessages, CHECK_INTERVAL);
 
-        // Replace setInterval with MutationObserver for dot updates
+        // Observe modal-container for dot updates (NOT document.body)
         var debouncedUpdate = debounce(updateNotificationDots, 200);
-        dotObserver = new MutationObserver(debouncedUpdate);
-        dotObserver.observe(document.body, { childList: true, subtree: true });
+        var modalContainer = document.getElementById('modal-container');
+        if (modalContainer) {
+            dotObserver = new MutationObserver(debouncedUpdate);
+            dotObserver.observe(modalContainer, { childList: true, subtree: true });
+        }
 
         // Initial dot update
         updateNotificationDots();
 
-        console.log('[AllianceChatNotify] Script loaded');
+        log('Script loaded');
     }
+
+    // Save read state on page unload if chat was active
+    window.addEventListener('beforeunload', function() {
+        if (isChatTabActive && newestMessageTimestamp > 0 && newestMessageTimestamp > lastReadTimestamp) {
+            // Synchronous localStorage - dbSet is async and may not complete before unload
+            try {
+                localStorage.setItem('acn_lastRead', String(newestMessageTimestamp));
+                localStorage.setItem('acn_pendingLastRead', JSON.stringify(newestMessageTimestamp));
+            } catch { /* ignore */ }
+        }
+    });
+
+    // ========== BACKGROUND JOB ==========
+    window.rebelshipRunAllianceChatNotify = function() {
+        return loadSettings().then(function() {
+            return loadLastRead();
+        }).then(function() {
+            return checkForUnreadMessages();
+        }).then(function() {
+            return { success: true, hasUnread: hasUnread };
+        }).catch(function(e) {
+            return { success: false, error: e.message };
+        });
+    };
+
+    window.rebelshipBackgroundJobs = window.rebelshipBackgroundJobs || [];
+    window.rebelshipBackgroundJobs.push({
+        name: 'AllianceChatNotify',
+        interval: 60 * 1000,
+        run: function() { return window.rebelshipRunAllianceChatNotify(); }
+    });
 
     // Wait for page to load
     if (document.readyState === 'loading') {

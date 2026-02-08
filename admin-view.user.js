@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Admin View
 // @description Enable admin/moderator UI elements (client-side only - just for look and feel). HAS NO ADMIN FUNCTIONS IN BACKEND!
-// @version     8.8
+// @version     8.9
 // @author      https://github.com/justonlyforyou/
 // @order        50
 // @match       https://shippingmanager.cc/*
@@ -230,7 +230,8 @@
             }
         }
     });
-    observer.observe(document.body, { childList: true, subtree: true });
+    var observeTarget = document.getElementById('app') || document.body;
+    observer.observe(observeTarget, { childList: true, subtree: true });
 
     window.adminView = {
         patch: patchForumComponent,

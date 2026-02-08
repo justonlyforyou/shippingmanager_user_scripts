@@ -2,7 +2,7 @@
 // @name         ShippingManager - Distance Filter for Route Planner
 // @namespace    http://tampermonkey.net/
 // @description  Filter ports by distance when creating new routes!
-// @version      9.22
+// @version      9.23
 // @order        55
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
@@ -16,6 +16,10 @@
     var API_BASE = 'https://shippingmanager.cc/api';
     var injected = false;
     var dropdownOpen = false;
+    var coordsCache = {};
+    var vesselPortsCache = {};
+    var COORDS_CACHE_TTL = 5 * 60 * 1000;
+    var VESSEL_PORTS_CACHE_TTL = 2 * 60 * 1000;
 
     var RANGES = [
         { label: "All", min: 0, max: 999999 },
@@ -26,15 +30,6 @@
         { label: "> 10k nm", min: 10000, max: 999999 }
     ];
 
-    function haversine(lat1, lon1, lat2, lon2) {
-        var R = 3440.065;
-        var dLat = (lat2 - lat1) * Math.PI / 180;
-        var dLon = (lon2 - lon1) * Math.PI / 180;
-        var a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-                Math.sin(dLon/2) * Math.sin(dLon/2);
-        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    }
 
     function getPinia() {
         var appEl = document.querySelector("#app");
@@ -50,6 +45,10 @@
     }
 
     async function fetchVesselPorts(vesselId) {
+        var cached = vesselPortsCache[vesselId];
+        if (cached && Date.now() - cached.timestamp < VESSEL_PORTS_CACHE_TTL) {
+            return cached.ports;
+        }
         try {
             var response = await fetch(API_BASE + '/route/get-vessel-ports', {
                 method: 'POST',
@@ -60,7 +59,9 @@
             if (!response.ok) return null;
             var data = await response.json();
             if (data && data.data && data.data.all && data.data.all.ports) {
-                return data.data.all.ports;
+                var ports = data.data.all.ports;
+                vesselPortsCache[vesselId] = { ports: ports, timestamp: Date.now() };
+                return ports;
             }
         } catch (err) {
             console.log("[DistFilter] fetchVesselPorts error:", err);
@@ -69,6 +70,10 @@
     }
 
     async function fetchPortCoords(portCode) {
+        var cached = coordsCache[portCode];
+        if (cached && Date.now() - cached.timestamp < COORDS_CACHE_TTL) {
+            return { lat: cached.lat, lon: cached.lon };
+        }
         try {
             var response = await fetch(API_BASE + '/port/get-ports', {
                 method: 'POST',
@@ -80,7 +85,14 @@
             var data = await response.json();
             if (data && data.data && data.data.port && data.data.port.length > 0) {
                 var port = data.data.port[0];
-                return { lat: parseFloat(port.lat), lon: parseFloat(port.lon) };
+                var lat = parseFloat(port.lat);
+                var lon = parseFloat(port.lon);
+                if (isNaN(lat) || isNaN(lon)) {
+                    console.warn("[DistFilter] Invalid coordinates for port:", portCode);
+                    return null;
+                }
+                coordsCache[portCode] = { lat: lat, lon: lon, timestamp: Date.now() };
+                return { lat: lat, lon: lon };
             }
         } catch (err) {
             console.log("[DistFilter] fetchPortCoords error:", err);
@@ -92,10 +104,20 @@
         if (!ports || !range || range.label === "All" || !vesselCoords) {
             return ports;
         }
+        var R = 3440.065;
+        var vLat = vesselCoords.lat * Math.PI / 180;
+        var cosVLat = Math.cos(vLat);
+        var vLon = vesselCoords.lon * Math.PI / 180;
         return ports.filter(function(port) {
             var pLat = parseFloat(port.lat);
             var pLon = parseFloat(port.lon);
-            var dist = haversine(vesselCoords.lat, vesselCoords.lon, pLat, pLon);
+            if (isNaN(pLat) || isNaN(pLon)) return false;
+            var pLatR = pLat * Math.PI / 180;
+            var dLat = pLatR - vLat;
+            var dLon = pLon * Math.PI / 180 - vLon;
+            var a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                    cosVLat * Math.cos(pLatR) * Math.sin(dLon/2) * Math.sin(dLon/2);
+            var dist = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
             return dist >= range.min && dist < range.max;
         });
     }
@@ -113,19 +135,14 @@
             return;
         }
 
-        if (btn) {
-            var inner = btn.querySelector(".btn-content-wrapper");
-            if (inner) inner.textContent = "Loading...";
-        }
+        var btnInner = btn ? btn.querySelector(".btn-content-wrapper") : null;
+        if (btnInner) btnInner.textContent = "Loading...";
 
         console.log("[DistFilter] Fetching vessel port coords for:", selectedVessel.current_port_code);
         var vesselCoords = await fetchPortCoords(selectedVessel.current_port_code);
         if (!vesselCoords) {
             console.log("[DistFilter] Could not get vessel coordinates");
-            if (btn) {
-                var inner2 = btn.querySelector(".btn-content-wrapper");
-                if (inner2) inner2.textContent = "ERROR";
-            }
+            if (btnInner) btnInner.textContent = "ERROR";
             return;
         }
         console.log("[DistFilter] Vessel coords:", vesselCoords);
@@ -134,10 +151,7 @@
         var allPorts = await fetchVesselPorts(selectedVessel.id);
         if (!allPorts || allPorts.length === 0) {
             console.log("[DistFilter] No ports returned from API");
-            if (btn) {
-                var inner3 = btn.querySelector(".btn-content-wrapper");
-                if (inner3) inner3.textContent = "ERROR";
-            }
+            if (btnInner) btnInner.textContent = "ERROR";
             return;
         }
         console.log("[DistFilter] Total ports from API:", allPorts.length);
@@ -147,10 +161,7 @@
 
         if (filteredPorts.length === 0) {
             console.log("[DistFilter] No ports in this distance range!");
-            if (btn) {
-                var inner4 = btn.querySelector(".btn-content-wrapper");
-                if (inner4) inner4.textContent = "0 PORTS";
-            }
+            if (btnInner) btnInner.textContent = "0 PORTS";
             return;
         }
 
@@ -165,16 +176,12 @@
 
         console.log("[DistFilter] Applied! routeCreationStep=2, activePorts count:", filteredPorts.length);
 
-        if (btn) {
-            var inner5 = btn.querySelector(".btn-content-wrapper");
-            if (inner5) inner5.textContent = range.label === "All" ? "DISTANCE" : range.label;
-        }
+        if (btnInner) btnInner.textContent = range.label === "All" ? "DISTANCE" : range.label;
 
         var mapStore = getStore("mapStore");
         if (mapStore && mapStore.map) {
-            var bounds = [];
-            filteredPorts.forEach(function(p) {
-                bounds.push([parseFloat(p.lat), parseFloat(p.lon)]);
+            var bounds = filteredPorts.map(function(p) {
+                return [parseFloat(p.lat), parseFloat(p.lon)];
             });
             if (bounds.length > 0) {
                 try {
@@ -186,9 +193,16 @@
         }
     }
 
+    var cachedDropdown = null;
+
     function createDropdown(btn) {
-        var dd = document.getElementById("rebel-dist-dropdown");
-        if (dd) dd.remove();
+        if (cachedDropdown) {
+            cachedDropdown.style.display = 'block';
+            btn.style.position = 'relative';
+            btn.appendChild(cachedDropdown);
+            dropdownOpen = true;
+            return;
+        }
 
         var dropdown = document.createElement("div");
         dropdown.id = "rebel-dist-dropdown";
@@ -202,25 +216,22 @@
             item.onmouseleave = function() { item.style.background = "transparent"; };
             item.onclick = function(e) {
                 e.stopPropagation();
-                dropdown.remove();
+                dropdown.style.display = 'none';
                 dropdownOpen = false;
                 applyDistanceFilter(range, btn);
             };
             dropdown.appendChild(item);
         });
 
+        cachedDropdown = dropdown;
         btn.style.position = "relative";
         btn.appendChild(dropdown);
         dropdownOpen = true;
     }
 
     function isShowAllPortsStep(container) {
-        var buttons = container.querySelectorAll('button');
-        for (var i = 0; i < buttons.length; i++) {
-            var text = (buttons[i].textContent || '').trim().toLowerCase();
-            if (text.indexOf('show all ports') !== -1) return true;
-        }
-        return false;
+        var text = (container.textContent || '').toLowerCase();
+        return text.indexOf('show all ports') !== -1;
     }
 
     function inject() {
@@ -260,29 +271,39 @@
     function reset() {
         injected = false;
         dropdownOpen = false;
+        cachedDropdown = null;
     }
 
+    var obsTimer = null;
     var obs = new MutationObserver(function() {
-        var popup = document.querySelector("#createRoutePopup");
-        if (!popup) {
-            if (injected) reset();
-            return;
-        }
-        var container = popup.querySelector('.buttonContainer');
-        if (!container) return;
-        if (!isShowAllPortsStep(container)) return;
-        if (!container.querySelector('#rebel-dist-btn')) {
-            injected = false;
-            dropdownOpen = false;
-            inject();
-        }
+        if (obsTimer) return;
+        obsTimer = setTimeout(function() {
+            obsTimer = null;
+            var popup = document.querySelector("#createRoutePopup");
+            if (!popup) {
+                if (injected) reset();
+                return;
+            }
+            var container = popup.querySelector('.buttonContainer');
+            if (!container) return;
+            if (!isShowAllPortsStep(container)) return;
+            if (!container.querySelector('#rebel-dist-btn')) {
+                injected = false;
+                dropdownOpen = false;
+                inject();
+            }
+        }, 200);
     });
-    obs.observe(document.body, { childList: true, subtree: true });
+    var observeRoot = document.getElementById('app') || document.body;
+    obs.observe(observeRoot, { childList: true, subtree: true });
+
+    window.addEventListener('beforeunload', function() {
+        obs.disconnect();
+    });
 
     document.addEventListener("click", function(e) {
         if (dropdownOpen && !e.target.closest("#rebel-dist-btn")) {
-            var dd = document.getElementById("rebel-dist-dropdown");
-            if (dd) dd.remove();
+            if (cachedDropdown) cachedDropdown.style.display = 'none';
             dropdownOpen = false;
         }
     });

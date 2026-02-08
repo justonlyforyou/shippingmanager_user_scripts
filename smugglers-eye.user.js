@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Smuggler's Eye
 // @namespace    https://rebelship.org/
-// @version      1.91
+// @version      1.95
 // @description  Auto-adjust cargo prices: 4% instant markup, gradual increase, max guards on pirate routes
 // @author       https://github.com/justonlyforyou/
 // @order        14
@@ -26,6 +26,8 @@
     var CHECK_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
     var AUTOPRICE_CACHE_TTL = 60 * 60 * 1000; // 1 hour
     var API_BASE = 'https://shippingmanager.cc/api';
+    var MAX_BUFFER_SIZE = 100;
+    var MAX_BUFFER_AGE = 24 * 60 * 60 * 1000; // 24 hours
     var originalFetch = window.fetch;
 
     // ========== STATE ==========
@@ -46,7 +48,20 @@
     var modalListenerAttached = false;
     var autoPriceCacheData = {};
     var gradualIncreaseData = {};
-    var hijackingRiskCache = {};
+    var hijackingRiskCache = new Map();
+    var routesCached = false;
+    var autoPriceDirty = false;
+    var gradualDirty = false;
+
+    // ========== UTILITY ==========
+    function escapeHtml(str) {
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function calculatePriceDiffPercent(price, autoprice) {
+        if (!autoprice || autoprice === 0) return 0;
+        return Math.round(((price - autoprice) / autoprice) * 100);
+    }
 
     // ========== REBELSHIPBRIDGE STORAGE (Own) ==========
     async function dbGet(key) {
@@ -72,42 +87,58 @@
         }
     }
 
-    // ========== SHARED STORAGE (DepartManager) ==========
-    var RETRY_DELAYS = [500, 1000, 2000, 4000];
+    // ========== PER-CATEGORY SHARED STORAGE (DepartManager) ==========
+    var RETRY_DELAYS = [500, 1000, 2000];
 
-    async function dbGetShared(retryCount) {
+    async function getSharedCategory(category, retryCount) {
+        // Use DepartManager's in-memory cache if available (eliminates race conditions)
+        if (window._rebelshipDMStorage && window._rebelshipDMStorage.isReady()) {
+            return window._rebelshipDMStorage.getCategory(category);
+        }
+        // Fallback: direct DB read (DepartManager not loaded yet)
         retryCount = retryCount || 0;
         try {
-            var result = await window.RebelShipBridge.storage.get('DepartManager', 'data', 'storage');
-            if (result) {
-                return JSON.parse(result);
+            // Try per-category key first
+            var value = await window.RebelShipBridge.storage.get('DepartManager', 'data', 'st_' + category);
+            if (value) return JSON.parse(value);
+            // Fallback: old blob format (pre-migration)
+            var blob = await window.RebelShipBridge.storage.get('DepartManager', 'data', 'storage');
+            if (blob) {
+                var parsed = JSON.parse(blob);
+                return parsed[category] || {};
             }
-            return null;
+            return {};
         } catch (e) {
             if (retryCount < RETRY_DELAYS.length) {
                 var delay = RETRY_DELAYS[retryCount];
-                console.warn('[SmugglersEye] dbGetShared retry ' + (retryCount + 1) + '/' + RETRY_DELAYS.length + ' in ' + delay + 'ms');
+                console.warn('[SmugglersEye] getSharedCategory(' + category + ') retry ' + (retryCount + 1) + '/' + RETRY_DELAYS.length + ' in ' + delay + 'ms');
                 await new Promise(function(r) { setTimeout(r, delay); });
-                return dbGetShared(retryCount + 1);
+                return getSharedCategory(category, retryCount + 1);
             }
-            console.error('[SmugglersEye] dbGetShared FAILED after retries:', e);
+            console.error('[SmugglersEye] getSharedCategory(' + category + ') FAILED after retries:', e);
             return null;
         }
     }
 
-    async function dbSetShared(storage, retryCount) {
+    async function saveSharedCategory(category, data, retryCount) {
+        // Use DepartManager's debounced save if available (eliminates race conditions)
+        if (window._rebelshipDMStorage && window._rebelshipDMStorage.isReady()) {
+            window._rebelshipDMStorage.saveCategory(category, data);
+            return true;
+        }
+        // Fallback: direct DB write (DepartManager not loaded yet)
         retryCount = retryCount || 0;
         try {
-            await window.RebelShipBridge.storage.set('DepartManager', 'data', 'storage', JSON.stringify(storage));
+            await window.RebelShipBridge.storage.set('DepartManager', 'data', 'st_' + category, JSON.stringify(data));
             return true;
         } catch (e) {
             if (retryCount < RETRY_DELAYS.length) {
                 var delay = RETRY_DELAYS[retryCount];
-                console.warn('[SmugglersEye] dbSetShared retry ' + (retryCount + 1) + '/' + RETRY_DELAYS.length + ' in ' + delay + 'ms');
+                console.warn('[SmugglersEye] saveSharedCategory(' + category + ') retry ' + (retryCount + 1) + '/' + RETRY_DELAYS.length + ' in ' + delay + 'ms');
                 await new Promise(function(r) { setTimeout(r, delay); });
-                return dbSetShared(storage, retryCount + 1);
+                return saveSharedCategory(category, data, retryCount + 1);
             }
-            console.error('[SmugglersEye] dbSetShared FAILED after retries:', e);
+            console.error('[SmugglersEye] saveSharedCategory(' + category + ') FAILED after retries:', e);
             return false;
         }
     }
@@ -147,9 +178,32 @@
     // ========== AUTOPRICE CACHE (Shared with DepartManager) ==========
     async function loadAutoPriceCache() {
         try {
-            var result = await window.RebelShipBridge.storage.get('DepartManager', 'data', 'autoPriceCache');
-            if (result) {
-                autoPriceCacheData = JSON.parse(result);
+            var parsed = null;
+            // Use DM's in-memory cache if available
+            if (window._rebelshipDMStorage && window._rebelshipDMStorage.isReady()) {
+                parsed = window._rebelshipDMStorage.getAutoPriceCache();
+            } else {
+                var result = await window.RebelShipBridge.storage.get('DepartManager', 'data', 'autoPriceCache');
+                if (result) parsed = JSON.parse(result);
+            }
+            if (parsed) {
+                var now = Date.now();
+                var cleaned = {};
+                var keys = Object.keys(parsed);
+                var removed = 0;
+                for (var i = 0; i < keys.length; i++) {
+                    var entry = parsed[keys[i]];
+                    if (entry && entry.timestamp && (now - entry.timestamp) < AUTOPRICE_CACHE_TTL) {
+                        cleaned[keys[i]] = entry;
+                    } else {
+                        removed++;
+                    }
+                }
+                autoPriceCacheData = cleaned;
+                if (removed > 0) {
+                    log('Cleaned ' + removed + ' expired autoprice cache entries');
+                    autoPriceDirty = true;
+                }
             }
         } catch (e) {
             console.error('[SmugglersEye] loadAutoPriceCache error:', e);
@@ -159,7 +213,12 @@
 
     async function saveAutoPriceCache() {
         try {
-            await window.RebelShipBridge.storage.set('DepartManager', 'data', 'autoPriceCache', JSON.stringify(autoPriceCacheData));
+            // Use DM's API if available (writes through DM's cache)
+            if (window._rebelshipDMStorage) {
+                window._rebelshipDMStorage.saveAutoPriceCache(autoPriceCacheData);
+            } else {
+                await window.RebelShipBridge.storage.set('DepartManager', 'data', 'autoPriceCache', JSON.stringify(autoPriceCacheData));
+            }
         } catch (e) {
             console.error('[SmugglersEye] saveAutoPriceCache error:', e);
         }
@@ -198,14 +257,46 @@
 
     function setLastGradualIncrease(vesselId, timestamp) {
         gradualIncreaseData[vesselId] = timestamp;
-        saveGradualIncreaseData();
+        gradualDirty = true;
+    }
+
+    function cleanGradualIncreaseData(vessels) {
+        var vesselIdSet = {};
+        for (var i = 0; i < vessels.length; i++) {
+            vesselIdSet[vessels[i].id] = true;
+        }
+        var keys = Object.keys(gradualIncreaseData);
+        var removed = 0;
+        for (var j = 0; j < keys.length; j++) {
+            if (!vesselIdSet[keys[j]]) {
+                delete gradualIncreaseData[keys[j]];
+                removed++;
+                gradualDirty = true;
+            }
+        }
+        if (removed > 0) {
+            log('Cleaned ' + removed + ' stale gradual increase entries');
+        }
     }
 
     // ========== PENDING ROUTE SETTINGS (Shared) ==========
-    // Collect pending changes in memory to avoid race conditions
     var pendingChangesBuffer = {};
 
     function bufferPendingRouteSettings(vesselId, data) {
+        var bufferKeys = Object.keys(pendingChangesBuffer);
+        if (bufferKeys.length >= MAX_BUFFER_SIZE) {
+            var oldestKey = bufferKeys[0];
+            var oldestTime = pendingChangesBuffer[bufferKeys[0]].savedAt || 0;
+            for (var i = 1; i < bufferKeys.length; i++) {
+                var t = pendingChangesBuffer[bufferKeys[i]].savedAt || 0;
+                if (t < oldestTime) {
+                    oldestTime = t;
+                    oldestKey = bufferKeys[i];
+                }
+            }
+            delete pendingChangesBuffer[oldestKey];
+        }
+
         pendingChangesBuffer[vesselId] = {
             name: data.name,
             speed: data.speed,
@@ -216,32 +307,37 @@
     }
 
     async function flushPendingRouteSettings() {
+        var now = Date.now();
+        var bufferKeys = Object.keys(pendingChangesBuffer);
+        for (var i = 0; i < bufferKeys.length; i++) {
+            var entry = pendingChangesBuffer[bufferKeys[i]];
+            if (entry.savedAt && (now - entry.savedAt) > MAX_BUFFER_AGE) {
+                delete pendingChangesBuffer[bufferKeys[i]];
+            }
+        }
+
         var vesselIds = Object.keys(pendingChangesBuffer);
         if (vesselIds.length === 0) return;
 
-        var storage = await dbGetShared();
-        // CRITICAL: Never create default storage with settings:{} - that corrupts DepartManager!
-        if (!storage) {
+        var pendingRouteSettings = await getSharedCategory('pendingRouteSettings');
+        if (pendingRouteSettings === null) {
             console.error('[SmugglersEye] Cannot save pending routes - storage unavailable after retries');
             return;
         }
-        if (!storage.pendingRouteSettings) {
-            storage.pendingRouteSettings = {};
+
+        for (var k = 0; k < vesselIds.length; k++) {
+            pendingRouteSettings[vesselIds[k]] = pendingChangesBuffer[vesselIds[k]];
         }
 
-        for (var i = 0; i < vesselIds.length; i++) {
-            var vesselId = vesselIds[i];
-            storage.pendingRouteSettings[vesselId] = pendingChangesBuffer[vesselId];
-        }
-
-        var success = await dbSetShared(storage);
+        var success = await saveSharedCategory('pendingRouteSettings', pendingRouteSettings);
         if (success) {
             pendingChangesBuffer = {};
         }
     }
 
-    // ========== HIJACKING RISK CACHE ==========
-    function updateHijackingRiskCache(vessels) {
+    // ========== HIJACKING RISK CACHE (Map-based) ==========
+    function rebuildHijackingRiskCache(vessels) {
+        hijackingRiskCache.clear();
         for (var i = 0; i < vessels.length; i++) {
             var vessel = vessels[i];
             if (!vessel.routes || !Array.isArray(vessel.routes)) continue;
@@ -250,8 +346,8 @@
                 if (route.origin && route.destination && route.hijacking_risk !== undefined) {
                     var routeKey = route.origin + '<>' + route.destination;
                     var reverseKey = route.destination + '<>' + route.origin;
-                    hijackingRiskCache[routeKey] = route.hijacking_risk;
-                    hijackingRiskCache[reverseKey] = route.hijacking_risk;
+                    hijackingRiskCache.set(routeKey, route.hijacking_risk);
+                    hijackingRiskCache.set(reverseKey, route.hijacking_risk);
                 }
             }
         }
@@ -260,10 +356,10 @@
     function getVesselHijackingRisk(vessel) {
         if (!vessel.route_origin || !vessel.route_destination) return 0;
         var routeKey = vessel.route_origin + '<>' + vessel.route_destination;
-        var risk = hijackingRiskCache[routeKey];
+        var risk = hijackingRiskCache.get(routeKey);
         if (risk !== undefined) return risk;
         var reverseKey = vessel.route_destination + '<>' + vessel.route_origin;
-        risk = hijackingRiskCache[reverseKey];
+        risk = hijackingRiskCache.get(reverseKey);
         if (risk !== undefined) return risk;
         return 0;
     }
@@ -289,13 +385,15 @@
     }
 
     function fetchVessels() {
+        var includeRoutes = !routesCached;
         return fetchWithCookie(API_BASE + '/vessel/get-all-user-vessels', {
             method: 'POST',
-            body: JSON.stringify({ include_routes: true })
+            body: JSON.stringify({ include_routes: includeRoutes })
         }).then(function(data) {
             var vessels = data.data && data.data.user_vessels ? data.data.user_vessels : [];
-            if (vessels.length > 0) {
-                updateHijackingRiskCache(vessels);
+            if (includeRoutes && vessels.length > 0) {
+                rebuildHijackingRiskCache(vessels);
+                routesCached = true;
             }
             return vessels;
         });
@@ -333,12 +431,6 @@
         return null;
     }
 
-    // ========== UTILITY ==========
-    function calculatePriceDiffPercent(price, autoprice) {
-        if (!autoprice || autoprice === 0) return 0;
-        return Math.round(((price - autoprice) / autoprice) * 100);
-    }
-
     // ========== CORE LOGIC ==========
     async function initAutoPriceCache(vessels) {
         if (!vessels || vessels.length === 0) return;
@@ -364,29 +456,33 @@
             }
         }
 
-        if (needsFetch.length === 0) {
-            return;
-        }
+        if (needsFetch.length === 0) return;
 
-        var batchSize = 5;
+        var batchSize = 3;
+        var batchDelay = 500;
         for (var j = 0; j < needsFetch.length; j += batchSize) {
             var batch = needsFetch.slice(j, j + batchSize);
+            var batchHadError = false;
             await Promise.all(batch.map(async function(item) {
                 var prices = await fetchAutoPrice(item.vessel.id, item.routeId);
                 if (prices) {
                     autoPriceCacheData[item.cacheKey] = { prices: prices, timestamp: now };
+                    autoPriceDirty = true;
+                } else {
+                    batchHadError = true;
                 }
             }));
 
+            if (batchHadError) {
+                batchDelay = Math.min(batchDelay * 2, 5000);
+            }
             if (j + batchSize < needsFetch.length) {
-                await new Promise(function(r) { setTimeout(r, 100); });
+                await new Promise(function(r) { setTimeout(r, batchDelay); });
             }
         }
-
-        await saveAutoPriceCache();
     }
 
-    async function applySmugglersEyeToVessel(vessel) {
+    function applySmugglersEyeToVessel(vessel) {
         if (!settings.enabled) return { updated: false, pending: false };
 
         if (!vessel.route_destination) return { updated: false, pending: false };
@@ -499,8 +595,7 @@
 
         if (needsUpdate) {
             if (vessel.status === 'port') {
-                await updateRouteData(vessel.id, vessel.route_speed, newGuards, newPrices);
-                return { updated: true, pending: false };
+                return { routeUpdate: { vesselId: vessel.id, speed: vessel.route_speed, guards: newGuards, prices: newPrices } };
             } else {
                 bufferPendingRouteSettings(vessel.id, {
                     name: vessel.name,
@@ -508,66 +603,88 @@
                     guards: newGuards,
                     prices: newPrices
                 });
-                return { updated: false, pending: true };
+                return { pending: true };
             }
         }
 
         return { updated: false, pending: false };
     }
 
-    function runSmugglersEye(manual) {
+    async function runSmugglersEye(manual) {
         if (!settings.enabled && !manual) {
-            return Promise.resolve({ skipped: true, reason: 'disabled' });
+            return { skipped: true, reason: 'disabled' };
         }
 
         if (isProcessing) {
-            return Promise.resolve({ skipped: true, reason: 'processing' });
+            return { skipped: true, reason: 'processing' };
         }
 
         isProcessing = true;
-        var result = {
-            checked: true,
-            updated: 0,
-            pending: 0,
-            error: null
-        };
+        var result = { checked: true, updated: 0, pending: 0, error: null };
 
-        return fetchVessels().then(function(vessels) {
+        try {
+            var vessels = await fetchVessels();
             if (!vessels || vessels.length === 0) {
                 log('No vessels found');
                 return result;
             }
 
-            return initAutoPriceCache(vessels).then(function() {
-                var promises = vessels.map(function(vessel) {
-                    return applySmugglersEyeToVessel(vessel).then(function(vesselResult) {
-                        if (vesselResult.updated) result.updated++;
-                        if (vesselResult.pending) result.pending++;
-                    });
-                });
+            await initAutoPriceCache(vessels);
+            cleanGradualIncreaseData(vessels);
 
-                return Promise.all(promises).then(function() {
-                    return flushPendingRouteSettings();
-                }).then(function() {
-                    if (result.updated > 0 || result.pending > 0) {
-                        var msg = "Smuggler's Eye: " + result.updated + ' direct, ' + result.pending + ' pending';
-                        log(msg);
-                        if (result.updated > 0) {
-                            showToast(result.updated + ' vessel(s) updated');
-                        }
-                    } else {
-                        log('No price changes needed');
-                    }
-                    return result;
-                });
-            });
-        }).catch(function(error) {
+            var routeUpdates = [];
+            for (var i = 0; i < vessels.length; i++) {
+                var vesselResult = applySmugglersEyeToVessel(vessels[i]);
+                if (vesselResult.routeUpdate) {
+                    routeUpdates.push(vesselResult.routeUpdate);
+                }
+                if (vesselResult.pending) {
+                    result.pending++;
+                }
+            }
+
+            // Batch parallel API calls for port vessels
+            var routeBatchSize = 5;
+            for (var b = 0; b < routeUpdates.length; b += routeBatchSize) {
+                var routeBatch = routeUpdates.slice(b, b + routeBatchSize);
+                await Promise.all(routeBatch.map(function(update) {
+                    return updateRouteData(update.vesselId, update.speed, update.guards, update.prices);
+                }));
+                if (b + routeBatchSize < routeUpdates.length) {
+                    await new Promise(function(r) { setTimeout(r, 300); });
+                }
+            }
+            result.updated = routeUpdates.length;
+
+            // Flush all batched saves
+            await flushPendingRouteSettings();
+            if (gradualDirty) {
+                await saveGradualIncreaseData();
+                gradualDirty = false;
+            }
+            if (autoPriceDirty) {
+                await saveAutoPriceCache();
+                autoPriceDirty = false;
+            }
+
+            if (result.updated > 0 || result.pending > 0) {
+                var msg = "Smuggler's Eye: " + result.updated + ' direct, ' + result.pending + ' pending';
+                log(msg);
+                if (result.updated > 0) {
+                    showToast(result.updated + ' vessel(s) updated');
+                }
+            } else {
+                log('No price changes needed');
+            }
+
+            return result;
+        } catch (error) {
             log('Error: ' + error.message, 'error');
             result.error = error.message;
             return result;
-        }).finally(function() {
+        } finally {
             isProcessing = false;
-        });
+        }
     }
 
     // ========== MONITORING ==========
@@ -742,8 +859,6 @@
             modalStore.closeAll();
         }
 
-        injectModalStyles();
-
         var existing = document.getElementById('smuggler-modal-wrapper');
         if (existing) {
             var contentCheck = existing.querySelector('#smuggler-settings-content');
@@ -855,17 +970,17 @@
                     <div style="display:flex;gap:12px;margin-bottom:12px;">\
                         <div style="flex:1;">\
                             <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px;color:#01125d;">Step (%)</label>\
-                            <input type="number" id="se-step" min="1" max="10" value="' + settings.gradualIncreaseStep + '"' + (settings.enabled ? '' : ' disabled') + '\
+                            <input type="number" id="se-step" min="1" max="10" value="' + escapeHtml(settings.gradualIncreaseStep) + '"' + (settings.enabled ? '' : ' disabled') + '\
                                    class="redesign" style="width:100%;height:2rem;padding:0 0.5rem;background:#ebe9ea;border:0;border-radius:7px;color:#01125d;font-size:14px;font-family:Lato,sans-serif;text-align:center;box-sizing:border-box;">\
                         </div>\
                         <div style="flex:1;">\
                             <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px;color:#01125d;">Interval (h)</label>\
-                            <input type="number" id="se-interval" min="1" max="168" value="' + settings.gradualIncreaseInterval + '"' + (settings.enabled ? '' : ' disabled') + '\
+                            <input type="number" id="se-interval" min="1" max="168" value="' + escapeHtml(settings.gradualIncreaseInterval) + '"' + (settings.enabled ? '' : ' disabled') + '\
                                    class="redesign" style="width:100%;height:2rem;padding:0 0.5rem;background:#ebe9ea;border:0;border-radius:7px;color:#01125d;font-size:14px;font-family:Lato,sans-serif;text-align:center;box-sizing:border-box;">\
                         </div>\
                         <div style="flex:1;">\
                             <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px;color:#01125d;">Max (%)</label>\
-                            <input type="number" id="se-target" min="1" max="20" value="' + settings.targetPercent + '"' + (settings.enabled ? '' : ' disabled') + '\
+                            <input type="number" id="se-target" min="1" max="20" value="' + escapeHtml(settings.targetPercent) + '"' + (settings.enabled ? '' : ' disabled') + '\
                                    class="redesign" style="width:100%;height:2rem;padding:0 0.5rem;background:#ebe9ea;border:0;border-radius:7px;color:#01125d;font-size:14px;font-family:Lato,sans-serif;text-align:center;box-sizing:border-box;">\
                         </div>\
                     </div>\
@@ -905,14 +1020,15 @@
         document.getElementById('se-enabled').addEventListener('change', function() {
             var wrapper = document.getElementById('se-options-wrapper');
             var inputs = wrapper.querySelectorAll('input');
+            var k;
             if (this.checked) {
                 wrapper.style.opacity = '';
                 wrapper.style.pointerEvents = '';
-                inputs.forEach(function(inp) { inp.disabled = false; });
+                for (k = 0; k < inputs.length; k++) { inputs[k].disabled = false; }
             } else {
                 wrapper.style.opacity = '0.5';
                 wrapper.style.pointerEvents = 'none';
-                inputs.forEach(function(inp) { inp.disabled = true; });
+                for (k = 0; k < inputs.length; k++) { inputs[k].disabled = true; }
             }
         });
 
@@ -936,26 +1052,12 @@
             var enabled = document.getElementById('se-enabled').checked;
             var instant4 = document.getElementById('se-instant4').checked;
             var gradual = document.getElementById('se-gradual').checked;
-            var step = parseInt(document.getElementById('se-step').value, 10);
-            var interval = parseInt(document.getElementById('se-interval').value, 10);
-            var target = parseInt(document.getElementById('se-target').value, 10);
+            var step = Math.max(1, Math.min(10, parseInt(document.getElementById('se-step').value, 10) || 1));
+            var interval = Math.max(1, Math.min(168, parseInt(document.getElementById('se-interval').value, 10) || 25));
+            var target = Math.max(1, Math.min(20, parseInt(document.getElementById('se-target').value, 10) || 8));
             var guards = document.getElementById('se-guards').checked;
             var notifyIngame = document.getElementById('se-notify-ingame').checked;
             var notifySystem = document.getElementById('se-notify-system').checked;
-
-            // Validate
-            if (isNaN(step) || step < 1 || step > 10) {
-                alert('Step must be between 1 and 10');
-                return;
-            }
-            if (isNaN(interval) || interval < 1 || interval > 168) {
-                alert('Interval must be between 1 and 168 hours');
-                return;
-            }
-            if (isNaN(target) || target < 1 || target > 20) {
-                alert('Max must be between 1 and 20');
-                return;
-            }
 
             var wasEnabled = settings.enabled;
             settings.enabled = enabled;
@@ -1007,6 +1109,7 @@
         // Register menu immediately - no DOM needed for IPC call
         addMenuItem("Smuggler's Eye", openSettingsModal, 24);
         initUI();
+        injectModalStyles();
 
         await loadSettings();
         await loadAutoPriceCache();
@@ -1019,14 +1122,16 @@
     }
 
     // Expose for Android BackgroundScriptService
-    window.rebelshipRunSmugglersEye = function() {
-        return loadSettings().then(function() {
-            if (!settings.enabled) {
-                return { skipped: true, reason: 'disabled' };
-            }
-            return runSmugglersEye(false);
-        });
-    };
+    if (!window.rebelshipRunSmugglersEye) {
+        window.rebelshipRunSmugglersEye = function() {
+            return loadSettings().then(function() {
+                if (!settings.enabled) {
+                    return { skipped: true, reason: 'disabled' };
+                }
+                return runSmugglersEye(false);
+            });
+        };
+    }
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);
@@ -1035,7 +1140,9 @@
     }
 
     // Register for background job system
-    window.rebelshipBackgroundJobs = window.rebelshipBackgroundJobs || [];
+    if (!window.rebelshipBackgroundJobs) {
+        window.rebelshipBackgroundJobs = [];
+    }
     window.rebelshipBackgroundJobs.push({
         name: 'SmugglersEye',
         run: function() { return window.rebelshipRunSmugglersEye(); }

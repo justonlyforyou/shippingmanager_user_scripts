@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Game Bug-Fix: Move down harbor details button
 // @namespace    https://rebelship.org/
-// @version      2.7
+// @version      2.8
 // @description  Just a simple repositioning of the details button on harbor menu.
 // @author       https://github.com/justonlyforyou/
 // @order        61
@@ -13,6 +13,12 @@
 
 (function() {
     'use strict';
+
+    var DEBOUNCE_MS = 200;
+    var debounceTimer = null;
+    var popupObserver = null;
+    var observer = null;
+    var isAdjusting = false;
 
     var style = document.createElement('style');
     style.textContent = [
@@ -32,73 +38,113 @@
     ].join('\n');
     document.head.appendChild(style);
 
-    // Keep popups within viewport
+    // Keep popups within viewport - single getBoundingClientRect call
     function adjustPopupPosition(popup) {
-        if (!popup) return;
+        if (!popup || isAdjusting) return;
+        isAdjusting = true;
 
         var rect = popup.getBoundingClientRect();
         var viewportWidth = window.innerWidth;
         var viewportHeight = window.innerHeight;
         var margin = 10;
 
-        // Check if popup goes beyond right edge
+        var currentLeft = parseFloat(popup.style.left) || rect.left;
+        var currentTop = parseFloat(popup.style.top) || rect.top;
+        var targetLeft = currentLeft;
+        var targetTop = currentTop;
+
+        // Right overflow
         if (rect.right > viewportWidth - margin) {
-            var overflowRight = rect.right - viewportWidth + margin;
-            var currentLeft = parseFloat(popup.style.left) || rect.left;
-            popup.style.left = (currentLeft - overflowRight) + 'px';
+            targetLeft -= (rect.right - viewportWidth + margin);
+        }
+        // Left edge (accounting for right adjustment)
+        var newLeft = rect.left + (targetLeft - currentLeft);
+        if (newLeft < margin) {
+            targetLeft = currentLeft - rect.left + margin;
         }
 
-        // Check if popup goes beyond left edge
-        rect = popup.getBoundingClientRect();
-        if (rect.left < margin) {
-            popup.style.left = margin + 'px';
-        }
-
-        // Check if popup goes beyond bottom edge
-        rect = popup.getBoundingClientRect();
+        // Bottom overflow
         if (rect.bottom > viewportHeight - margin) {
-            var overflowBottom = rect.bottom - viewportHeight + margin;
-            var currentTop = parseFloat(popup.style.top) || rect.top;
-            popup.style.top = (currentTop - overflowBottom) + 'px';
+            targetTop -= (rect.bottom - viewportHeight + margin);
+        }
+        // Top edge (accounting for bottom adjustment)
+        var newTop = rect.top + (targetTop - currentTop);
+        if (newTop < margin) {
+            targetTop = currentTop - rect.top + margin;
         }
 
-        // Check if popup goes beyond top edge
-        rect = popup.getBoundingClientRect();
-        if (rect.top < margin) {
-            popup.style.top = margin + 'px';
+        // Apply all changes at once (single reflow)
+        if (targetLeft !== currentLeft) popup.style.left = targetLeft + 'px';
+        if (targetTop !== currentTop) popup.style.top = targetTop + 'px';
+
+        isAdjusting = false;
+    }
+
+    // Check for popup and adjust position
+    function checkForPopup() {
+        var popup = document.querySelector('.port-popup');
+        if (popup) {
+            adjustPopupPosition(popup);
+            if (!popupObserver) startPopupObserver(popup);
+        } else {
+            stopPopupObserver();
         }
     }
 
-    // Observe for popup changes
-    var observer = new window.MutationObserver(function(mutations) {
-        mutations.forEach(function(mutation) {
-            // Check added nodes for popups
-            mutation.addedNodes.forEach(function(node) {
-                if (node.nodeType === 1) {
-                    if (node.classList && node.classList.contains('port-popup')) {
-                        setTimeout(function() { adjustPopupPosition(node); }, 10);
-                    }
-                    var popup = node.querySelector && node.querySelector('.port-popup');
-                    if (popup) {
-                        setTimeout(function() { adjustPopupPosition(popup); }, 10);
-                    }
-                }
-            });
+    function debouncedCheck() {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(function() {
+            requestAnimationFrame(checkForPopup);
+        }, DEBOUNCE_MS);
+    }
 
-            // Check for style/position changes on existing popups
-            if (mutation.type === 'attributes' && mutation.attributeName === 'style') {
-                var target = mutation.target;
-                if (target.classList && target.classList.contains('port-popup')) {
-                    setTimeout(function() { adjustPopupPosition(target); }, 10);
+    // Narrowed observer: only watch the popup element for style changes
+    function startPopupObserver(popup) {
+        if (popupObserver) popupObserver.disconnect();
+        popupObserver = new MutationObserver(function() {
+            if (!isAdjusting) debouncedCheck();
+        });
+        popupObserver.observe(popup, { attributes: true, attributeFilter: ['style'] });
+    }
+
+    function stopPopupObserver() {
+        if (popupObserver) {
+            popupObserver.disconnect();
+            popupObserver = null;
+        }
+    }
+
+    // Main observer: childList only on #app, no attribute watching on body
+    var target = document.getElementById('app') || document.body;
+    observer = new MutationObserver(function(mutations) {
+        for (var i = 0; i < mutations.length; i++) {
+            var added = mutations[i].addedNodes;
+            var removed = mutations[i].removedNodes;
+
+            for (var j = 0; j < added.length; j++) {
+                if (added[j].nodeType !== 1) continue;
+                if ((added[j].classList && added[j].classList.contains('port-popup')) ||
+                    (added[j].querySelector && added[j].querySelector('.port-popup'))) {
+                    debouncedCheck();
+                    break;
                 }
             }
-        });
+
+            for (var k = 0; k < removed.length; k++) {
+                if (removed[k].nodeType !== 1) continue;
+                if ((removed[k].classList && removed[k].classList.contains('port-popup')) ||
+                    (removed[k].querySelector && removed[k].querySelector('.port-popup'))) {
+                    stopPopupObserver();
+                    break;
+                }
+            }
+        }
     });
 
-    observer.observe(document.body, {
-        childList: true,
-        subtree: true,
-        attributes: true,
-        attributeFilter: ['style']
+    observer.observe(target, { childList: true, subtree: true });
+
+    window.addEventListener('beforeunload', function() {
+        if (observer) observer.disconnect();
+        stopPopupObserver();
     });
 })();

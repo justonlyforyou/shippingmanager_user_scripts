@@ -2,7 +2,7 @@
 // @name         ShippingManager - Demand Summary
 // @namespace    https://rebelship.org/
 // @description  Demand & ranking dashboard with map tooltips, CSV export, and route-popup demand/vessel filters
-// @version      4.99
+// @version      5.03
 // @author       https://github.com/justonlyforyou/
 // @order        9
 // @match        https://shippingmanager.cc/*
@@ -104,6 +104,17 @@
         return 'demandCache';
     }
 
+    // Strip raw API fields - keep only what the script uses
+    function slimPort(p) {
+        return {
+            code: p.code,
+            demand: p.demand,
+            consumed: p.consumed,
+            lat: p.lat,
+            lon: p.lon
+        };
+    }
+
     // ========== LOGGING ==========
     function log(msg, level) {
         const prefix = '[' + SCRIPT_NAME + '] ';
@@ -166,6 +177,9 @@
         try {
             const saved = await dbGet(getStorageKey());
             if (saved) {
+                if (saved.ports) {
+                    saved.ports = saved.ports.map(slimPort);
+                }
                 cachedData = saved;
             }
         } catch (e) {
@@ -258,7 +272,7 @@
         try {
             const cacheData = {
                 timestamp: Date.now(),
-                ports: data
+                ports: data.map(slimPort)
             };
             await dbSet(getStorageKey(), cacheData);
             cachedData = cacheData;
@@ -1787,7 +1801,8 @@
                 }
             }, 250);
         });
-        routePopupObserver.observe(document.body, { childList: true, subtree: true });
+        var observeTarget = document.getElementById('app') || document.body;
+        routePopupObserver.observe(observeTarget, { childList: true, subtree: true });
 
         document.addEventListener('click', function(e) {
             if (routeFilterDropdownOpen) {
@@ -2198,9 +2213,6 @@
 
         // Fetch alliance name ONCE before anything else (used by ranking)
         await fetchMyAllianceName();
-
-        // Load cache into memory for sync access
-        await loadCache();
 
         setupDemandModalWatcher();
         initMapMarkerHover();

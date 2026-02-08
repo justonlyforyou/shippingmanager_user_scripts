@@ -2,7 +2,7 @@
 // @name         ShippingManager - Auto Happy Staff & Stuff Header Display
 // @namespace    http://tampermonkey.net/
 // @description  Automatically manages staff salaries to maintain crew and management morale at target levels
-// @version      1.43
+// @version      1.45
 // @author       https://github.com/justonlyforyou/
 // @order        5
 // @match        https://shippingmanager.cc/*
@@ -145,7 +145,8 @@
                 }
             });
 
-            observer.observe(document.body, { childList: true, subtree: true });
+            var observeTarget = document.getElementById('app') || document.body;
+            observer.observe(observeTarget, { childList: true, subtree: true });
             setTimeout(function() {
                 observer.disconnect();
                 reject(new Error('Element ' + selector + ' not found within timeout'));

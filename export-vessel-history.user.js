@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Export Vessel History
 // @namespace    http://tampermonkey.net/
-// @version      3.5
+// @version      3.7
 // @description  Detect vessel history API calls and offer CSV download
 // @author       https://github.com/justonlyforyou/
 // @order        56
@@ -15,38 +15,41 @@
 (function() {
     'use strict';
 
-    let currentHistoryBtn = null;
-    let trackingEnabled = false;
+    var currentHistoryBtn = null;
+    var trackingEnabled = false;
+    var cachedHistoryData = null;
 
     // Wait 5 seconds after page load before tracking (ignore initial page load calls)
-    setTimeout(() => {
+    setTimeout(function() {
         trackingEnabled = true;
     }, 5000);
 
     // Intercept fetch BEFORE the game loads
-    const originalFetch = window.fetch;
-    window.fetch = async function(...args) {
-        const [url, options] = args;
-        const urlStr = typeof url === 'string' ? url : url.url;
+    var originalFetch = window.fetch;
+    window.fetch = async function() {
+        var args = Array.prototype.slice.call(arguments);
+        var url = args[0];
+        var options = args[1];
+        var urlStr = typeof url === 'string' ? url : url.url;
 
         // Check if this is the vessel history endpoint (only after tracking is enabled)
-        if (trackingEnabled && urlStr.includes('/api/vessel/get-vessel-history') && options && options.body) {
+        if (trackingEnabled && urlStr.indexOf('/api/vessel/get-vessel-history') !== -1 && options && options.body) {
             try {
-                const body = JSON.parse(options.body);
-                const vesselId = body.vessel_id;
+                var body = JSON.parse(options.body);
+                var vesselId = body.vessel_id;
 
                 if (vesselId) {
                     // Call original fetch first to get the response
-                    const response = await originalFetch.apply(this, args);
-                    const clonedResponse = response.clone();
+                    var response = await originalFetch.apply(this, args);
+                    var clonedResponse = response.clone();
 
                     // Extract vessel name from response
-                    clonedResponse.json().then(data => {
-                        const history = data.data?.vessel_history;
-                        const vesselName = data.data?.user_vessel?.name || 'Vessel';
-
+                    clonedResponse.json().then(function(data) {
+                        var history = data.data && data.data.vessel_history;
+                        var vesselName = (data.data && data.data.user_vessel && data.data.user_vessel.name) || 'Vessel';
+                        cachedHistoryData = history;
                         showSaveButton(vesselName, vesselId, history);
-                    }).catch(() => {
+                    }).catch(function() {
                         showSaveButton('Vessel', vesselId, null);
                     });
 
@@ -61,27 +64,28 @@
     };
 
     // Intercept XMLHttpRequest BEFORE the game loads
-    const originalXHROpen = XMLHttpRequest.prototype.open;
-    const originalXHRSend = XMLHttpRequest.prototype.send;
+    var originalXHROpen = XMLHttpRequest.prototype.open;
+    var originalXHRSend = XMLHttpRequest.prototype.send;
 
-    XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+    XMLHttpRequest.prototype.open = function(method, url) {
         this._url = url;
         this._method = method;
-        return originalXHROpen.apply(this, [method, url, ...rest]);
+        return originalXHROpen.apply(this, arguments);
     };
 
     XMLHttpRequest.prototype.send = function(body) {
-        if (trackingEnabled && this._url && this._url.includes('/api/vessel/get-vessel-history') && body) {
+        var self = this;
+        if (trackingEnabled && this._url && this._url.indexOf('/api/vessel/get-vessel-history') !== -1 && body) {
             try {
-                const parsedBody = JSON.parse(body);
-                const vesselId = parsedBody.vessel_id;
+                var parsedBody = JSON.parse(body);
+                var vesselId = parsedBody.vessel_id;
 
                 if (vesselId) {
-                    this.addEventListener('load', () => {
+                    this.addEventListener('load', function() {
                         try {
-                            const data = JSON.parse(this.responseText);
-                            const history = data.data?.vessel_history;
-                            const vesselName = data.data?.user_vessel?.name || 'Vessel';
+                            var data = JSON.parse(self.responseText);
+                            var history = data.data && data.data.vessel_history;
+                            var vesselName = (data.data && data.data.user_vessel && data.data.user_vessel.name) || 'Vessel';
 
                             showSaveButton(vesselName, vesselId, history);
                         } catch {
@@ -102,62 +106,57 @@
         // Remove existing button
         if (currentHistoryBtn && currentHistoryBtn.parentNode) {
             currentHistoryBtn.parentNode.removeChild(currentHistoryBtn);
+            currentHistoryBtn = null;
         }
 
-        let retryCount = 0;
-        const tryInsert = () => {
-            retryCount++;
+        function insertButton() {
+            if (document.getElementById('save-vessel-history-btn')) return true;
+            var headers = document.querySelectorAll('.blackBarHeader');
+            if (headers.length === 0) return false;
+            var targetHeader = headers[headers.length - 1];
 
-            // Find the blackBarHeader for voyage history section
-            // Use the LAST blackBarHeader in the modal (voyage history is at bottom)
-            // This is language-independent
-            const headers = document.querySelectorAll('.blackBarHeader');
-            let targetHeader = null;
-            if (headers.length > 0) {
-                targetHeader = headers[headers.length - 1];
-            }
-
-            if (!targetHeader) {
-                if (retryCount < 20) {
-                    setTimeout(tryInsert, 500);
-                } else {
-                    console.log('[VesselHistory] Gave up finding Voyage history header after 20 attempts');
-                }
-                return;
-            }
-
-            const btn = document.createElement('button');
+            var btn = document.createElement('button');
             btn.id = 'save-vessel-history-btn';
             btn.textContent = 'Export History';
             btn.style.cssText = 'padding:4px 10px;background:#4ade80;color:white;border:none;border-radius:4px;cursor:pointer;font-weight:bold;font-size:12px;margin-left:auto;';
 
             if (historyData) {
-                // We already have the data, save directly
-                btn.addEventListener('click', () => saveHistoryAsCSV(vesselName, vesselId, historyData));
+                btn.addEventListener('click', function() { saveHistoryAsCSV(vesselName, vesselId, historyData); });
             } else {
-                // Need to fetch again
-                btn.addEventListener('click', () => fetchAndSaveHistory(vesselId, vesselName));
+                btn.addEventListener('click', function() {
+                    if (cachedHistoryData) {
+                        saveHistoryAsCSV(vesselName, vesselId, cachedHistoryData);
+                    } else {
+                        fetchAndSaveHistory(vesselId, vesselName);
+                    }
+                });
             }
 
-            // Make header a flex container to position button on the right
             targetHeader.style.display = 'flex';
             targetHeader.style.alignItems = 'center';
             targetHeader.appendChild(btn);
             currentHistoryBtn = btn;
-        };
-
-        // Wait for DOM to be ready
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', tryInsert);
-        } else {
-            tryInsert();
+            return true;
         }
+
+        // Try immediately, if not ready use MutationObserver
+        if (insertButton()) return;
+
+        var observeRoot = document.getElementById('app') || document.body;
+        var insertObserver = new MutationObserver(function() {
+            if (insertButton()) {
+                insertObserver.disconnect();
+            }
+        });
+        insertObserver.observe(observeRoot, { childList: true, subtree: true });
+        // Safety timeout
+        setTimeout(function() { insertObserver.disconnect(); }, 10000);
     }
 
     // Fetch history from API and save as CSV
     async function fetchAndSaveHistory(vesselId, vesselName) {
         try {
-            const response = await originalFetch('https://shippingmanager.cc/api/vessel/get-vessel-history', {
+            var response = await originalFetch('https://shippingmanager.cc/api/vessel/get-vessel-history', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -171,8 +170,8 @@
                 throw new Error('API request failed: ' + response.status);
             }
 
-            const data = await response.json();
-            const history = data.data?.vessel_history || [];
+            var data = await response.json();
+            var history = (data.data && data.data.vessel_history) || [];
 
             if (history.length === 0) {
                 alert('No history entries found for ' + vesselName);
@@ -194,41 +193,46 @@
             return;
         }
 
-        // Get all unique keys from all history entries, flatten nested objects
-        const allKeys = new Set();
-        for (const trip of history) {
-            for (const key of Object.keys(trip)) {
-                if (typeof trip[key] === 'object' && trip[key] !== null) {
-                    // Flatten nested objects like cargo: {dry: 800, refrigerated: 700}
-                    for (const subKey of Object.keys(trip[key])) {
-                        allKeys.add(key + '_' + subKey);
-                    }
-                } else {
-                    allKeys.add(key);
+        // Detect columns from first entry only (all entries share same schema)
+        var allKeys = {};
+        var firstTrip = history[0];
+        var topKeys = Object.keys(firstTrip);
+        for (var k = 0; k < topKeys.length; k++) {
+            var key = topKeys[k];
+            if (typeof firstTrip[key] === 'object' && firstTrip[key] !== null) {
+                var subKeys = Object.keys(firstTrip[key]);
+                for (var s = 0; s < subKeys.length; s++) {
+                    allKeys[key + '_' + subKeys[s]] = true;
                 }
+            } else {
+                allKeys[key] = true;
             }
         }
 
-        const columns = Array.from(allKeys).sort();
-        let csv = columns.join(';') + '\n';
+        var columns = Object.keys(allKeys).sort();
+        var chunks = ['\ufeff' + columns.join(';') + '\n'];
 
-        for (const trip of history) {
-            const row = columns.map(col => {
-                if (col.includes('_')) {
-                    // Handle flattened nested fields like cargo_dry
-                    const [parent, child] = col.split('_');
-                    const value = trip[parent]?.[child];
-                    return escapeCSV(value);
+        for (var i = 0; i < history.length; i++) {
+            var trip = history[i];
+            var parts = [];
+            for (var c = 0; c < columns.length; c++) {
+                var col = columns[c];
+                var underscoreIdx = col.indexOf('_');
+                if (underscoreIdx !== -1) {
+                    var parent = col.substring(0, underscoreIdx);
+                    var child = col.substring(underscoreIdx + 1);
+                    parts.push(escapeCSV(trip[parent] && trip[parent][child]));
+                } else {
+                    parts.push(escapeCSV(trip[col]));
                 }
-                return escapeCSV(trip[col]);
-            });
-            csv += row.join(';') + '\n';
+            }
+            chunks.push(parts.join(';') + '\n');
         }
 
-        // Download
-        const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
+        // Download via Blob chunks
+        var blob = new Blob(chunks, { type: 'text/csv;charset=utf-8;' });
+        var url = URL.createObjectURL(blob);
+        var link = document.createElement('a');
         link.href = url;
         link.download = 'vessel_history_' + vesselId + '_' + new Date().toISOString().slice(0,10) + '.csv';
         document.body.appendChild(link);
@@ -243,12 +247,13 @@
             currentHistoryBtn.parentNode.removeChild(currentHistoryBtn);
             currentHistoryBtn = null;
         }
+        cachedHistoryData = null;
     }
 
     function escapeCSV(str) {
         if (str === null || str === undefined) return '';
         str = String(str);
-        if (str.includes('"') || str.includes(';') || str.includes('\n')) {
+        if (str.indexOf('"') !== -1 || str.indexOf(';') !== -1 || str.indexOf('\n') !== -1) {
             return '"' + str.replace(/"/g, '""') + '"';
         }
         return str;

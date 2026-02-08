@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Rebelship Header Optimizer
 // @description Important script to handle all the Rebelship UI header elements for all scripts.
-// @version     3.51
+// @version     3.87
 // @author      https://github.com/justonlyforyou/
 // @order       999
 // @match       https://shippingmanager.cc/*
@@ -14,15 +14,17 @@
 (function() {
     'use strict';
 
-    var DEBOUNCE_MS = 500;
-    var resizeTimeout = null;
-    var lastWidth = window.innerWidth;
+    var MAX_RETRIES = 20;
 
-    // Custom display elements
     var vipValueElement = null;
     var cashValueElement = null;
+    var anchorValueElement = null;
     var storeSubscribed = false;
-    var mobileHeaderCreated = false;
+    var headerCreated = false;
+
+    var activeObservers = [];
+    var subscribeRetries = 0;
+    var initRetries = 0;
 
     // IDs of userscript header elements to remove on resize
     var HEADER_ELEMENT_IDS = [
@@ -37,12 +39,47 @@
         'rebel-stock-display'
     ];
 
-    // Classes of userscript elements to remove
     var HEADER_ELEMENT_CLASSES = [
         'rebel-premium-header'
     ];
 
+    // ============================================
+    // CSS Injection
+    // ============================================
+    function injectCSS() {
+        if (document.getElementById('rebel-mobile-css')) return;
+        var style = document.createElement('style');
+        style.id = 'rebel-mobile-css';
+        style.textContent = [
+            // Header height: single-row on desktop ≥1440px, two-row (mobile) below
+            '@media (min-width: 1440px) { .shippingHeader { height: 47px !important; max-height: 47px !important; min-height: 47px !important; position: relative !important; } }',
+            '@media (max-width: 1439px) { .shippingHeader { height: 89px !important; max-height: 89px !important; min-height: 89px !important; position: relative !important; } }',
+            // Row 1: left-align all utility items in headerMainContent
+            '.shippingHeader .headerMainContent { justify-content: flex-start !important; align-items: center !important; gap: 5px !important; max-width: unset !important; padding: 2px 10px 8px !important; margin: 0 !important; width: 100% !important; }',
+            // Uniform font size for all elements in row 1
+            '.shippingHeader .headerMainContent * { font-size: 12px !important; }',
+            // Remove auto-margin from CO2 LED that pushes items apart
+            '.shippingHeader .headerMainContent .content.led { margin-right: 0 !important; }',
+            // Remove margin-left from script-injected header elements (gap handles spacing)
+            '.shippingHeader .headerMainContent > * { margin-left: 0 !important; }',
+            // Hide desktop/mobile company+stock sections (recreated in row 2)
+            '.companyContent { display: none !important; }',
+            '.headerSubContent { display: none !important; }',
+            // Hide points and cash badges (recreated in row 2)
+            '.contentBar.points { display: none !important; }',
+            '.contentBar.cash { display: none !important; }',
+            // Hide chart/LED wrappers (bunker-price-display replaces them)
+            '.chartWrapper { display: none !important; }',
+            '.ledWrapper { display: none !important; }',
+            // Force countdown box always above buttons in port menu
+            '.countdownBox { order: -1 !important; width: 100% !important; }'
+        ].join('\n');
+        document.head.appendChild(style);
+    }
+
+    // ============================================
     // Pinia store access
+    // ============================================
     function getPinia() {
         var app = document.getElementById('app');
         if (!app || !app.__vue_app__) return null;
@@ -54,7 +91,17 @@
             var pinia = getPinia();
             if (!pinia || !pinia._s) return null;
             return pinia._s.get('user');
-        } catch (err) { // eslint-disable-line no-unused-vars
+        } catch {
+            return null;
+        }
+    }
+
+    function getVesselStore() {
+        try {
+            var pinia = getPinia();
+            if (!pinia || !pinia._s) return null;
+            return pinia._s.get('vessel');
+        } catch {
             return null;
         }
     }
@@ -72,212 +119,75 @@
         return '$' + value.toLocaleString('en-US');
     }
 
-    // Check if mobile view
-    function isMobileView() {
-        return window.innerWidth < 768;
-    }
-
-    // Create custom mobile header layout
-    function createMobileHeader() {
-        if (!isMobileView() || mobileHeaderCreated) return false;
+    // ============================================
+    // Header Layout (2 rows, used on desktop + mobile)
+    // Row 1 (top): fuel, co2, coop, rep, morale, cart, inbox, settings
+    // Row 2 (bottom): XP, company, points, cash, anchor | stock
+    // ============================================
+    function createHeader() {
+        if (headerCreated) return false;
         if (document.getElementById('rebel-mobile-header')) return false;
 
-        var headerSubContent = document.querySelector('.headerSubContent');
-        if (!headerSubContent) return false;
+        var companyContent = document.querySelector('.companyContent') || document.querySelector('.headerSubContent');
+        if (!companyContent) return false;
 
-        // Get original elements
+        var isCompact = window.innerWidth >= 1440;
+
         var originalXpButton = document.querySelector('.ceo-progress-container');
         var originalStockInfo = document.querySelector('.stockInfo');
         var originalCash = document.querySelector('.contentBar.cash');
         var originalPoints = document.querySelector('.contentBar.points');
 
-        if (!originalXpButton || !originalStockInfo) return false;
+        // Font sizes: smaller in compact mode so everything fits in one row
+        var mainFontSize = isCompact ? '12px' : '13px';
+        var smallFontSize = isCompact ? '11px' : '12px';
 
-        // Hide original cash and points in headerMainContent
-        if (originalCash) originalCash.style.display = 'none';
-        if (originalPoints) originalPoints.style.display = 'none';
+        // -- Build shared elements --
 
-        // Hide original headerSubContent
-        headerSubContent.style.display = 'none';
+        // XP progress icon
+        var xpClone = null;
+        if (originalXpButton) {
+            xpClone = originalXpButton.cloneNode(true);
+            xpClone.style.cssText = 'cursor:pointer;margin-right:-4px;';
+            xpClone.addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                originalXpButton.click();
+            });
 
-        // Create new mobile header container
-        var container = document.createElement('div');
-        container.id = 'rebel-mobile-header';
-        container.style.cssText = 'display:flex;flex-direction:column;align-items:center;width:100%;padding:2px 10px;position:absolute;bottom:2px;';
+            var xpDebounce = null;
+            var xpObserver = new MutationObserver(function() {
+                if (xpDebounce) clearTimeout(xpDebounce);
+                xpDebounce = setTimeout(function() {
+                    while (xpClone.firstChild) xpClone.removeChild(xpClone.firstChild);
+                    for (var i = 0; i < originalXpButton.childNodes.length; i++) {
+                        xpClone.appendChild(originalXpButton.childNodes[i].cloneNode(true));
+                    }
+                }, 200);
+            });
+            xpObserver.observe(originalXpButton, { childList: true, subtree: true, characterData: true });
+            activeObservers.push(xpObserver);
+        }
 
-        // === TOP ROW: XP (original) + Company ===
-        var topRow = document.createElement('div');
-        topRow.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:8px;width:100%;margin-top:2px;margin-left:-15px;';
-
-        // Clone the ORIGINAL XP button and keep it updated
-        var xpClone = originalXpButton.cloneNode(true);
-        xpClone.style.cssText = 'cursor:pointer;';
-        xpClone.addEventListener('click', function(e) {
-            e.preventDefault();
-            e.stopPropagation();
-            originalXpButton.click();
-        });
-        topRow.appendChild(xpClone);
-
-        // Observer to keep XP clone updated
-        var xpObserver = new MutationObserver(function() {
-            xpClone.innerHTML = originalXpButton.innerHTML;
-        });
-        xpObserver.observe(originalXpButton, { childList: true, subtree: true, characterData: true });
-
-        // Get company name from headerSubContent (it's a p.cursor-pointer element)
-        var companyNameEl = headerSubContent.querySelector('p.cursor-pointer');
+        // Company name
+        var companyClone = null;
+        var companyNameEl = companyContent.querySelector('p.cursor-pointer');
         if (companyNameEl) {
-            var companyClone = companyNameEl.cloneNode(true);
-            companyClone.style.cssText = 'color:#ffffff !important;font-weight:bold;cursor:pointer;margin:0;';
+            companyClone = companyNameEl.cloneNode(true);
+            companyClone.style.cssText = 'color:#ffffff;font-weight:bold;cursor:pointer;margin:0;font-size:' + mainFontSize + ';position:relative;top:2px;';
             companyClone.addEventListener('click', function(e) {
                 e.preventDefault();
                 e.stopPropagation();
                 companyNameEl.click();
             });
-            topRow.appendChild(companyClone);
         }
 
-        // Build 3-line stock display - LEFT in container (sub-header row)
-        var stockBlock = document.createElement('div');
-        stockBlock.id = 'rebel-stock-display';
-        stockBlock.style.cssText = 'display:flex;flex-direction:column;align-items:center;text-align:center;line-height:1.2;cursor:pointer;position:absolute;left:5px;top:6px;min-width:50px;';
-        stockBlock.addEventListener('click', function(e) {
-            e.preventDefault();
-            e.stopPropagation();
-            originalStockInfo.click();
-        });
-
-        // Extract all values from original stockInfo
-        var stockValues = [];
-        var allTextNodes = originalStockInfo.querySelectorAll('span, p, div');
-        allTextNodes.forEach(function(el) {
-            var text = el.textContent.trim();
-            // Only direct text, not nested
-            if (el.children.length === 0 && text && text.length > 0) {
-                stockValues.push(text);
-            }
-        });
-        // Fallback: get all text content and split
-        if (stockValues.length === 0) {
-            var fullText = originalStockInfo.textContent.trim();
-            // Try to extract dollar amounts and percentages
-            var matches = fullText.match(/[\$\d.,]+|[\+\-]?[\d.]+%/g);
-            if (matches) {
-                stockValues = matches;
-            }
-        }
-
-        // Get trend color from Pinia store (stock_trend: "up" or "down")
-        var originalSvg = originalStockInfo.querySelector('svg');
-        var userStore = getUserStore();
-        var stockTrend = userStore && userStore.user ? userStore.user.stock_trend : null;
-        var trendColor = '#ffffff';
-        if (stockTrend === 'down') {
-            trendColor = '#ef4444';
-        } else if (stockTrend === 'up') {
-            trendColor = '#4ade80';
-        }
-
-        // Line 1: Main value (same color as trend)
-        var line1 = document.createElement('span');
-        line1.style.cssText = 'font-weight:bold;font-size:12px;color:' + trendColor + ';text-align:center;width:100%;';
-        line1.textContent = stockValues[0] || '...';
-        stockBlock.appendChild(line1);
-
-        // Line 2: Change value
-        var line2 = document.createElement('span');
-        line2.style.cssText = 'font-size:12px;color:' + trendColor + ';text-align:center;width:100%;';
-        line2.textContent = stockValues[1] || '';
-        stockBlock.appendChild(line2);
-
-        // Line 3: Percent + original SVG
-        var line3 = document.createElement('div');
-        line3.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:2px;font-size:12px;color:' + trendColor + ';width:100%;';
-        var percentText = document.createElement('span');
-        percentText.textContent = stockValues[2] || '';
-        line3.appendChild(percentText);
-        if (originalSvg) {
-            var svgClone = originalSvg.cloneNode(true);
-            svgClone.style.width = '10px';
-            svgClone.style.height = '10px';
-            svgClone.style.fill = trendColor;
-            // Set fill on all paths inside SVG
-            var paths = svgClone.querySelectorAll('path, polygon, circle, rect');
-            paths.forEach(function(p) { p.style.fill = trendColor; });
-            line3.appendChild(svgClone);
-        }
-        stockBlock.appendChild(line3);
-
-        container.appendChild(stockBlock);
-
-        // Observer to keep Stock updated
-        var stockObserver = new MutationObserver(function() {
-            // Re-extract values
-            var newValues = [];
-            var newTextNodes = originalStockInfo.querySelectorAll('span, p, div');
-            newTextNodes.forEach(function(el) {
-                var text = el.textContent.trim();
-                if (el.children.length === 0 && text && text.length > 0) {
-                    newValues.push(text);
-                }
-            });
-            if (newValues.length === 0) {
-                var newFullText = originalStockInfo.textContent.trim();
-                var newMatches = newFullText.match(/[\$\d.,]+|[\+\-]?[\d.]+%/g);
-                if (newMatches) newValues = newMatches;
-            }
-
-            // Re-check trend color from Pinia store
-            var newSvg = originalStockInfo.querySelector('svg');
-            var newUserStore = getUserStore();
-            var newStockTrend = newUserStore && newUserStore.user ? newUserStore.user.stock_trend : null;
-            var newTrendColor = '#ffffff';
-            if (newStockTrend === 'down') {
-                newTrendColor = '#ef4444';
-            } else if (newStockTrend === 'up') {
-                newTrendColor = '#4ade80';
-            }
-
-            // Update display
-            line1.textContent = newValues[0] || '...';
-            line1.style.color = newTrendColor;
-            line2.textContent = newValues[1] || '';
-            line2.style.color = newTrendColor;
-            percentText.textContent = newValues[2] || '';
-            line3.style.color = newTrendColor;
-
-            // Update SVG with proper colors
-            if (newSvg) {
-                var existingSvg = line3.querySelector('svg');
-                var svgCloneNew = newSvg.cloneNode(true);
-                svgCloneNew.style.width = '10px';
-                svgCloneNew.style.height = '10px';
-                svgCloneNew.style.fill = newTrendColor;
-                var pathsNew = svgCloneNew.querySelectorAll('path, polygon, circle, rect');
-                pathsNew.forEach(function(p) { p.style.fill = newTrendColor; });
-
-                if (existingSvg) {
-                    existingSvg.replaceWith(svgCloneNew);
-                } else {
-                    line3.appendChild(svgCloneNew);
-                }
-            }
-        });
-        stockObserver.observe(originalStockInfo, { childList: true, subtree: true, characterData: true });
-
-        container.appendChild(topRow);
-
-        // === BOTTOM ROW: VIP Points + Cash ===
-        var bottomRow = document.createElement('div');
-        bottomRow.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:12px;margin-top:1px;margin-left:-15px;';
-
-        // VIP Points container
+        // VIP Points
+        var vipContainer = null;
         if (originalPoints) {
-            var vipContainer = document.createElement('div');
+            vipContainer = document.createElement('div');
             vipContainer.style.cssText = 'display:flex;align-items:center;gap:4px;cursor:pointer;';
 
-            // Get VIP icon from original
             var vipIcon = originalPoints.querySelector('svg');
             if (vipIcon) {
                 var vipIconClone = vipIcon.cloneNode(true);
@@ -286,25 +196,20 @@
                 vipContainer.appendChild(vipIconClone);
             }
 
-            // VIP value
             vipValueElement = document.createElement('span');
-            vipValueElement.style.cssText = 'color:#fbbf24;font-size:12px;font-weight:bold;';
+            vipValueElement.style.cssText = 'color:#fbbf24;font-size:' + mainFontSize + ';font-weight:bold;';
             vipValueElement.textContent = '...';
             vipContainer.appendChild(vipValueElement);
 
-            // Forward click to original
             vipContainer.addEventListener('click', function() {
                 originalPoints.click();
             });
-
-            bottomRow.appendChild(vipContainer);
         }
 
-        // Cash container
+        // Cash
         var cashContainer = document.createElement('div');
         cashContainer.style.cssText = 'display:flex;align-items:center;gap:4px;cursor:pointer;';
 
-        // Get cash icon from original
         if (originalCash) {
             var cashIcon = originalCash.querySelector('svg');
             if (cashIcon) {
@@ -315,137 +220,231 @@
             }
         }
 
-        // Cash value
         cashValueElement = document.createElement('span');
-        cashValueElement.style.cssText = 'color:#4ade80;font-size:13px;font-weight:bold;';
+        cashValueElement.style.cssText = 'color:#4ade80;font-size:' + mainFontSize + ';font-weight:bold;';
         cashValueElement.textContent = '...';
         cashContainer.appendChild(cashValueElement);
 
-        // Forward click to original cash
         cashContainer.addEventListener('click', function() {
             if (originalCash) originalCash.click();
         });
 
-        bottomRow.appendChild(cashContainer);
-        container.appendChild(bottomRow);
+        // Anchor points display
+        var anchorContainer = document.createElement('div');
+        anchorContainer.style.cssText = 'display:flex;align-items:center;gap:4px;font-size:' + smallFontSize + ';margin-right:8px;';
+        var anchorIcon = document.createElement('span');
+        anchorIcon.textContent = '\u2693';
+        anchorContainer.appendChild(anchorIcon);
+        anchorValueElement = document.createElement('span');
+        anchorValueElement.style.cssText = 'color:#60a5fa;font-weight:bold;';
+        anchorValueElement.textContent = '...';
+        anchorContainer.appendChild(anchorValueElement);
 
-        // Insert into header
-        var shippingHeader = document.querySelector('.shippingHeader');
-        if (shippingHeader) {
-            shippingHeader.appendChild(container);
-            mobileHeaderCreated = true;
-            return true;
+        // Stock display
+        var stockRow = null;
+        if (originalStockInfo) {
+            stockRow = document.createElement('div');
+            stockRow.id = 'rebel-stock-display';
+            stockRow.style.cssText = 'display:flex;align-items:center;gap:6px;cursor:pointer;font-size:' + smallFontSize + ';';
+            stockRow.addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                originalStockInfo.click();
+            });
+
+            var userStore = getUserStore();
+            var stockTrend = userStore && userStore.user ? userStore.user.stock_trend : null;
+            var trendColor = getTrendColor(stockTrend);
+
+            var stockValues = extractStockValues(originalStockInfo);
+            var originalSvg = originalStockInfo.querySelector('svg');
+
+            var stockPrice = document.createElement('span');
+            stockPrice.style.cssText = 'font-weight:bold;color:' + trendColor + ';';
+            stockPrice.textContent = stockValues[0] ? stockValues[0] : '...';
+            stockRow.appendChild(stockPrice);
+
+            var stockDiff = document.createElement('span');
+            stockDiff.style.cssText = 'color:' + trendColor + ';';
+            stockDiff.textContent = stockValues[1] ? stockValues[1] : '';
+            stockRow.appendChild(stockDiff);
+
+            var stockPercent = document.createElement('span');
+            stockPercent.style.cssText = 'color:' + trendColor + ';';
+            stockPercent.textContent = stockValues[2] ? stockValues[2] : '';
+            stockRow.appendChild(stockPercent);
+
+            if (originalSvg) {
+                var svgClone = originalSvg.cloneNode(true);
+                applySvgStyle(svgClone, trendColor);
+                stockRow.appendChild(svgClone);
+            }
+
+            // Observer to keep stock updated
+            var lastStockText = originalStockInfo.textContent.trim();
+            var stockDebounce = null;
+            var stockObserver = new MutationObserver(function() {
+                if (stockDebounce) clearTimeout(stockDebounce);
+                stockDebounce = setTimeout(function() {
+                    var newText = originalStockInfo.textContent.trim();
+                    if (newText === lastStockText) return;
+                    lastStockText = newText;
+
+                    var newValues = extractStockValues(originalStockInfo);
+                    var newSvg = originalStockInfo.querySelector('svg');
+                    var newUserStore = getUserStore();
+                    var newStockTrend = newUserStore && newUserStore.user ? newUserStore.user.stock_trend : null;
+                    var newTrendColor = getTrendColor(newStockTrend);
+
+                    stockPrice.textContent = newValues[0] ? newValues[0] : '...';
+                    stockPrice.style.color = newTrendColor;
+                    stockDiff.textContent = newValues[1] ? newValues[1] : '';
+                    stockDiff.style.color = newTrendColor;
+                    stockPercent.textContent = newValues[2] ? newValues[2] : '';
+                    stockPercent.style.color = newTrendColor;
+
+                    if (newSvg) {
+                        var existingSvg = stockRow.querySelector('svg');
+                        var svgCloneNew = newSvg.cloneNode(true);
+                        applySvgStyle(svgCloneNew, newTrendColor);
+                        if (existingSvg) {
+                            existingSvg.parentNode.replaceChild(svgCloneNew, existingSvg);
+                        } else {
+                            stockRow.appendChild(svgCloneNew);
+                        }
+                    }
+                }, 200);
+            });
+            stockObserver.observe(originalStockInfo, { childList: true, subtree: true, characterData: true });
+            activeObservers.push(stockObserver);
         }
 
-        return false;
-    }
+        // -- Layout: compact (single row) vs normal (two rows) --
 
-    // Create desktop VIP display (icon on top, value below)
-    function createVipDisplay() {
-        if (isMobileView()) return false;
+        if (isCompact) {
+            // Single row: insert info elements as inline-flex wrapper before existing headerMainContent children
+            var inlineWrapper = document.createElement('div');
+            inlineWrapper.id = 'rebel-mobile-header';
+            inlineWrapper.style.cssText = 'display:inline-flex;align-items:center;gap:8px;margin-right:8px;';
 
-        var originalPoints = document.querySelector('.contentBar.points');
-        if (!originalPoints || document.getElementById('rebel-vip-display')) return false;
-        if (!originalPoints.parentNode) return false;
+            if (xpClone) inlineWrapper.appendChild(xpClone);
+            if (companyClone) inlineWrapper.appendChild(companyClone);
+            if (vipContainer) inlineWrapper.appendChild(vipContainer);
+            inlineWrapper.appendChild(cashContainer);
+            inlineWrapper.appendChild(anchorContainer);
+            if (stockRow) inlineWrapper.appendChild(stockRow);
 
-        var originalIcon = originalPoints.querySelector('svg');
-        var iconHtml = originalIcon ? originalIcon.outerHTML : '';
+            var headerMainContent = document.querySelector('.headerMainContent');
+            if (headerMainContent) {
+                headerMainContent.insertBefore(inlineWrapper, headerMainContent.firstChild);
+                headerCreated = true;
+                return true;
+            }
+            return false;
+        } else {
+            // Two rows: Row 2 positioned at bottom of header
+            var row2 = document.createElement('div');
+            row2.id = 'rebel-mobile-header';
+            row2.style.cssText = 'display:flex;flex-direction:column;gap:2px;padding:2px 9px;position:absolute;bottom:2px;left:0;width:100%;';
 
-        var container = document.createElement('div');
-        container.id = 'rebel-vip-display';
-        container.className = 'contentBar points cursor-pointer';
-        container.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;padding:4px 8px;';
+            // Sub-row 1: XP, Company, Points, Cash
+            var infoRow = document.createElement('div');
+            infoRow.style.cssText = 'display:flex;flex-wrap:nowrap;align-items:center;gap:8px;';
 
-        var iconWrapper = document.createElement('div');
-        iconWrapper.innerHTML = iconHtml;
-        iconWrapper.style.cssText = 'display:flex;align-items:center;justify-content:center;';
-        container.appendChild(iconWrapper);
+            if (xpClone) infoRow.appendChild(xpClone);
+            if (companyClone) infoRow.appendChild(companyClone);
+            if (vipContainer) infoRow.appendChild(vipContainer);
+            infoRow.appendChild(cashContainer);
 
-        var valueEl = document.createElement('span');
-        valueEl.id = 'rebel-vip-value';
-        valueEl.style.cssText = 'font-size:12px;font-weight:bold;color:#fbbf24;line-height:1.2;';
-        valueEl.textContent = '...';
-        container.appendChild(valueEl);
+            row2.appendChild(infoRow);
 
-        originalPoints.parentNode.insertBefore(container, originalPoints.nextSibling);
+            // Sub-row 2: Anchor + Stock
+            var bottomLine = document.createElement('div');
+            bottomLine.style.cssText = 'display:flex;align-items:center;gap:0;';
+            bottomLine.appendChild(anchorContainer);
+            if (stockRow) bottomLine.appendChild(stockRow);
+            row2.appendChild(bottomLine);
 
-        if (document.getElementById('rebel-vip-display')) {
-            originalPoints.style.display = 'none';
+            // Insert row 2 into header
+            var shippingHeader = document.querySelector('.shippingHeader');
+            if (shippingHeader) {
+                shippingHeader.appendChild(row2);
+                headerCreated = true;
+                return true;
+            }
+            return false;
         }
-
-        container.addEventListener('click', function() {
-            originalPoints.click();
-        });
-
-        vipValueElement = valueEl;
-        return true;
     }
 
-    // Create desktop Cash display
-    function createCashDisplay() {
-        if (isMobileView()) return false;
 
-        var originalCash = document.querySelector('.contentBar.cash');
-        var stockInfo = document.querySelector('.stockInfo');
-        if (!originalCash || !stockInfo || document.getElementById('rebel-cash-display')) return false;
-        if (!stockInfo.parentNode) return false;
-
-        var originalIcon = originalCash.querySelector('svg');
-        var iconHtml = originalIcon ? originalIcon.outerHTML : '';
-
-        var container = document.createElement('div');
-        container.id = 'rebel-cash-display';
-        container.className = 'contentBar cash cursor-pointer';
-        container.style.cssText = 'display:flex;align-items:center;gap:6px;padding:4px 8px;';
-
-        var iconWrapper = document.createElement('div');
-        iconWrapper.innerHTML = iconHtml;
-        iconWrapper.style.cssText = 'display:flex;align-items:center;justify-content:center;';
-        container.appendChild(iconWrapper);
-
-        var valueEl = document.createElement('span');
-        valueEl.id = 'rebel-cash-value';
-        valueEl.style.cssText = 'font-weight:bold;color:#4ade80;';
-        valueEl.textContent = '...';
-        container.appendChild(valueEl);
-
-        stockInfo.parentNode.insertBefore(container, stockInfo.nextSibling);
-
-        if (document.getElementById('rebel-cash-display')) {
-            originalCash.style.display = 'none';
+    // ============================================
+    // Helpers
+    // ============================================
+    function extractStockValues(stockInfoEl) {
+        var values = [];
+        var textNodes = stockInfoEl.querySelectorAll('span, p, div');
+        for (var i = 0; i < textNodes.length; i++) {
+            var text = textNodes[i].textContent.trim();
+            if (textNodes[i].children.length === 0 && text.length > 0) {
+                values.push(text);
+            }
         }
-
-        container.addEventListener('click', function() {
-            originalCash.click();
-        });
-
-        cashValueElement = valueEl;
-        return true;
+        if (values.length === 0) {
+            var fullText = stockInfoEl.textContent.trim();
+            var matches = fullText.match(/[\$\d.,]+|[\+\-]?[\d.]+%/g);
+            if (matches) values = matches;
+        }
+        return values;
     }
 
+    function getTrendColor(stockTrend) {
+        if (stockTrend === 'down') return '#ef4444';
+        if (stockTrend === 'up') return '#4ade80';
+        return '#ffffff';
+    }
+
+    function applySvgStyle(svgEl, color) {
+        svgEl.style.width = '10px';
+        svgEl.style.height = '10px';
+        svgEl.style.fill = color;
+        var paths = svgEl.querySelectorAll('path, polygon, circle, rect');
+        for (var i = 0; i < paths.length; i++) {
+            paths[i].style.fill = color;
+        }
+    }
+
+    // ============================================
+    // Store subscription
+    // ============================================
     function updateDisplayValues() {
         var userStore = getUserStore();
-
         if (userStore && userStore.user) {
             var user = userStore.user;
-
-            // VIP Points
             if (vipValueElement && user.points !== undefined) {
                 vipValueElement.textContent = formatPoints(user.points);
             }
-
-            // Cash
             if (cashValueElement && user.cash !== undefined) {
                 cashValueElement.textContent = formatCash(user.cash);
             }
         }
+        if (anchorValueElement && userStore && userStore.settings) {
+            var maxAnchor = userStore.settings.anchor_points || 0;
+            var vesselStore = getVesselStore();
+            var totalVessels = 0;
+            if (vesselStore && vesselStore.userVessels) {
+                totalVessels = vesselStore.userVessels.length;
+            }
+            var freeAnchor = maxAnchor - totalVessels;
+            if (freeAnchor < 0) freeAnchor = 0;
+            anchorValueElement.textContent = freeAnchor + '/' + maxAnchor;
+        }
     }
 
     function subscribeToStore() {
-        if (storeSubscribed) return;
+        if (storeSubscribed || subscribeRetries >= MAX_RETRIES) return;
+        subscribeRetries++;
 
         var userStore = getUserStore();
-
         if (!userStore) {
             setTimeout(subscribeToStore, 1000);
             return;
@@ -455,110 +454,94 @@
             updateDisplayValues();
         });
 
+        var vesselStore = getVesselStore();
+        if (vesselStore) {
+            vesselStore.$subscribe(function() {
+                updateDisplayValues();
+            });
+        }
+
         storeSubscribed = true;
     }
 
-    function adjustHeaderSpacing() {
-        var headerMainContent = document.querySelector('.headerMainContent');
-        var headerSubContent = document.querySelector('.headerSubContent');
-
-        if (headerMainContent && headerSubContent) {
-            headerMainContent.style.setProperty('margin-top', '-1px', 'important');
-            headerSubContent.style.setProperty('padding-top', '3px', 'important');
-        }
-    }
-
-    setInterval(adjustHeaderSpacing, 1000);
-
-    function initCustomDisplays() {
-        if (isMobileView()) {
-            createMobileHeader();
-        } else {
-            createVipDisplay();
-            createCashDisplay();
-        }
-
-        updateDisplayValues();
-        subscribeToStore();
-        adjustHeaderSpacing();
-    }
-
+    // ============================================
+    // Reset (for resize event)
+    // ============================================
     function removeHeaderElements() {
-        // Remove by ID
-        HEADER_ELEMENT_IDS.forEach(function(id) {
-            var el = document.getElementById(id);
-            if (el) {
-                el.remove();
-            }
-        });
+        for (var i = 0; i < activeObservers.length; i++) {
+            activeObservers[i].disconnect();
+        }
+        activeObservers = [];
 
-        // Remove by class
-        HEADER_ELEMENT_CLASSES.forEach(function(cls) {
-            document.querySelectorAll('.' + cls).forEach(function(el) {
-                el.remove();
-            });
-        });
+        for (var j = 0; j < HEADER_ELEMENT_IDS.length; j++) {
+            var el = document.getElementById(HEADER_ELEMENT_IDS[j]);
+            if (el) el.remove();
+        }
 
-        // Restore hidden original elements
-        var headerSubContent = document.querySelector('.headerSubContent');
-        if (headerSubContent) headerSubContent.style.display = '';
+        for (var k = 0; k < HEADER_ELEMENT_CLASSES.length; k++) {
+            var els = document.querySelectorAll('.' + HEADER_ELEMENT_CLASSES[k]);
+            for (var l = 0; l < els.length; l++) els[l].remove();
+        }
 
-        var chartWrapper = document.querySelector('.content.chart.cursor-pointer .chartWrapper');
-        if (chartWrapper) chartWrapper.style.display = '';
-
-        var ledWrapper = document.querySelector('.content.led.cursor-pointer .ledWrapper');
-        if (ledWrapper) ledWrapper.style.display = '';
-
-        var originalPoints = document.querySelector('.contentBar.points');
-        if (originalPoints) originalPoints.style.display = '';
-
-        var originalCash = document.querySelector('.contentBar.cash');
-        if (originalCash) originalCash.style.display = '';
-
-        // Reset element references
         vipValueElement = null;
         cashValueElement = null;
-        mobileHeaderCreated = false;
-    }
-
-    function resetScriptFlags() {
-        window._bunkerPriceReset = true;
-        window.dispatchEvent(new CustomEvent('rebelship-header-resize'));
+        anchorValueElement = null;
+        headerCreated = false;
     }
 
     function handleResize() {
-        var newWidth = window.innerWidth;
-
-        if (newWidth === lastWidth) {
-            return;
-        }
-
-        console.log('[HeaderResize] Width changed: ' + lastWidth + ' -> ' + newWidth);
-        lastWidth = newWidth;
-
         removeHeaderElements();
-        resetScriptFlags();
-
-        setTimeout(initCustomDisplays, 100);
-    }
-
-    function debouncedResize() {
-        if (resizeTimeout) {
-            clearTimeout(resizeTimeout);
+        window._bunkerPriceReset = true;
+        window.dispatchEvent(new CustomEvent('rebelship-header-resize'));
+        var retries = 0;
+        function tryCreate() {
+            if (createHeader()) {
+                updateDisplayValues();
+                subscribeToStore();
+            } else if (retries < 5) {
+                retries++;
+                setTimeout(tryCreate, 200);
+            }
         }
-        resizeTimeout = setTimeout(handleResize, DEBOUNCE_MS);
+        setTimeout(tryCreate, 300);
     }
 
-    function init() {
-        var headerSubContent = document.querySelector('.headerSubContent');
+    var resizeTimeout = null;
+    var lastWidth = window.innerWidth;
+    function debouncedResize() {
+        var newWidth = window.innerWidth;
+        if (newWidth === lastWidth) return;
+        lastWidth = newWidth;
+        if (resizeTimeout) clearTimeout(resizeTimeout);
+        resizeTimeout = setTimeout(handleResize, 500);
+    }
 
-        if (headerSubContent) {
-            initCustomDisplays();
+    // ============================================
+    // Init
+    // ============================================
+    function init() {
+        if (initRetries >= MAX_RETRIES) return;
+
+        var headerReady = document.querySelector('.companyContent') || document.querySelector('.headerSubContent');
+
+        if (headerReady) {
+            injectCSS();
+            createHeader();
+            updateDisplayValues();
+            subscribeToStore();
         } else {
+            initRetries++;
             setTimeout(init, 500);
         }
     }
 
     window.addEventListener('resize', debouncedResize);
+
+    window.addEventListener('beforeunload', function() {
+        for (var i = 0; i < activeObservers.length; i++) activeObservers[i].disconnect();
+        activeObservers = [];
+        if (resizeTimeout) clearTimeout(resizeTimeout);
+    });
+
     init();
 })();

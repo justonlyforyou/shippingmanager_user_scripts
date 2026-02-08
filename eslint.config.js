@@ -36,11 +36,14 @@ module.exports = [
         MutationObserver: 'readonly',
         location: 'readonly',
         confirm: 'readonly',
-        CustomEvent: 'readonly'
+        CustomEvent: 'readonly',
+        Event: 'readonly',
+        history: 'readonly',
+        requestAnimationFrame: 'readonly'
       }
     },
     rules: {
-      'no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+      'no-unused-vars': 'error',
       'no-undef': 'error',
       'no-shadow': 'error'
     }

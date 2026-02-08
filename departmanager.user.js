@@ -2,7 +2,7 @@
 // @name         ShippingManager - Depart Manager
 // @namespace    https://rebelship.org/
 // @description  Unified departure management: Auto bunker rebuy, auto-depart, route settings
-// @version      3.71
+// @version      3.88
 // @author       https://github.com/justonlyforyou/
 // @order        10
 // @match        https://shippingmanager.cc/*
@@ -35,6 +35,20 @@
     var dbConnectionVerified = false; // TRUE after successful DB read (even if empty)
     var lastCheckTimeCache = 0;
     var autoPriceCacheData = {};
+
+    // Debounced storage write: RAM is single source of truth, DB write is async
+    // Per-category dirty tracking: only write categories that actually changed
+    var STORAGE_CATEGORIES = ['settings', 'pendingRouteSettings', 'priceChangedAt', 'lastGradualIncrease', 'drydockVessels'];
+    var dirtyCategories = {};
+    var storageSaveTimer = null;
+    var STORAGE_SAVE_DEBOUNCE = 300; // ms
+
+    function markDirty(category) {
+        dirtyCategories[category] = true;
+        if (dbConnectionVerified) {
+            scheduleStorageSave();
+        }
+    }
 
     // Hijacking risk cache - stores route_origin<>route_destination -> risk mapping
     var hijackingRiskCache = {};
@@ -99,24 +113,90 @@
     // DEPART LOG STORAGE (RebelShipBridge)
     // ============================================
     var DEPART_LOG_MAX_AGE_DAYS = 7;
+    var pendingDepartLogs = [];
 
-    async function saveDepartLog(entry) {
+    function saveDepartLog(entry) {
+        pendingDepartLogs.push(entry);
+        log('DepartLog buffered: ' + entry.vesselName + ' (' + entry.triggerType + ')');
+        try {
+            localStorage.setItem('dm_pendingLogs', JSON.stringify(pendingDepartLogs));
+        } catch { /* localStorage full/unavailable - crash backup only */ }
+    }
+
+    async function flushDepartLogs() {
+        if (pendingDepartLogs.length === 0) return;
+        var toFlush = pendingDepartLogs.slice();
+        pendingDepartLogs = [];
         try {
             var logs = await dbGet('departLogs') || [];
-            logs.push(entry);
-
-            // Remove entries older than 7 days
-            var cutoffTime = Date.now() - (DEPART_LOG_MAX_AGE_DAYS * 24 * 60 * 60 * 1000);
-            logs = logs.filter(function(l) {
-                return l.timestamp >= cutoffTime;
-            });
-
+            logs = logs.concat(toFlush);
             await dbSet('departLogs', logs);
-            log('DepartLog saved: ' + entry.vesselName + ' (' + entry.triggerType + ')');
-            return true;
+            localStorage.removeItem('dm_pendingLogs');
+            log('Flushed ' + toFlush.length + ' depart logs to DB');
         } catch (e) {
-            log('saveDepartLog error: ' + e.message, 'error');
-            return false;
+            log('flushDepartLogs error: ' + e.message, 'error');
+        }
+    }
+
+    async function cleanupDepartLogs() {
+        try {
+            var logs = await dbGet('departLogs');
+            if (!logs || logs.length === 0) return;
+            var cutoff = Date.now() - (DEPART_LOG_MAX_AGE_DAYS * 24 * 60 * 60 * 1000);
+            var cleaned = logs.filter(function(l) { return l.timestamp >= cutoff; });
+            if (cleaned.length < logs.length) {
+                await dbSet('departLogs', cleaned);
+                log('Cleanup: removed ' + (logs.length - cleaned.length) + ' old depart logs');
+            }
+        } catch (e) {
+            log('cleanupDepartLogs error: ' + e.message, 'error');
+        }
+    }
+
+    async function migrateDepartLogsSlim() {
+        try {
+            var already = await dbGet('departLogsMigrated');
+            if (already) return;
+
+            var logs = await dbGet('departLogs');
+            if (!logs || logs.length === 0) {
+                await dbSet('departLogsMigrated', true);
+                return;
+            }
+
+            var slimmed = 0;
+            for (var i = 0; i < logs.length; i++) {
+                var resp = logs[i].departResponse;
+                if (!resp) continue;
+                if (!resp.fullApiResponse && !resp.fullDepartInfo) continue;
+
+                var fullApi = resp.fullApiResponse || {};
+                var info = fullApi.depart_info || resp.fullDepartInfo || {};
+
+                logs[i].departResponse = {
+                    success: resp.success,
+                    income: resp.income || info.depart_income,
+                    harborFee: resp.harborFee || info.harbor_fee,
+                    channelFee: resp.channelFee || info.channel_payment,
+                    fuelUsed: resp.fuelUsed !== undefined ? resp.fuelUsed : (info.fuel_usage ? info.fuel_usage / 1000 : null),
+                    co2Used: resp.co2Used !== undefined ? resp.co2Used : (info.co2_emission ? info.co2_emission / 1000 : null),
+                    teuDry: info.teu_dry,
+                    teuRef: info.teu_refrigerated,
+                    crudeOil: info.crude_oil,
+                    fuelCargo: info.fuel,
+                    guardFee: info.guard_payment
+                };
+                slimmed++;
+            }
+
+            if (slimmed > 0) {
+                await dbSet('departLogs', logs);
+                log('Migrated departLogs: slimmed ' + slimmed + '/' + logs.length + ' entries (removed fullApiResponse/fullDepartInfo)');
+            }
+
+            await dbSet('departLogsMigrated', true);
+        } catch (e) {
+            log('migrateDepartLogsSlim error: ' + e.message, 'error');
         }
     }
 
@@ -219,16 +299,55 @@
         };
     }
 
-    async function saveStorage(storage) {
+    function saveStorage(storage) {
         // Only save if DB connection was verified during loadStorage
         if (!dbConnectionVerified) {
             console.error('[Depart Manager] BLOCKED SAVE: DB connection not verified');
             return;
         }
         storageCache = storage;
-        var success = await dbSet('storage', storage);
-        if (success) {
-            syncSettingsToAndroid(storage.settings);
+        for (var i = 0; i < STORAGE_CATEGORIES.length; i++) {
+            dirtyCategories[STORAGE_CATEGORIES[i]] = true;
+        }
+        scheduleStorageSave();
+    }
+
+    function scheduleStorageSave() {
+        if (storageSaveTimer) return;
+        storageSaveTimer = setTimeout(flushStorageToDB, STORAGE_SAVE_DEBOUNCE);
+    }
+
+    async function flushStorageToDB() {
+        storageSaveTimer = null;
+        if (!storageCache) return;
+        var toSave = [];
+        for (var i = 0; i < STORAGE_CATEGORIES.length; i++) {
+            if (dirtyCategories[STORAGE_CATEGORIES[i]]) {
+                toSave.push(STORAGE_CATEGORIES[i]);
+            }
+        }
+        if (toSave.length === 0) return;
+        // Clear dirty flags before async write
+        for (var j = 0; j < toSave.length; j++) {
+            dirtyCategories[toSave[j]] = false;
+        }
+        try {
+            for (var k = 0; k < toSave.length; k++) {
+                var cat = toSave[k];
+                var success = await dbSet('st_' + cat, storageCache[cat]);
+                if (!success) {
+                    dirtyCategories[cat] = true;
+                }
+            }
+            if (toSave.indexOf('settings') !== -1) {
+                syncSettingsToAndroid(storageCache.settings);
+            }
+            localStorage.removeItem('dm_storageBackup');
+        } catch (e) {
+            for (var m = 0; m < toSave.length; m++) {
+                dirtyCategories[toSave[m]] = true;
+            }
+            log('flushStorageToDB error: ' + e.message, 'error');
         }
     }
 
@@ -236,10 +355,13 @@
         return getStorage().settings;
     }
 
-    async function saveSettings(settings) {
-        var storage = getStorage();
-        storage.settings = settings;
-        await saveStorage(storage);
+    function saveSettings(settings) {
+        if (!dbConnectionVerified) {
+            console.error('[Depart Manager] BLOCKED SAVE: DB connection not verified');
+            return;
+        }
+        storageCache.settings = settings;
+        markDirty('settings');
         log('Settings saved');
     }
 
@@ -273,22 +395,47 @@
     async function loadStorage(retryCount) {
         retryCount = retryCount || 0;
         try {
-            // dbGet throws on DB errors, returns null if key doesn't exist
-            var dbData = await dbGet('storage');
+            // Try per-category format first (new format since v3.88)
+            var settingsData = await dbGet('st_settings');
 
-            // If we get here without throwing, DB connection is working
-            dbConnectionVerified = true;
-
-            if (dbData) {
-                if (typeof dbData !== 'object') {
-                    throw new Error('Invalid storage format: expected object, got ' + typeof dbData);
-                }
-                storageCache = dbData;
-                log('DB OK: loaded ' + Object.keys(dbData.settings || {}).length + ' settings');
+            if (settingsData !== null) {
+                // New per-category format
+                dbConnectionVerified = true;
+                storageCache = {
+                    settings: settingsData,
+                    pendingRouteSettings: await dbGet('st_pendingRouteSettings') || {},
+                    priceChangedAt: await dbGet('st_priceChangedAt') || {},
+                    lastGradualIncrease: await dbGet('st_lastGradualIncrease') || {},
+                    drydockVessels: await dbGet('st_drydockVessels') || {}
+                };
+                log('DB OK: loaded per-category storage (' + Object.keys(storageCache.settings).length + ' settings)');
             } else {
-                // null = key doesn't exist = first run = DB works, just empty
-                storageCache = getDefaultStorage();
-                log('DB OK: first run, using defaults');
+                // Try old blob format (migration path)
+                var dbData = await dbGet('storage');
+                dbConnectionVerified = true;
+
+                if (dbData) {
+                    if (typeof dbData !== 'object') {
+                        throw new Error('Invalid storage format: expected object, got ' + typeof dbData);
+                    }
+                    storageCache = {
+                        settings: dbData.settings || Object.assign({}, DEFAULT_SETTINGS),
+                        pendingRouteSettings: dbData.pendingRouteSettings || {},
+                        priceChangedAt: dbData.priceChangedAt || {},
+                        lastGradualIncrease: dbData.lastGradualIncrease || {},
+                        drydockVessels: dbData.drydockVessels || {}
+                    };
+                    // Migrate: write each category to its own key
+                    for (var i = 0; i < STORAGE_CATEGORIES.length; i++) {
+                        await dbSet('st_' + STORAGE_CATEGORIES[i], storageCache[STORAGE_CATEGORIES[i]]);
+                    }
+                    log('DB OK: migrated blob to per-category format (' + Object.keys(storageCache.settings).length + ' settings)');
+                } else {
+                    // null = key doesn't exist = first run
+                    storageCache = getDefaultStorage();
+                    await dbSet('st_settings', storageCache.settings);
+                    log('DB OK: first run, using defaults');
+                }
             }
 
             var lastCheckData = await dbGet('lastCheckTime');
@@ -316,15 +463,19 @@
     // PENDING ROUTE SETTINGS STORAGE
     // ============================================
     function savePendingRouteSettings(vesselId, data) {
-        var storage = getStorage();
-        storage.pendingRouteSettings[vesselId] = {
+        if (!dbConnectionVerified) {
+            console.error('[Depart Manager] BLOCKED SAVE: DB connection not verified');
+            return;
+        }
+        if (!storageCache.pendingRouteSettings) storageCache.pendingRouteSettings = {};
+        storageCache.pendingRouteSettings[vesselId] = {
             name: data.name,
             speed: data.speed,
             guards: data.guards,
             prices: data.prices,
             savedAt: Date.now()
         };
-        saveStorage(storage);
+        markDirty('pendingRouteSettings');
         log('Saved pending route settings for ' + data.name);
     }
 
@@ -334,11 +485,11 @@
     }
 
     function deletePendingRouteSettings(vesselId) {
-        var storage = getStorage();
-        var vessel = storage.pendingRouteSettings[vesselId];
+        if (!storageCache || !storageCache.pendingRouteSettings) return;
+        var vessel = storageCache.pendingRouteSettings[vesselId];
         if (vessel) {
-            delete storage.pendingRouteSettings[vesselId];
-            saveStorage(storage);
+            delete storageCache.pendingRouteSettings[vesselId];
+            markDirty('pendingRouteSettings');
             log('Deleted pending route settings for ' + vessel.name);
         }
     }
@@ -361,9 +512,13 @@
     // PRICE CHANGE TRACKING
     // ============================================
     function savePriceChangedAt(vesselId, timestamp) {
-        var storage = getStorage();
-        storage.priceChangedAt[vesselId] = timestamp;
-        saveStorage(storage);
+        if (!dbConnectionVerified) {
+            console.error('[Depart Manager] BLOCKED SAVE: DB connection not verified');
+            return;
+        }
+        if (!storageCache.priceChangedAt) storageCache.priceChangedAt = {};
+        storageCache.priceChangedAt[vesselId] = timestamp;
+        markDirty('priceChangedAt');
     }
 
     function getPriceChangedAt(vesselId) {
@@ -973,10 +1128,6 @@
 
             var departInfo = data.data.depart_info;
 
-            // Copy full API response but exclude vessel_history
-            var fullData = JSON.parse(JSON.stringify(data.data));
-            delete fullData.vessel_history;
-
             return {
                 success: true,
                 income: departInfo.depart_income,
@@ -984,8 +1135,11 @@
                 channelFee: departInfo.channel_payment,
                 fuelUsed: departInfo.fuel_usage / 1000,
                 co2Used: departInfo.co2_emission / 1000,
-                // Complete API response (without vessel_history)
-                fullApiResponse: fullData
+                teuDry: departInfo.teu_dry,
+                teuRef: departInfo.teu_refrigerated,
+                crudeOil: departInfo.crude_oil,
+                fuelCargo: departInfo.fuel,
+                guardFee: departInfo.guard_payment
             };
         } catch (e) {
             log('departVesselAPI failed: ' + e.message, 'error');
@@ -1138,7 +1292,7 @@
 
             // 4. Save to DB - only on successful depart
             if (departResult.success) {
-                await saveDepartLog({
+                saveDepartLog({
                     timestamp: Date.now(),
                     date: new Date().toISOString().split('T')[0],
                     vesselId: vessel.id,
@@ -1548,80 +1702,71 @@
 
     // Update depart button text based on autoDepartRunning state
     function updateDepartButtonText() {
-        var settings = getSettings();
-        if (!settings.contributionTrackingEnabled) return;
+        enforceDepartButtonState();
+    }
 
+    // Dedicated observer on the depart button - catches characterData changes from Vue
+    var departBtnObserver = null;
+    var departBtnObservedElement = null;
+
+    function watchDepartButton(btn) {
+        if (departBtnObserver && departBtnObservedElement === btn) return;
+        if (departBtnObserver) departBtnObserver.disconnect();
+        departBtnObserver = new MutationObserver(function() {
+            enforceDepartButtonState();
+        });
+        departBtnObserver.observe(btn, { childList: true, subtree: true, characterData: true });
+        departBtnObservedElement = btn;
+    }
+
+    // Ensure depart button always shows correct text/state - survives Vue rerenders
+    function enforceDepartButtonState() {
         var btn = document.getElementById('depart-all-btn');
-        if (!btn || !btn.dataset.dmHooked) return;
+        if (!btn) {
+            if (departBtnObserver) { departBtnObserver.disconnect(); departBtnObserver = null; departBtnObservedElement = null; }
+            return;
+        }
 
         var btnContent = btn.querySelector('.btn-content-wrapper');
         if (!btnContent) return;
 
-        if (autoDepartRunning) {
-            btnContent.textContent = 'Departing...';
-            btn.disabled = true;
-        } else {
-            btnContent.textContent = 'Rebel Depart all';
-            btn.disabled = false;
+        var expectedText = autoDepartRunning ? 'Departing...' : 'Rebel Depart all';
+        if (btnContent.textContent !== expectedText) {
+            // Disconnect before our change to avoid self-triggering loop
+            if (departBtnObserver) departBtnObserver.disconnect();
+            btnContent.textContent = expectedText;
+            if (departBtnObserver) departBtnObserver.observe(btn, { childList: true, subtree: true, characterData: true });
         }
+        btn.disabled = autoDepartRunning;
+        // Ensure dedicated observer is attached (covers new/replaced button elements)
+        watchDepartButton(btn);
     }
 
-    // Prevent game from overwriting button text
-    function watchDepartButtonText() {
-        var settings = getSettings();
-        if (!settings.contributionTrackingEnabled) return;
+    // Event delegation: click handler on stable parent, not on button directly
+    var departClickDelegated = false;
 
-        var btn = document.getElementById('depart-all-btn');
-        if (!btn || !btn.dataset.dmHooked) return;
+    function setupDepartClickDelegation() {
+        if (departClickDelegated) return;
 
-        var btnContent = btn.querySelector('.btn-content-wrapper');
-        if (!btnContent || btnContent.dataset.dmWatched) return;
+        // Find a stable parent that won't be replaced by Vue
+        var container = document.getElementById('app') || document.body;
+        departClickDelegated = true;
 
-        btnContent.dataset.dmWatched = 'true';
+        var departHandler = async function(e) {
+            // Walk up from click target to find depart-all-btn
+            var btn = e.target.closest('#depart-all-btn');
+            if (!btn) return;
 
-        var observer = new MutationObserver(function() {
-            var expectedText = autoDepartRunning ? 'Departing...' : 'Rebel Depart all';
-            if (btnContent.textContent !== expectedText) {
-                btnContent.textContent = expectedText;
-            }
-        });
-
-        observer.observe(btnContent, { childList: true, characterData: true, subtree: true });
-    }
-
-    // Hook depart-all button - change text and intercept clicks
-    function uiHookDepartAllButton() {
-        var settings = getSettings();
-        if (!settings.contributionTrackingEnabled) return;
-
-        var btn = document.getElementById('depart-all-btn');
-        if (!btn || btn.dataset.dmHooked) return;
-
-        // Mark as hooked
-        btn.dataset.dmHooked = 'true';
-
-        // Change button text based on current state
-        var btnContent = btn.querySelector('.btn-content-wrapper');
-        if (btnContent) {
-            btnContent.textContent = autoDepartRunning ? 'Departing...' : 'Rebel Depart all';
-        }
-        if (autoDepartRunning) btn.disabled = true;
-
-        // Watch for game trying to change button text
-        watchDepartButtonText();
-
-        // Intercept clicks with capture phase (runs before Vue handlers)
-        btn.addEventListener('click', async function(e) {
             e.preventDefault();
             e.stopPropagation();
             e.stopImmediatePropagation();
 
             if (autoDepartRunning) {
-                log('Depart already running, ignoring click');
+                log('Depart already running, ignoring ' + e.type);
                 return;
             }
 
-            log('Rebel Depart all clicked - starting single-ship departures');
+            log('Rebel Depart all ' + e.type + ' - starting single-ship departures');
 
             try {
                 var result = await autoDepartVessels(true);
@@ -1629,28 +1774,33 @@
             } catch (err) {
                 log('Rebel Depart all error: ' + err.message, 'error');
             }
-        }, true);  // capture: true
+        };
 
-        log('Hooked depart-all-btn -> Rebel Depart all');
+        container.addEventListener('click', departHandler, true);
+
+        log('Depart click delegation set up on #app');
+    }
+
+    // Hook depart-all button - just set text, click handled via delegation
+    function uiHookDepartAllButton() {
+        setupDepartClickDelegation();
+        enforceDepartButtonState();
     }
 
     var uiObserver = null;
     var uiObserverTimer = null;
     var uiModalClosed = false;
     var uiNeedsRun = false;
-    var uiNeedsHookDepart = false;
 
     function startUIObserver() {
         if (uiObserver) return;
 
         setTimeout(uiMainLoop, 1500);
 
-        // Track IDs we care about for settings button detection
-        var uiNeedsSettingsCheck = false;
-
         uiObserver = new window.MutationObserver(function(mutations) {
             // Lightweight pass: only check classList/id on direct added/removed nodes
             // NO querySelector calls inside this callback
+            var departBtnDirty = false;
             for (var m = 0; m < mutations.length; m++) {
                 var mutation = mutations[m];
                 var removed = mutation.removedNodes;
@@ -1660,6 +1810,14 @@
                     if (rn.id === 'modal-container') {
                         uiModalClosed = true;
                     }
+                }
+                // Check if mutation target IS the depart button or inside it
+                // (catches Vue replacing inner content without replacing the button itself)
+                if (!departBtnDirty && mutation.target.id === 'depart-all-btn') {
+                    departBtnDirty = true;
+                }
+                if (!departBtnDirty && mutation.target.parentElement && mutation.target.parentElement.id === 'depart-all-btn') {
+                    departBtnDirty = true;
                 }
                 var added = mutation.addedNodes;
                 for (var a = 0; a < added.length; a++) {
@@ -1676,14 +1834,15 @@
                             uiNeedsRun = true;
                         }
                     }
+                    // Full button replacement by Vue
                     if (node.id === 'depart-all-btn') {
-                        uiNeedsHookDepart = true;
-                    }
-                    // Flag for settings button check - NO querySelector here
-                    if (node.id === 'bottom-nav' || node.id === 'assigned-page-btn') {
-                        uiNeedsSettingsCheck = true;
+                        departBtnDirty = true;
                     }
                 }
+            }
+            // Depart button: enforce immediately, no debounce
+            if (departBtnDirty) {
+                enforceDepartButtonState();
             }
 
             // Debounced processing - batch all mutations into one callback (300ms)
@@ -1695,12 +1854,8 @@
                         uiCurrentAutoPrice = null;
                         uiCreateRouteBasePrices = null;
                         uiClearPriceDiffBadges();
+                        rsSettingsTabAdded = false;
                         uiModalClosed = false;
-                    }
-
-                    if (uiNeedsHookDepart) {
-                        uiHookDepartAllButton();
-                        uiNeedsHookDepart = false;
                     }
 
                     if (uiNeedsRun) {
@@ -1709,14 +1864,16 @@
                         uiNeedsRun = false;
                     }
 
-                    // Check for settings tab (deferred from mutation callback)
-                    if (uiNeedsSettingsCheck) {
-                        uiNeedsSettingsCheck = false;
-                        var bottomNav = document.getElementById('bottom-nav');
-                        var hasAssigned = bottomNav && bottomNav.querySelector('#assigned-page-btn');
-                        if (hasAssigned && !rsSettingsTabAdded) rsAddSettingsButton();
-                        if (!hasAssigned && rsSettingsTabAdded) rsSettingsTabAdded = false;
-                    }
+                    // Depart button: enforce after DOM settles (catches tab switches
+                    // where button is nested inside a larger added subtree)
+                    enforceDepartButtonState();
+
+                    // Check for settings tab - always check, bottom-nav is nested
+                    // deep inside modal subtree and never appears as direct addedNode
+                    var bottomNav = document.getElementById('bottom-nav');
+                    var hasAssigned = bottomNav && bottomNav.querySelector('#assigned-page-btn');
+                    if (hasAssigned && !rsSettingsTabAdded) rsAddSettingsButton();
+                    if (!hasAssigned && rsSettingsTabAdded) rsSettingsTabAdded = false;
                 }, 300);
             }
         });
@@ -1736,23 +1893,30 @@
         var urlStr = typeof url === 'string' ? url : url.toString();
 
         // ============================================
-        // INTERCEPT DEPART-ALL: Replace with single-ship iteration (only if contribution tracking enabled)
+        // ALWAYS block depart-all via fetch — NEVER let it through to server
         // ============================================
-        if (urlStr.includes('/route/depart-all') && getSettings().contributionTrackingEnabled) {
-            log('Intercepted depart-all - replacing with single-ship departures');
+        if (urlStr.includes('/route/depart-all')) {
+            log('FETCH BLOCKED depart-all — replacing with single-ship departures');
 
-            // Run autoDepartVessels with manual=true (does utilization checks + tracking)
-            var result = await autoDepartVessels(true);
-
-            // Return fake successful response so game UI doesn't break
-            var fakeResponse = {
-                data: {
-                    departed_count: result.departed || 0,
-                    message: 'Departed ' + (result.departed || 0) + ' vessels via single-ship mode'
+            // Fire-and-forget: run single-ship departures, but NEVER let errors leak
+            var departedCount = 0;
+            try {
+                if (!autoDepartRunning) {
+                    var result = await autoDepartVessels(true);
+                    departedCount = result.departed || 0;
+                    log('Fetch depart-all replaced: ' + departedCount + ' vessels departed');
                 }
-            };
+            } catch (err) {
+                log('Fetch depart-all autoDepartVessels error: ' + (err.message || err), 'error');
+            }
 
-            return new window.Response(JSON.stringify(fakeResponse), {
+            // ALWAYS return fake successful response — never let original fetch run
+            return new window.Response(JSON.stringify({
+                data: {
+                    departed_count: departedCount,
+                    message: 'Departed ' + departedCount + ' vessels via single-ship mode'
+                }
+            }), {
                 status: 200,
                 headers: { 'Content-Type': 'application/json' }
             });
@@ -1805,7 +1969,7 @@
                     var cBefore = singleDepartContext.contribBefore;
                     var cAfter = contribAfterSingle;
 
-                    await saveDepartLog({
+                    saveDepartLog({
                         timestamp: Date.now(),
                         date: new Date().toISOString().split('T')[0],
                         vesselId: singleDepartContext.vesselId,
@@ -1827,7 +1991,11 @@
                             channelFee: departInfo.channel_payment,
                             fuelUsed: departInfo.fuel_usage / 1000,
                             co2Used: departInfo.co2_emission / 1000,
-                            fullDepartInfo: departInfo
+                            teuDry: departInfo.teu_dry,
+                            teuRef: departInfo.teu_refrigerated,
+                            crudeOil: departInfo.crude_oil,
+                            fuelCargo: departInfo.fuel,
+                            guardFee: departInfo.guard_payment
                         },
                         triggerType: 'single'
                     });
@@ -1901,6 +2069,47 @@
         var xhr = this;
         var urlStr = xhr._dmUrl || '';
 
+        // ALWAYS block depart-all via XHR — NEVER let it through to server
+        if (urlStr.includes('/route/depart-all')) {
+            log('XHR BLOCKED depart-all — simulating success response');
+
+            // Fire-and-forget: run single-ship departures
+            if (!autoDepartRunning) {
+                try {
+                    autoDepartVessels(true).then(function(result) {
+                        log('XHR depart-all replaced: ' + (result.departed || 0) + ' vessels departed');
+                    }).catch(function(err) {
+                        log('XHR depart-all autoDepartVessels error: ' + (err.message || err), 'error');
+                    });
+                } catch (err) {
+                    log('XHR depart-all sync error: ' + (err.message || err), 'error');
+                }
+            }
+
+            // Simulate a proper XHR response so the game's callbacks fire with valid data
+            var fakeResponseData = JSON.stringify({
+                data: { departed_count: 0, message: 'Handled by Rebel single-ship mode' }
+            });
+            Object.defineProperty(xhr, 'readyState', { writable: true, value: 4 });
+            Object.defineProperty(xhr, 'status', { writable: true, value: 200 });
+            Object.defineProperty(xhr, 'statusText', { writable: true, value: 'OK' });
+            Object.defineProperty(xhr, 'responseText', { writable: true, value: fakeResponseData });
+            Object.defineProperty(xhr, 'response', { writable: true, value: fakeResponseData });
+
+            // Fire XHR lifecycle events so game callbacks execute with our fake data
+            setTimeout(function() {
+                try {
+                    xhr.dispatchEvent(new Event('readystatechange'));
+                    xhr.dispatchEvent(new Event('load'));
+                    xhr.dispatchEvent(new Event('loadend'));
+                } catch (err) {
+                    log('XHR fake event dispatch error: ' + (err.message || err), 'error');
+                }
+            }, 10);
+
+            return; // NEVER call originalXHRSend
+        }
+
         // Intercept depart calls (single and depart-all)
         if (urlStr.includes('/route/depart')) {
             var isAll = urlStr.includes('/route/depart-all');
@@ -1963,7 +2172,7 @@
                                     } catch { /* ignore */ }
                                 }
 
-                                await saveDepartLog({
+                                saveDepartLog({
                                     timestamp: Date.now(),
                                     date: new Date().toISOString().split('T')[0],
                                     vesselId: vesselId,
@@ -1986,14 +2195,18 @@
                                         channelFee: departInfo.channel_payment,
                                         fuelUsed: departInfo.fuel_usage / 1000,
                                         co2Used: departInfo.co2_emission / 1000,
-                                        fullDepartInfo: departInfo
+                                        teuDry: departInfo.teu_dry,
+                                        teuRef: departInfo.teu_refrigerated,
+                                        crudeOil: departInfo.crude_oil,
+                                        fuelCargo: departInfo.fuel,
+                                        guardFee: departInfo.guard_payment
                                     },
                                     triggerType: 'manual'
                                 });
                                 log('XHR depart logged: ' + (departedVessel ? departedVessel.name : 'Vessel ' + vesselId));
                             } else if (needsAllTracking) {
                                 // Depart-all via XHR - log aggregate entry
-                                await saveDepartLog({
+                                saveDepartLog({
                                     timestamp: Date.now(),
                                     date: new Date().toISOString().split('T')[0],
                                     vesselId: null,
@@ -2016,7 +2229,11 @@
                                         channelFee: departInfo.channel_payment,
                                         fuelUsed: departInfo.fuel_usage / 1000,
                                         co2Used: departInfo.co2_emission / 1000,
-                                        fullDepartInfo: departInfo
+                                        teuDry: departInfo.teu_dry,
+                                        teuRef: departInfo.teu_refrigerated,
+                                        crudeOil: departInfo.crude_oil,
+                                        fuelCargo: departInfo.fuel,
+                                        guardFee: departInfo.guard_payment
                                     },
                                     triggerType: 'manual'
                                 });
@@ -2159,8 +2376,8 @@
     }
 
     async function cleanupStalePendingSettings() {
-        var storage = getStorage();
-        var pendingIds = Object.keys(storage.pendingRouteSettings);
+        if (!storageCache || !storageCache.pendingRouteSettings) return;
+        var pendingIds = Object.keys(storageCache.pendingRouteSettings);
         if (pendingIds.length === 0) return;
 
         var vessels = await fetchVesselData();
@@ -2173,16 +2390,16 @@
             var pendingKey = pendingIds[i];
             var vesselId = parseInt(pendingKey);
             var vessel = vesselMap.get(vesselId);
-            var pending = storage.pendingRouteSettings[pendingKey];
+            var pending = storageCache.pendingRouteSettings[pendingKey];
 
             if (!pending) {
-                delete storage.pendingRouteSettings[pendingKey];
+                delete storageCache.pendingRouteSettings[pendingKey];
                 removed++;
                 continue;
             }
 
             if (!vessel || !vessel.route_origin || !vessel.route_destination) {
-                delete storage.pendingRouteSettings[pendingKey];
+                delete storageCache.pendingRouteSettings[pendingKey];
                 removed++;
                 continue;
             }
@@ -2198,13 +2415,13 @@
             }
 
             if (speedMatch && guardsMatch && pricesMatch) {
-                delete storage.pendingRouteSettings[pendingKey];
+                delete storageCache.pendingRouteSettings[pendingKey];
                 removed++;
             }
         }
 
         if (removed > 0) {
-            saveStorage(storage);
+            markDirty('pendingRouteSettings');
         }
     }
 
@@ -2212,8 +2429,8 @@
     // DRYDOCK VESSEL RESTORE (fallback for auto-drydock)
     // ============================================
     async function restoreDrydockVessels(vessels) {
-        var storage = getStorage();
-        var drydockIds = Object.keys(storage.drydockVessels);
+        if (!storageCache || !storageCache.drydockVessels) return;
+        var drydockIds = Object.keys(storageCache.drydockVessels);
         if (drydockIds.length === 0) return;
 
         var vesselMap = new Map(vessels.map(function(v) { return [v.id, v]; }));
@@ -2221,7 +2438,7 @@
 
         for (var i = 0; i < drydockIds.length; i++) {
             var vesselId = parseInt(drydockIds[i]);
-            var entry = storage.drydockVessels[drydockIds[i]];
+            var entry = storageCache.drydockVessels[drydockIds[i]];
             var vessel = vesselMap.get(vesselId);
             if (!entry || !vessel) continue;
 
@@ -2235,7 +2452,7 @@
 
                 if (currentHours > savedHours) {
                     log(entry.name + ': Drydock complete (hours: ' + savedHours + ' -> ' + currentHours + ')');
-                    storage.drydockVessels[drydockIds[i]].status = 'past_drydock';
+                    storageCache.drydockVessels[drydockIds[i]].status = 'past_drydock';
                     changed = true;
                 }
             } else if (entry.status === 'past_drydock') {
@@ -2248,7 +2465,7 @@
 
                     if (!needsRestore) {
                         log(entry.name + ': Drydock settings already match');
-                        delete storage.drydockVessels[drydockIds[i]];
+                        delete storageCache.drydockVessels[drydockIds[i]];
                         changed = true;
                         continue;
                     }
@@ -2258,7 +2475,7 @@
                     if (success) {
                         log(entry.name + ': Drydock settings restored');
                         notify('Restored drydock settings for ' + entry.name, 'success');
-                        delete storage.drydockVessels[drydockIds[i]];
+                        delete storageCache.drydockVessels[drydockIds[i]];
                         changed = true;
                     }
                 }
@@ -2266,7 +2483,7 @@
         }
 
         if (changed) {
-            saveStorage(storage);
+            markDirty('drydockVessels');
         }
     }
 
@@ -2735,6 +2952,7 @@
             if (manual) notify('Error: ' + e.message, 'error');
             return { departed: 0 };
         } finally {
+            await flushDepartLogs();
             autoDepartRunning = false;
             updateDepartButtonText();
         }
@@ -3363,7 +3581,8 @@
                 modalCloseObserver.disconnect();
             }
         });
-        modalCloseObserver.observe(document.body, { childList: true, subtree: true });
+        var modalContainer = document.getElementById('modal-container') || document.getElementById('app') || document.body;
+        modalCloseObserver.observe(modalContainer, { childList: true, subtree: true });
 
         var style = document.createElement('style');
         style.textContent = '#rs-settings-container{width:100%;height:100%;display:flex;flex-direction:column;background:#f5f5f5;color:#01125d;font-family:Lato,sans-serif;font-size:11px}.rs-header{display:flex;align-items:center;gap:4px;padding:4px 6px;background:#e8e8e8;border-bottom:1px solid #ccc}.rs-subtab{padding:3px 8px;background:#fff;color:#01125d;border:1px solid #ccc;border-radius:3px;cursor:pointer;font-size:10px;font-weight:600}.rs-subtab:hover{background:#ddd}.rs-subtab.active{background:#0db8f4;color:#fff;border-color:#0db8f4}.rs-save-btn{margin-left:auto;padding:3px 10px;background:#22c55e;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:10px;font-weight:600;opacity:0.4}.rs-save-btn.has-changes{opacity:1}.rs-status{font-size:9px;color:#666;margin-left:6px}.rs-table-wrapper{flex:1;overflow:auto}.rs-table{width:100%;border-collapse:collapse;font-size:10px}.rs-table thead{position:sticky;top:0;background:#e0e0e0;z-index:1}.rs-table th{padding:1px;text-align:center;font-weight:600;color:#01125d;border-bottom:1px solid #ccc;white-space:nowrap;background:#e0e0e0;font-size:10px}.rs-table td{padding:1px;border-bottom:1px solid #ddd;vertical-align:middle;text-align:center}.rs-table td.route-cell,.rs-table td.name-cell{text-align:left}.rs-table td.max-speed,.rs-table td.auto-price,.rs-table td.pct-diff{color:#666;font-size:9px}.rs-table tr:hover{background:#e8f4fc}.rs-table .warning{color:#d97706}.rs-table .status-cell{width:22px;text-align:center;padding:1px}.rs-table .status-icon{display:inline-block;height:14px;line-height:14px;text-align:center;font-size:8px;font-weight:700;border-radius:2px;padding:0 2px}.rs-table .status-icon.status-e{background:#3b82f6;color:#fff}.rs-table .status-icon.status-p{background:#22c55e;color:#fff}.rs-table .status-icon.status-a{background:#f59e0b;color:#fff}.rs-table .status-icon.status-mp,.rs-table .status-icon.status-me{background:#8b5cf6;color:#fff}.rs-table .status-icon.status-m{background:#ef4444;color:#fff}.rs-table .status-icon.status-d{background:#6366f1;color:#fff}.rs-table .status-icon.status-td{background:#f97316;color:#fff}.rs-table .status-icon.status-fd{background:#14b8a6;color:#fff}.rs-table .status-icon.status-eo{background:#1d4ed8;color:#fff}.rs-table .status-icon.status-er{background:#0891b2;color:#fff}.rs-table .status-icon.status-bu{background:#dc2626;color:#fff}.rs-table .route-cell{font-size:9px;white-space:nowrap}.rs-table .name-cell{max-width:60px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;cursor:pointer}.rs-table .name-cell:hover{text-decoration:underline}.rs-table input[type="number"]{width:32px;padding:1px 2px;margin:0;background:#fff;border:1px solid #ccc;border-radius:2px;color:#01125d;font-size:10px;text-align:right;box-sizing:border-box;-moz-appearance:textfield}.rs-table input.speed-input{width:24px}.rs-table .pct-positive{color:#22c55e}.rs-table .pct-negative{color:#ef4444}.rs-table input[type="number"]::-webkit-outer-spin-button,.rs-table input[type="number"]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}.rs-table input[type="number"]:focus{outline:none;border-color:#0db8f4}.rs-table input.changed{background:#fef3c7;border-color:#f59e0b}.rs-table select{padding:1px 2px;background:#fff;border:1px solid #ccc;border-radius:2px;color:#01125d;font-size:10px;cursor:pointer}.rs-table select:focus{outline:none;border-color:#0db8f4}.rs-table select.changed{background:#fef3c7;border-color:#f59e0b}.rs-loading,.rs-error,.rs-no-data{padding:20px;text-align:center;color:#666}.rs-table .pending-indicator{display:inline;font-size:9px;color:#8b5cf6;font-weight:600;margin-left:2px}.rs-table th[data-tip]{position:relative;cursor:help}.rs-table th[data-tip]:hover::after{content:attr(data-tip);position:absolute;top:100%;left:50%;transform:translateX(-50%);background:#333;color:#fff;padding:6px 10px;border-radius:4px;font-size:10px;font-weight:400;white-space:pre-line;z-index:100;min-width:100px;max-width:180px;text-align:left;box-shadow:0 2px 8px rgba(0,0,0,0.3);margin-top:4px}.rs-table th[data-tip]:nth-child(-n+3):hover::after{left:0;transform:translateX(0)}.rs-table th[data-tip]:nth-last-child(-n+5):hover::after{left:auto;right:0;transform:translateX(0)}.rs-footer{position:fixed;bottom:73px;left:0;right:0;max-width:460px;margin:0 auto;padding:6px 4px;text-align:center;background:#e8e8e8;border-top:1px solid #ccc;z-index:9999}.rs-footer a{color:#5865F2;font-size:14px;font-weight:700;text-decoration:underline}';
@@ -3856,7 +4075,7 @@
                     systemNotifications: false
                 };
 
-                await saveSettings(newSettings);
+                saveSettings(newSettings);
                 notify('Settings saved');
                 closeDMSettingsModal();
             });
@@ -4109,6 +4328,9 @@
             saveLastCheckTime();
             log('Periodic check completed');
         } finally {
+            // Flush any debounced storage writes from this cycle
+            if (storageSaveTimer) { clearTimeout(storageSaveTimer); storageSaveTimer = null; }
+            await flushStorageToDB();
             clearCycleCache();
         }
     }
@@ -4179,6 +4401,25 @@
             // If this fails, script MUST NOT continue - would overwrite settings with defaults
             await loadStorage();
 
+            // Expose shared storage API for cross-script access (smugglers-eye, auto-drydock)
+            // Eliminates race conditions: all reads from RAM, writes through debounced save
+            window._rebelshipDMStorage = {
+                isReady: function() { return storageCache !== null && dbConnectionVerified; },
+                get: function() { return storageCache; },
+                save: function(storage) { saveStorage(storage); },
+                getCategory: function(cat) { return storageCache ? (storageCache[cat] || {}) : {}; },
+                saveCategory: function(cat, data) {
+                    if (!dbConnectionVerified || !storageCache) return;
+                    storageCache[cat] = data;
+                    markDirty(cat);
+                },
+                getAutoPriceCache: function() { return autoPriceCacheData; },
+                saveAutoPriceCache: function(cache) {
+                    autoPriceCacheData = cache;
+                    dbSet('autoPriceCache', cache);
+                }
+            };
+
             requestNotificationPermission();
             rsWatchRoutesModal();
             setupDMModalWatcher();
@@ -4186,6 +4427,40 @@
             startUtilMarkerObserver();
 
             setTimeout(cleanupStalePendingSettings, 3000);
+
+            // Recover storage backup from localStorage (crash recovery)
+            var storageBackup = localStorage.getItem('dm_storageBackup');
+            if (storageBackup) {
+                try {
+                    var backupData = JSON.parse(storageBackup);
+                    storageCache = backupData;
+                    for (var ci = 0; ci < STORAGE_CATEGORIES.length; ci++) {
+                        dirtyCategories[STORAGE_CATEGORIES[ci]] = true;
+                    }
+                    await flushStorageToDB();
+                    log('Recovered storage backup from crash');
+                } catch (e) {
+                    log('Storage backup recovery failed: ' + e.message, 'warn');
+                }
+                localStorage.removeItem('dm_storageBackup');
+            }
+
+            // Recover pending depart logs from localStorage (crash recovery)
+            var recoveredLogs = localStorage.getItem('dm_pendingLogs');
+            if (recoveredLogs) {
+                try {
+                    pendingDepartLogs = JSON.parse(recoveredLogs);
+                    await flushDepartLogs();
+                } catch {
+                    localStorage.removeItem('dm_pendingLogs');
+                }
+            }
+
+            // One-time migration: strip fullApiResponse/fullDepartInfo from old logs
+            await migrateDepartLogsSlim();
+
+            // Run depart log cleanup once (7-day rotation)
+            cleanupDepartLogs();
 
             // Initialize auto-price cache in background - don't block UI
             initAutoPriceCache().catch(function(e) {
@@ -4221,6 +4496,21 @@
     } else {
         init();
     }
+
+    // Crash backup: save dirty storage to localStorage before page unload
+    window.addEventListener('beforeunload', function() {
+        var anyDirty = false;
+        for (var cat in dirtyCategories) {
+            if (dirtyCategories[cat]) { anyDirty = true; break; }
+        }
+        if (anyDirty && storageCache) {
+            try {
+                localStorage.setItem('dm_storageBackup', JSON.stringify(storageCache));
+            } catch { /* localStorage full - best effort */ }
+        }
+        if (storageSaveTimer) { clearTimeout(storageSaveTimer); storageSaveTimer = null; }
+        if (monitoringInterval) { clearInterval(monitoringInterval); monitoringInterval = null; }
+    });
 
     // Register for background job system
     window.rebelshipBackgroundJobs = window.rebelshipBackgroundJobs || [];

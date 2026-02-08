@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Auto Repair
 // @namespace    https://rebelship.org/
-// @version      2.43
+// @version      2.44
 // @description  Auto-repair vessels when wear reaches threshold
 // @author       https://github.com/justonlyforyou/
 // @order        7

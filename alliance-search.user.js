@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Open Alliance Search
 // @description Search all open alliances
-// @version     3.49
+// @version     3.54
 // @author      https://github.com/justonlyforyou/
 // @order        1
 // @match       https://shippingmanager.cc/*
@@ -30,6 +30,7 @@
     var displayedCount = 0;
     var isLoadingMore = false;
     var isAllianceSearchModalOpen = false;
+    var modalOpenedAt = 0;
     var modalListenerAttached = false;
     var cachedAlliances = null; // In-memory cache to avoid storage reads on every filter
 
@@ -176,12 +177,11 @@
         }
     }
 
-    // Save download progress (async)
-    async function saveDownloadProgress(offset, alliances) {
+    // Save download progress (async) - only offset, alliances stay in memory
+    async function saveDownloadProgress(offset) {
         try {
             await dbSet(STORAGE_PROGRESS_KEY, {
                 offset: offset,
-                alliances: alliances,
                 timestamp: Date.now()
             });
         } catch (e) {
@@ -216,9 +216,21 @@
     }
 
     // Check if index is ready (async)
+    var STALE_PROGRESS_MS = 5 * 60 * 1000; // 5 minutes
+
     async function checkIndexReady() {
         var meta = await getStorageMeta();
         var progress = await getDownloadProgress();
+
+        // Clean up stale progress from interrupted downloads
+        if (progress && !isDownloading) {
+            var progressAge = Date.now() - (progress.timestamp || 0);
+            if (progressAge > STALE_PROGRESS_MS) {
+                console.log('[AllianceSearch] Clearing stale progress (' + Math.round(progressAge / 60000) + ' min old)');
+                await clearDownloadProgress();
+                progress = null;
+            }
+        }
 
         isIndexReady = meta && meta.count > 0 && !progress;
         return isIndexReady;
@@ -266,13 +278,15 @@
         updateDialogState();
 
         var progress = forceRestart ? null : await getDownloadProgress();
-        var allAlliances = progress ? progress.alliances : [];
         var offset = progress ? progress.offset : 0;
+        var allAlliances = [];
         var limit = 50;
         var page = Math.floor(offset / limit) + 1;
 
         if (progress) {
-            console.log('[AllianceSearch] Resuming download from offset', offset, 'with', allAlliances.length, 'alliances');
+            // Load previously saved alliances from main storage to resume
+            allAlliances = await getStoredAlliances();
+            console.log('[AllianceSearch] Resuming download from offset', offset, 'with', allAlliances.length, 'alliances from DB');
         } else {
             console.log('[AllianceSearch] Starting fresh alliance download...');
         }
@@ -325,8 +339,8 @@
                 offset += limit;
                 page++;
 
-                // Save progress every page instead of every 10 pages
-                await saveDownloadProgress(offset, allAlliances);
+                // Save offset for crash recovery (alliances stay in memory until final save)
+                await saveDownloadProgress(offset);
 
                 await new Promise(function(r) { setTimeout(r, 200); });
             }
@@ -341,7 +355,7 @@
 
         } catch (e) {
             console.error('[AllianceSearch] Download error:', e);
-            await saveDownloadProgress(offset, allAlliances);
+            await saveDownloadProgress(offset);
             updateIndexingStatus(-1, 0, e.message);
         } finally {
             isDownloading = false;
@@ -373,7 +387,9 @@
         }
         var alliances = cachedAlliances;
 
-        var filtered = alliances;
+        // Always work on a copy — never return the cachedAlliances reference
+        // (doSearch clears currentResults.length which would destroy the cache)
+        var filtered = alliances.slice();
 
         // Text search first (creates smallest result set, then numeric filters)
         if (query && query.length >= 2) {
@@ -403,13 +419,16 @@
     // Open alliance search dialog (custom overlay, not game modal)
     async function openAllianceSearchModal() {
         console.log('[AllianceSearch] Opening custom dialog');
-        isAllianceSearchModalOpen = true;
-        window.RebelShipModalRegistry.register(SCRIPT_NAME);
 
-        // Load alliances into cache when modal opens (if not already loaded)
+        // Load alliances into cache BEFORE setting modal flag
+        // (rebelship-menu-click fires during await and would close the modal immediately)
         if (!cachedAlliances) {
             cachedAlliances = await getStoredAlliances();
         }
+
+        isAllianceSearchModalOpen = true;
+        modalOpenedAt = Date.now();
+        window.RebelShipModalRegistry.register(SCRIPT_NAME);
 
         showDialog();
     }
@@ -435,8 +454,9 @@
         modalListenerAttached = true;
 
         // Listen for RebelShip menu clicks to close our dialog
+        // (but not when our own menu item just opened it — timing guard prevents race condition)
         window.addEventListener('rebelship-menu-click', function() {
-            if (isAllianceSearchModalOpen) {
+            if (isAllianceSearchModalOpen && (Date.now() - modalOpenedAt > 500)) {
                 console.log('[AllianceSearch] RebelShip menu clicked, closing dialog');
                 closeAllianceSearchModal();
             }
@@ -518,6 +538,7 @@
             if (contentCheck) {
                 existing.classList.remove('hide');
                 isAllianceSearchModalOpen = true;
+                modalOpenedAt = Date.now();
                 window.RebelShipModalRegistry.register(SCRIPT_NAME);
                 updateDialogState();
                 return;
@@ -698,8 +719,6 @@
             var minContrib = parseInt(minContribInput.value) || 0;
             var minDep = parseInt(minDeparturesInput.value) || 0;
 
-            // Clear array before reassignment to help GC
-            currentResults.length = 0;
             currentResults = await filterAlliances(query, minMembers, minContrib, minDep);
             displayedCount = 0;
 

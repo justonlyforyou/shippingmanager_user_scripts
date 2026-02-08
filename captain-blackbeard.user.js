@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Captain Blackbeard
 // @namespace    https://rebelship.org/
-// @version      1.22
+// @version      1.23
 // @description  Auto-negotiate hijacked vessels: bid twice at 25%, accept third pirate price
 // @author       https://github.com/justonlyforyou/
 // @order        8

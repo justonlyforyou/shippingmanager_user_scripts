@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Export your messages
 // @description Export all DM's as CSV or JSON
-// @version     1.25
+// @version     1.26
 // @author      https://github.com/justonlyforyou/
 // @order        11
 // @match       https://shippingmanager.cc/*
@@ -14,6 +14,8 @@
 
 (function() {
     'use strict';
+
+    var isAndroid = /Android/i.test(navigator.userAgent);
 
     // Fetch all chats with retry
     function fetchAllChats(maxRetries) {
@@ -119,21 +121,21 @@
         return new Date(timestamp * 1000).toISOString();
     }
 
-    // Download file helper
+    // Download file helper (content can be string or Blob)
     function downloadFile(content, filename, mimeType, messageCount, progressDiv) {
-        var isAndroid = /Android/i.test(navigator.userAgent);
+        var blob = content instanceof Blob ? content : new Blob([content], { type: mimeType });
 
         if (isAndroid && navigator.share) {
-            var file = new File([content], filename, { type: mimeType });
+            var file = new File([blob], filename, { type: mimeType });
             navigator.share({ files: [file], title: filename }).then(function() {
                 progressDiv.innerHTML = 'Exported ' + messageCount + ' messages!';
             }).catch(function() {
-                var dataUrl = 'data:' + mimeType + ';charset=utf-8,' + encodeURIComponent(content);
-                window.open(dataUrl, '_blank');
+                var url = URL.createObjectURL(blob);
+                window.open(url, '_blank');
+                setTimeout(function() { URL.revokeObjectURL(url); }, 5000);
                 progressDiv.innerHTML = 'Exported ' + messageCount + ' messages. Long-press to save.';
             });
         } else {
-            var blob = new Blob([content], { type: mimeType });
             var url = URL.createObjectURL(blob);
             var a = document.createElement('a');
             a.href = url;
@@ -152,6 +154,9 @@
         var dropdown = document.getElementById('rebelship-dropdown');
         if (dropdown) dropdown.style.display = 'none';
 
+        var existing = document.getElementById('export-progress');
+        if (existing) existing.remove();
+
         var progressDiv = document.createElement('div');
         progressDiv.id = 'export-progress';
         progressDiv.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#1f2937;color:#fff;padding:20px 40px;border-radius:8px;z-index:999999;box-shadow:0 4px 20px rgba(0,0,0,0.5);';
@@ -163,23 +168,27 @@
                 var allMessages = [];
                 var processed = 0;
                 var filteredChats = chats.filter(function(chat) { return !chat.system_chat; });
+                var BATCH_SIZE = 5;
 
-                function processNext() {
+                function processBatch() {
                     if (processed >= filteredChats.length) {
                         return Promise.resolve(allMessages);
                     }
 
-                    var chat = filteredChats[processed];
-                    processed++;
-                    progressDiv.innerHTML = 'Loading messages... ' + processed + '/' + filteredChats.length;
+                    var batch = filteredChats.slice(processed, processed + BATCH_SIZE);
+                    var promises = batch.map(function(chat) {
+                        return fetchChatMessages(chat.id).then(function(messages) {
+                            return { chat: chat, messages: messages };
+                        });
+                    });
 
-                    return fetchChatMessages(chat.id)
-                        .then(function(messages) {
-                            messages.forEach(function(msg) {
+                    return Promise.all(promises).then(function(results) {
+                        results.forEach(function(result) {
+                            result.messages.forEach(function(msg) {
                                 allMessages.push({
-                                    chat_id: chat.id,
-                                    participant: chat.participants_string || 'Unknown',
-                                    subject: chat.subject || '',
+                                    chat_id: result.chat.id,
+                                    participant: result.chat.participants_string || 'Unknown',
+                                    subject: result.chat.subject || '',
                                     message_body: msg.body,
                                     is_mine: msg.is_mine,
                                     sender_id: msg.user_id,
@@ -187,12 +196,14 @@
                                     timestamp: msg.created_at
                                 });
                             });
-                            return new Promise(function(r) { setTimeout(r, 100); });
-                        })
-                        .then(processNext);
+                        });
+                        processed += batch.length;
+                        progressDiv.innerHTML = 'Loading messages... ' + processed + '/' + filteredChats.length;
+                        return new Promise(function(r) { setTimeout(r, 100); });
+                    }).then(processBatch);
                 }
 
-                return processNext();
+                return processBatch();
             })
             .then(function(allMessages) {
                 allMessages.sort(function(a, b) { return a.timestamp - b.timestamp; });
@@ -204,23 +215,23 @@
                     filename = 'messages_export_' + new Date().toISOString().slice(0, 10) + '.json';
                     mimeType = 'application/json';
                 } else {
-                    var headers = ['chat_id', 'participant', 'subject', 'is_mine', 'sender_id', 'created_at', 'message_body'];
-                    var csvRows = [headers.join(',')];
+                    var headers = 'chat_id,participant,subject,is_mine,sender_id,created_at,message_body\n';
+                    var chunks = [headers];
 
-                    allMessages.forEach(function(msg) {
-                        var row = [
-                            msg.chat_id,
-                            '"' + (msg.participant || '').replace(/"/g, '""') + '"',
-                            '"' + (msg.subject || '').replace(/"/g, '""') + '"',
-                            msg.is_mine,
-                            msg.sender_id,
-                            msg.created_at,
-                            '"' + (msg.message_body || '').replace(/"/g, '""').replace(/\n/g, '\\n') + '"'
-                        ];
-                        csvRows.push(row.join(','));
-                    });
+                    for (var i = 0; i < allMessages.length; i++) {
+                        var msg = allMessages[i];
+                        chunks.push(
+                            msg.chat_id + ',' +
+                            '"' + (msg.participant || '').replace(/"/g, '""') + '",' +
+                            '"' + (msg.subject || '').replace(/"/g, '""') + '",' +
+                            msg.is_mine + ',' +
+                            msg.sender_id + ',' +
+                            msg.created_at + ',' +
+                            '"' + (msg.message_body || '').replace(/"/g, '""').replace(/\n/g, '\\n') + '"\n'
+                        );
+                    }
 
-                    content = csvRows.join('\n');
+                    content = new Blob(chunks, { type: 'text/csv' });
                     filename = 'messages_export_' + new Date().toISOString().slice(0, 10) + '.csv';
                     mimeType = 'text/csv';
                 }
@@ -238,6 +249,9 @@
     function exportAllianceChat(format) {
         var dropdown = document.getElementById('rebelship-dropdown');
         if (dropdown) dropdown.style.display = 'none';
+
+        var existing = document.getElementById('export-progress');
+        if (existing) existing.remove();
 
         var progressDiv = document.createElement('div');
         progressDiv.id = 'export-progress';

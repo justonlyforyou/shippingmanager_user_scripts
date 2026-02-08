@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Vessel Sell Cart
 // @description Select and bulk-sell vessels with lazy-loaded sell prices
-// @version     1.0
+// @version     1.1
 // @author      https://github.com/justonlyforyou/
 // @order        64
 // @match       https://shippingmanager.cc/*
@@ -46,9 +46,8 @@
     }
 
     function escapeHtml(text) {
-        var div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+        if (typeof text !== 'string') text = String(text);
+        return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
     function formatNumber(num) {
@@ -108,8 +107,8 @@
         });
     }
 
-    // Batch fetch sell prices with delay between requests
-    function fetchSellPrices(vesselIds, onProgress, onDone) {
+    // Batch fetch sell prices with parallel requests (5 per batch)
+    function fetchSellPrices(vesselIds, onEachPrice, onDone) {
         var aborted = false;
         priceFetchAbort = function() { aborted = true; };
 
@@ -120,34 +119,40 @@
         completed = total - toFetch.length;
 
         if (toFetch.length === 0) {
-            if (onProgress) onProgress(total, total);
             if (onDone) onDone();
             return;
         }
 
-        if (onProgress) onProgress(completed, total);
+        var BATCH_SIZE = 5;
+        var batchIdx = 0;
 
-        var idx = 0;
-        function fetchNext() {
-            if (aborted || idx >= toFetch.length) {
+        function fetchBatch() {
+            if (aborted || batchIdx >= toFetch.length) {
                 if (onDone) onDone();
                 return;
             }
 
-            var vesselId = toFetch[idx];
-            idx++;
+            var batch = toFetch.slice(batchIdx, batchIdx + BATCH_SIZE);
+            batchIdx += batch.length;
 
-            fetchSellPrice(vesselId).then(function() {
-                completed++;
-                if (onProgress) onProgress(completed, total);
-            }).finally(function() {
+            var promises = [];
+            for (var i = 0; i < batch.length; i++) {
+                (function(vid) {
+                    promises.push(fetchSellPrice(vid).then(function() {
+                        completed++;
+                        if (onEachPrice) onEachPrice(vid, completed, total);
+                    }));
+                })(batch[i]);
+            }
+
+            Promise.all(promises).then(function() {
                 if (!aborted) {
-                    setTimeout(fetchNext, 500);
+                    setTimeout(fetchBatch, 200);
                 }
             });
         }
 
-        fetchNext();
+        fetchBatch();
     }
 
     // Sell a single vessel
@@ -185,14 +190,29 @@
             return;
         }
 
-        // Sort vessels by name
-        vessels = vessels.slice().sort(function(a, b) {
+        // Sort vessels by name (in-place, no copy needed)
+        vessels.sort(function(a, b) {
             return (a.name || '').localeCompare(b.name || '');
         });
 
+        // Map for O(1) vessel lookup by ID
+        var vesselMap = {};
+        for (var mi = 0; mi < vessels.length; mi++) {
+            var mv = vessels[mi];
+            vesselMap[mv.user_vessel_id || mv.id] = mv;
+        }
+
         var selectedIds = new Set();
         var currentFilter = '';
-        var filteredVessels = vessels;
+        var priceElements = new Map();
+
+        function getFilteredVessels() {
+            if (!currentFilter) return vessels;
+            var q = currentFilter.toLowerCase();
+            return vessels.filter(function(v) {
+                return (v.name || '').toLowerCase().indexOf(q) !== -1;
+            });
+        }
 
         // Build overlay
         var overlay = document.createElement('div');
@@ -248,17 +268,33 @@
         overlay.appendChild(modal);
         document.body.appendChild(overlay);
 
+        var CHECK_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="#fff"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>';
+
+        // Update row visual state without full re-render
+        function updateRowStyle(row, isSelected) {
+            row.style.background = isSelected ? '#2a3348' : '#252b3b';
+            row.style.borderLeftColor = isSelected ? '#ef4444' : 'transparent';
+            var cb = row.firstChild;
+            if (cb) {
+                cb.style.borderColor = isSelected ? '#ef4444' : '#4b5563';
+                cb.style.background = isSelected ? '#ef4444' : 'transparent';
+                cb.innerHTML = isSelected ? CHECK_SVG : '';
+            }
+        }
+
         // Render vessel rows
         function renderList() {
             listContainer.innerHTML = '';
+            priceElements = new Map();
+            var filtered = getFilteredVessels();
 
-            if (filteredVessels.length === 0) {
+            if (filtered.length === 0) {
                 listContainer.innerHTML = '<div style="text-align:center;color:#6b7280;padding:40px 0;font-size:14px;">No vessels match your search</div>';
                 return;
             }
 
-            for (var i = 0; i < filteredVessels.length; i++) {
-                var v = filteredVessels[i];
+            for (var i = 0; i < filtered.length; i++) {
+                var v = filtered[i];
                 var vid = v.user_vessel_id || v.id;
                 var isSelected = selectedIds.has(vid);
                 var cached = priceCache.get(vid);
@@ -269,12 +305,12 @@
                 row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 12px;background:' + (isSelected ? '#2a3348' : '#252b3b') + ';border-radius:6px;margin-bottom:4px;cursor:pointer;border-left:3px solid ' + (isSelected ? '#ef4444' : 'transparent') + ';transition:background 0.15s,border-color 0.15s;';
 
                 var checkbox = '<div style="width:20px;height:20px;border:2px solid ' + (isSelected ? '#ef4444' : '#4b5563') + ';border-radius:4px;display:flex;align-items:center;justify-content:center;flex-shrink:0;background:' + (isSelected ? '#ef4444' : 'transparent') + ';">' +
-                    (isSelected ? '<svg viewBox="0 0 24 24" width="14" height="14" fill="#fff"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>' : '') +
+                    (isSelected ? CHECK_SVG : '') +
                     '</div>';
 
                 var vesselStatus = v.status || '';
                 var statusColor = vesselStatus === 'port' ? '#4ade80' : vesselStatus === 'anchor' ? '#f59e0b' : '#9ca3af';
-                var statusLabel = vesselStatus === 'port' ? 'IN PORT' : vesselStatus === 'anchor' ? 'ANCHORED' : vesselStatus.toUpperCase();
+                var statusLabel = vesselStatus === 'port' ? 'IN PORT' : vesselStatus === 'anchor' ? 'ANCHORED' : escapeHtml(vesselStatus.toUpperCase());
                 var statusText = vesselStatus ? ' <span style="color:' + statusColor + ';font-size:10px;">[' + statusLabel + ']</span>' : '';
 
                 var vesselType = v.capacity_type || v.vessel_model || '';
@@ -287,8 +323,8 @@
                         '<div style="color:#4b5563;font-size:10px;text-decoration:line-through;">$' + formatNumber(cached.original_price) + '</div>' +
                         '</div>';
                 } else {
-                    priceHtml = '<div style="text-align:right;min-width:100px;">' +
-                        '<div style="color:#4b5563;font-size:12px;" class="sell-price-placeholder" data-vid="' + vid + '">...</div>' +
+                    priceHtml = '<div style="text-align:right;min-width:100px;" class="sell-price-container" data-vid="' + vid + '">' +
+                        '<div style="color:#4b5563;font-size:12px;">...</div>' +
                         '</div>';
                 }
 
@@ -299,28 +335,35 @@
                     '</div>' +
                     priceHtml;
 
+                // Store price element ref for direct updates
+                if (!cached) {
+                    var priceContainer = row.querySelector('.sell-price-container');
+                    if (priceContainer) priceElements.set(vid, priceContainer);
+                }
+
                 listContainer.appendChild(row);
             }
-
-            attachRowListeners();
         }
 
-        function attachRowListeners() {
-            var rows = listContainer.querySelectorAll('.sell-vessel-row');
-            rows.forEach(function(row) {
-                row.addEventListener('click', function() {
-                    var vid = parseInt(row.dataset.vid) || row.dataset.vid;
-                    if (selectedIds.has(vid)) {
-                        selectedIds.delete(vid);
-                    } else {
-                        selectedIds.add(vid);
-                    }
-                    renderList();
-                    updateFooter();
-                    updateSellButton();
-                });
-            });
-        }
+        // Event delegation: single click handler on listContainer
+        listContainer.addEventListener('click', function(e) {
+            var row = e.target;
+            while (row && row !== listContainer) {
+                if (row.classList && row.classList.contains('sell-vessel-row')) break;
+                row = row.parentNode;
+            }
+            if (!row || row === listContainer) return;
+            var vid = parseInt(row.dataset.vid) || row.dataset.vid;
+            if (selectedIds.has(vid)) {
+                selectedIds.delete(vid);
+                updateRowStyle(row, false);
+            } else {
+                selectedIds.add(vid);
+                updateRowStyle(row, true);
+            }
+            updateFooter();
+            updateSellButton();
+        });
 
         function updateFooter() {
             var count = selectedIds.size;
@@ -354,14 +397,6 @@
 
         // Filter logic
         function applyFilter() {
-            var q = currentFilter.toLowerCase();
-            if (!q) {
-                filteredVessels = vessels;
-            } else {
-                filteredVessels = vessels.filter(function(v) {
-                    return (v.name || '').toLowerCase().indexOf(q) !== -1;
-                });
-            }
             renderList();
         }
 
@@ -380,10 +415,10 @@
 
         // Select all / none
         controlsBar.querySelector('#sell-select-all').addEventListener('click', function() {
-            filteredVessels.forEach(function(v) {
-                var vid = v.user_vessel_id || v.id;
-                selectedIds.add(vid);
-            });
+            var filtered = getFilteredVessels();
+            for (var si = 0; si < filtered.length; si++) {
+                selectedIds.add(filtered[si].user_vessel_id || filtered[si].id);
+            }
             renderList();
             updateFooter();
             updateSellButton();
@@ -403,40 +438,40 @@
                 priceFetchAbort();
                 priceFetchAbort = null;
             }
+            if (searchTimer) {
+                clearTimeout(searchTimer);
+                searchTimer = null;
+            }
+            priceCache.clear();
             overlay.remove();
         }
 
         header.querySelector('#sell-close-btn').addEventListener('click', closeModal);
         overlay.addEventListener('click', function(e) { if (e.target === overlay) closeModal(); });
 
-        // Sell checkout button
+        // Sell checkout button - uses vesselMap for O(1) lookup
         header.querySelector('#sell-checkout-btn').addEventListener('click', function() {
             if (selectedIds.size === 0) return;
             var toSell = [];
             selectedIds.forEach(function(vid) {
-                for (var i = 0; i < vessels.length; i++) {
-                    var v = vessels[i];
-                    if ((v.user_vessel_id || v.id) === vid) {
-                        toSell.push(v);
-                        break;
-                    }
+                if (vesselMap[vid]) {
+                    toSell.push(vesselMap[vid]);
                 }
             });
             closeModal();
             processSellCheckout(toSell);
         });
 
-        // Update price in a row when it arrives
+        // Update price in a row when it arrives (uses priceElements Map for O(1) lookup)
         function updateRowPrice(vid) {
             var cached = priceCache.get(vid);
             if (!cached) return;
-            var placeholder = listContainer.querySelector('.sell-price-placeholder[data-vid="' + vid + '"]');
-            if (placeholder) {
-                var parent = placeholder.parentNode;
-                parent.innerHTML = '<div style="color:#ef4444;font-weight:500;font-size:13px;">$' + formatNumber(cached.selling_price) + '</div>' +
+            var container = priceElements.get(vid);
+            if (container) {
+                container.innerHTML = '<div style="color:#ef4444;font-weight:500;font-size:13px;">$' + formatNumber(cached.selling_price) + '</div>' +
                     '<div style="color:#4b5563;font-size:10px;text-decoration:line-through;">$' + formatNumber(cached.original_price) + '</div>';
+                priceElements.delete(vid);
             }
-            // Update footer if this vessel is selected
             if (selectedIds.has(vid)) {
                 updateFooter();
             }
@@ -448,7 +483,11 @@
                 priceFetchAbort();
             }
 
-            var ids = filteredVessels.map(function(v) { return v.user_vessel_id || v.id; });
+            var filtered = getFilteredVessels();
+            var ids = [];
+            for (var fi = 0; fi < filtered.length; fi++) {
+                ids.push(filtered[fi].user_vessel_id || filtered[fi].id);
+            }
             var uncached = ids.filter(function(id) { return !priceCache.has(id); });
 
             if (uncached.length === 0) {
@@ -459,20 +498,15 @@
             banner.style.display = 'block';
 
             fetchSellPrices(ids,
-                function onProgress(done, total) {
+                function onEachPrice(vid, done, total) {
                     banner.textContent = 'Loading sell prices... (' + done + '/' + total + ')';
-                    // Update the last fetched row
-                    var lastFetchedId = ids[done - 1];
-                    if (lastFetchedId !== undefined) {
-                        updateRowPrice(lastFetchedId);
-                    }
+                    updateRowPrice(vid);
                     if (done >= total) {
                         banner.style.display = 'none';
                     }
                 },
                 function onDone() {
                     banner.style.display = 'none';
-                    // Re-render to show all prices
                     renderList();
                     updateFooter();
                 }
@@ -485,8 +519,10 @@
     }
 
     // Process sell checkout - sell vessels sequentially
-    function processSellCheckout(vessels) {
-        if (!vessels || vessels.length === 0) return;
+    var MAX_ERRORS = 20;
+
+    function processSellCheckout(sellVessels) {
+        if (!sellVessels || sellVessels.length === 0) return;
 
         var progressOverlay = document.createElement('div');
         progressOverlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center;';
@@ -499,30 +535,44 @@
         var successCount = 0;
         var failCount = 0;
         var errors = [];
-        var total = vessels.length;
+        var total = sellVessels.length;
         var idx = 0;
 
         function processNext() {
             if (idx >= total) {
                 progressEl.textContent = 'Sell Complete!';
-                if (errors.length > 0) {
-                    statusEl.innerHTML = '<span style="color:#4ade80;">' + successCount + ' sold</span>, <span style="color:#ef4444;">' + failCount + ' failed</span><br><br><div style="text-align:left;max-height:150px;overflow-y:auto;font-size:12px;color:#ef4444;">' + errors.join('<br>') + '</div>';
+                var errorDisplay = errors.join('<br>');
+                if (failCount > MAX_ERRORS) {
+                    errorDisplay += '<br>... and ' + (failCount - MAX_ERRORS) + ' more';
+                }
+                if (failCount > 0) {
+                    statusEl.innerHTML = '<span style="color:#4ade80;">' + successCount + ' sold</span>, <span style="color:#ef4444;">' + failCount + ' failed</span><br><br><div style="text-align:left;max-height:150px;overflow-y:auto;font-size:12px;color:#ef4444;">' + errorDisplay + '</div>';
                 } else {
                     statusEl.innerHTML = '<span style="color:#4ade80;">' + successCount + ' sold</span>';
                 }
 
                 setTimeout(function() {
                     progressOverlay.remove();
-                    var stores = getStores();
-                    if (stores) {
-                        if (stores.user && stores.user.fetchUser) stores.user.fetchUser();
-                        if (stores.vessel && stores.vessel.fetchUserVessels) stores.vessel.fetchUserVessels();
+                    if (successCount > 0) {
+                        var stores = getStores();
+                        if (stores) {
+                            if (stores.user && typeof stores.user.fetchUser === 'function') {
+                                stores.user.fetchUser().catch(function(e) {
+                                    console.error('[VesselSell] Failed to refresh user:', e);
+                                });
+                            }
+                            if (stores.vessel && typeof stores.vessel.fetchUserVessels === 'function') {
+                                stores.vessel.fetchUserVessels().catch(function(e) {
+                                    console.error('[VesselSell] Failed to refresh vessels:', e);
+                                });
+                            }
+                        }
                     }
-                }, errors.length > 0 ? 4000 : 2000);
+                }, failCount > 0 ? 4000 : 2000);
                 return;
             }
 
-            var v = vessels[idx];
+            var v = sellVessels[idx];
             var vid = v.user_vessel_id || v.id;
             var vname = v.name || 'Vessel #' + vid;
             idx++;
@@ -534,24 +584,29 @@
                 if (data.error) {
                     failCount++;
                     var errorMsg = typeof data.error === 'string' ? data.error.replace(/_/g, ' ') : (data.error.message || JSON.stringify(data.error));
-                    errors.push(escapeHtml(vname) + ': ' + escapeHtml(errorMsg));
+                    if (errors.length < MAX_ERRORS) {
+                        errors.push(escapeHtml(vname) + ': ' + escapeHtml(errorMsg));
+                    }
                     statusEl.innerHTML = '<span style="color:#ef4444;">' + escapeHtml(errorMsg) + '</span>';
                     console.error('[VesselSell] Failed to sell:', data);
                 } else if (data.success || data.data) {
                     successCount++;
-                    // Remove from price cache
                     priceCache.delete(vid);
                 } else {
                     failCount++;
-                    errors.push(escapeHtml(vname) + ': unknown error');
+                    if (errors.length < MAX_ERRORS) {
+                        errors.push(escapeHtml(vname) + ': unknown error');
+                    }
                     console.error('[VesselSell] Unexpected response:', data);
                 }
             }).catch(function(e) {
                 failCount++;
-                errors.push(escapeHtml(vname) + ': ' + escapeHtml(e.message));
+                if (errors.length < MAX_ERRORS) {
+                    errors.push(escapeHtml(vname) + ': ' + escapeHtml(e.message));
+                }
                 console.error('[VesselSell] Error selling vessel:', e);
             }).finally(function() {
-                setTimeout(processNext, 1500);
+                setTimeout(processNext, failCount > 0 ? 2000 : 500);
             });
         }
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Auto Marketing & Reputation Header Display
 // @description Shows reputation in header, auto-renews campaigns when expired with the most expensive possible one.
-// @version     5.31
+// @version     5.33
 // @author      joseywales - Pimped by https://github.com/justonlyforyou/
 // @order        6
 // @match       https://shippingmanager.cc/*
@@ -10,6 +10,7 @@
 // @enabled     false
 // @RequireRebelShipMenu true
 // @RequireRebelShipStorage true
+// @background-job-required true
 // ==/UserScript==
 /* globals addMenuItem */
 
@@ -811,6 +812,25 @@
 
     window.addEventListener('beforeunload', function() {
         modalListenerAttached = false;
+    });
+
+    // ========== BACKGROUND JOB ==========
+    window.rebelshipRunAutoMarketing = function() {
+        if (!settings.autoRenewalEnabled) {
+            return Promise.resolve({ skipped: true, reason: 'disabled' });
+        }
+        return runAutoRenewal(false).then(function(result) {
+            return { success: true, result: result };
+        }).catch(function(e) {
+            return { success: false, error: e.message };
+        });
+    };
+
+    window.rebelshipBackgroundJobs = window.rebelshipBackgroundJobs || [];
+    window.rebelshipBackgroundJobs.push({
+        name: 'AutoMarketing',
+        interval: 15 * 60 * 1000,
+        run: function() { return window.rebelshipRunAutoMarketing(); }
     });
 
     if (document.readyState === 'loading') {

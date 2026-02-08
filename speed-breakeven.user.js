@@ -2,14 +2,14 @@
 // @name         ShippingManager - Speed Break-Even
 // @namespace    https://rebelship.org/
 // @description  Colors speed sliders green/red based on fuel break-even point
-// @version      2.01
+// @version      2.03
 // @author       https://github.com/justonlyforyou/
 // @order        56
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-end
-// @RequireRebelShipStorage true
 // @enabled      false
+// @RequireRebelShipStorage true
 // ==/UserScript==
 
 (function() {
@@ -17,10 +17,14 @@
 
     var SCRIPT_NAME = 'Speed Break-Even';
     var UTILIZATION = 0.85;
+    var FUEL_PRICE_CACHE_TTL = 2 * 60 * 1000; // 2 minutes
     var cachedFuelPrice = null;
+    var fuelPriceLoaded = false;
+    var fuelPriceCacheTime = 0;
     var debounceTimer = null;
     var processing = false;
     var processedSliders = new WeakSet();
+    var observer = null;
 
     // ============================================
     // PINIA STORE ACCESS
@@ -31,7 +35,8 @@
             if (!appEl || !appEl.__vue_app__) return null;
             var app = appEl.__vue_app__;
             return app._context.provides.pinia || app.config.globalProperties.$pinia;
-        } catch {
+        } catch (e) {
+            console.error('[' + SCRIPT_NAME + '] getPinia error:', e);
             return null;
         }
     }
@@ -41,7 +46,8 @@
             var pinia = getPinia();
             if (!pinia || !pinia._s) return null;
             return pinia._s.get(name);
-        } catch {
+        } catch (e) {
+            console.error('[' + SCRIPT_NAME + '] getStore error:', e);
             return null;
         }
     }
@@ -58,10 +64,16 @@
                 var settings = parsed.settings || {};
                 return settings.fuelPriceThreshold || 500;
             }
-        } catch {
-            // Ignore
+        } catch (e) {
+            console.error('[' + SCRIPT_NAME + '] loadFuelPrice error:', e);
         }
         return 500;
+    }
+
+    function invalidateFuelPriceCache() {
+        cachedFuelPrice = null;
+        fuelPriceLoaded = false;
+        fuelPriceCacheTime = 0;
     }
 
     // ============================================
@@ -77,8 +89,8 @@
             if (globalStore && globalStore.trackedVessel) {
                 return globalStore.trackedVessel;
             }
-        } catch {
-            // Ignore
+        } catch (e) {
+            console.error('[' + SCRIPT_NAME + '] getCurrentEditingVessel error:', e);
         }
         return null;
     }
@@ -86,9 +98,6 @@
     // ============================================
     // FUEL & INCOME CALCULATIONS
     // ============================================
-    // Guide formula: fuel = (capacity / 2000) * distance * sqrt(speed) / 20 * fuel_factor
-    // = capacity * distance * sqrt(speed) * fuel_factor / 40000 (tons)
-    // For tankers: capacity = BBL / 74 (TEU-equivalent)
     function getVesselCapacity(vessel) {
         if (!vessel || !vessel.capacity_max) return 0;
         var cap = vessel.capacity_max;
@@ -120,12 +129,7 @@
         if (income <= 0) return 0;
 
         var sqrtBE = (income * 40000) / (capacity * distance * fuelFactor * fuelPrice);
-        var be = sqrtBE * sqrtBE;
-
-        console.log('[' + SCRIPT_NAME + '] cap=' + capacity + ' dist=' + distance +
-            ' ff=' + fuelFactor + ' fp=$' + fuelPrice +
-            ' inc=$' + income.toFixed(0) + ' BE=' + be.toFixed(1) + 'kn');
-        return be;
+        return sqrtBE * sqrtBE;
     }
 
     // ============================================
@@ -134,6 +138,7 @@
     function colorSlider(sliderEl, breakEvenSpeed) {
         var min = parseInt(sliderEl.min) || 5;
         var max = parseInt(sliderEl.max) || 39;
+        if (min >= max || min < 0 || max > 100) return;
         var breakEvenPercent = ((breakEvenSpeed - min) / (max - min)) * 100;
         breakEvenPercent = Math.min(100, Math.max(0, breakEvenPercent));
         sliderEl.style.setProperty('background',
@@ -148,11 +153,9 @@
         if (processing) return;
         processing = true;
 
-        // Disconnect observer while we modify DOM to prevent feedback loop
-        observer.disconnect();
-
         try {
-            var sliders = document.querySelectorAll('input[type="range"].slider');
+            var appEl = document.getElementById('app');
+            var sliders = (appEl || document).querySelectorAll('input[type="range"].slider');
             if (sliders.length === 0) return;
 
             var vessel = getCurrentEditingVessel();
@@ -161,7 +164,6 @@
             for (var i = 0; i < sliders.length; i++) {
                 var sliderEl = sliders[i];
 
-                // Skip already processed sliders (tracked via WeakSet, no DOM mutation)
                 if (processedSliders.has(sliderEl)) continue;
                 processedSliders.add(sliderEl);
 
@@ -169,21 +171,21 @@
                 if (!sliderMax || sliderMax !== Math.round(vessel.max_speed)) continue;
                 if (!vessel.prices || !vessel.capacity_max || !vessel.route_distance) continue;
 
-                if (cachedFuelPrice === null) {
+                if (!fuelPriceLoaded || (Date.now() - fuelPriceCacheTime) >= FUEL_PRICE_CACHE_TTL) {
                     cachedFuelPrice = await loadFuelPrice();
+                    fuelPriceLoaded = true;
+                    fuelPriceCacheTime = Date.now();
                 }
                 if (!cachedFuelPrice) continue;
 
                 var breakEvenSpeed = calculateBreakEvenSpeed(vessel, cachedFuelPrice);
                 if (breakEvenSpeed === null) continue;
 
-                sliderEl.setAttribute('data-breakeven-applied', '1');
+                sliderEl.classList.add('breakeven-applied');
                 colorSlider(sliderEl, breakEvenSpeed);
             }
         } finally {
             processing = false;
-            // Reconnect observer
-            observer.observe(document.body, { childList: true, subtree: true });
         }
     }
 
@@ -198,7 +200,24 @@
     // ============================================
     // MUTATION OBSERVER
     // ============================================
-    var observer = new MutationObserver(scheduleCheck);
+    function startObserver() {
+        var target = document.getElementById('app') || document.body;
+        observer = new MutationObserver(function(mutations) {
+            for (var i = 0; i < mutations.length; i++) {
+                var added = mutations[i].addedNodes;
+                for (var j = 0; j < added.length; j++) {
+                    var node = added[j];
+                    if (node.nodeType !== 1) continue;
+                    if ((node.matches && node.matches('input[type="range"].slider')) ||
+                        (node.querySelector && node.querySelector('input[type="range"].slider'))) {
+                        scheduleCheck();
+                        return;
+                    }
+                }
+            }
+        });
+        observer.observe(target, { childList: true, subtree: true });
+    }
 
     // ============================================
     // INIT
@@ -206,14 +225,17 @@
     function init() {
         var style = document.createElement('style');
         style.textContent =
-            'input[type="range"].slider[data-breakeven-applied] { -webkit-appearance: none; appearance: none; height: 6px; border-radius: 3px; outline: none; }' +
-            'input[type="range"].slider[data-breakeven-applied]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #ffffff; border: 2px solid #666; cursor: pointer; }' +
-            'input[type="range"].slider[data-breakeven-applied]::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%; background: #ffffff; border: 2px solid #666; cursor: pointer; }' +
-            'input[type="range"].slider[data-breakeven-applied]::-moz-range-track { background: transparent; }';
+            'input[type="range"].slider.breakeven-applied { -webkit-appearance: none; appearance: none; height: 6px; border-radius: 3px; outline: none; }' +
+            'input[type="range"].slider.breakeven-applied::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #ffffff; border: 2px solid #666; cursor: pointer; }' +
+            'input[type="range"].slider.breakeven-applied::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%; background: #ffffff; border: 2px solid #666; cursor: pointer; }' +
+            'input[type="range"].slider.breakeven-applied::-moz-range-track { background: transparent; }';
         document.head.appendChild(style);
 
-        observer.observe(document.body, { childList: true, subtree: true });
-        console.log('[' + SCRIPT_NAME + '] v2.0 Initialized');
+        // Invalidate fuel price cache on navigation (covers DepartManager settings changes)
+        window.addEventListener('hashchange', invalidateFuelPriceCache);
+        window.addEventListener('popstate', invalidateFuelPriceCache);
+
+        startObserver();
     }
 
     if (document.readyState === 'loading') {
@@ -221,4 +243,9 @@
     } else {
         init();
     }
+
+    window.addEventListener('beforeunload', function() {
+        if (observer) { observer.disconnect(); observer = null; }
+        if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = null; }
+    });
 })();

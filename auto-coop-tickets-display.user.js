@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Auto Co-Op & Co-Op Header Display
 // @description Shows open Co-Op tickets, auto-sends COOP vessels to alliance members
-// @version     5.41
+// @version     5.48
 // @author      https://github.com/justonlyforyou/
 // @order        3
 // @match       https://shippingmanager.cc/*
@@ -145,8 +145,40 @@
         });
     }
 
-    // ========== AUTO COOP LOGIC ==========
+    // ========== AUTO COOP LOGIC (Drip-Feed Distribution) ==========
+
+    var DIST_INTERVAL = 2 * 60 * 1000; // 2 minutes between sends
+    var TEMP_RETRY_DELAY = 15 * 60 * 1000; // 15 minutes for temporary errors
+
+    var PERMANENT_ERRORS = [
+        'user_departed_has_coop_disabled',
+        'user_departer_and_departed_are_the_same',
+        'no_data'
+    ];
+    var TEMPORARY_ERRORS = [
+        'user_departed_does_not_allow_coop_at_this_time',
+        'no_vessels_are_ready_to_depart'
+    ];
+
+    var distState = {
+        active: false,
+        timer: null,
+        members: [],
+        companyNameMap: {},
+        memberIndex: 0,
+        skipList: {},
+        startTime: 0,
+        totalSent: 0,
+        totalRequested: 0,
+        results: [],
+        retryPass: false
+    };
+
     function runAutoCoop(manual) {
+        if (distState.active) {
+            log('Distribution already in progress');
+            return Promise.resolve({ skipped: true, reason: 'distribution_active' });
+        }
         if (isProcessing) {
             return Promise.resolve({ skipped: true, reason: 'processing' });
         }
@@ -155,7 +187,9 @@
         }
 
         isProcessing = true;
-        var result = { totalSent: 0, totalRequested: 0, results: [] };
+
+        // Invalidate coop cache to get fresh data
+        apiCache.coop = { data: null, timestamp: 0 };
 
         return Promise.all([
             getCachedOrFetch('coop', fetchCoopData),
@@ -170,36 +204,54 @@
             var members = coopData.data ? coopData.data.members_coop : [];
             var allianceContacts = contactData.data && contactData.data.alliance_contacts ? contactData.data.alliance_contacts : [];
             var settingsData = memberSettings.data || [];
+            var ownUserId = coopData.data && coopData.data.user ? coopData.data.user.id : null;
+            if (!ownUserId) {
+                var userStore = getPiniaStore('user');
+                ownUserId = userStore && userStore.user ? userStore.user.id : null;
+            }
+            if (!ownUserId) {
+                log('Cannot determine own user ID - aborting to prevent self-send');
+                isProcessing = false;
+                return { totalSent: 0, totalRequested: 0, results: [] };
+            }
 
             if (available === 0) {
                 log('No COOP tickets available');
-                return result;
+                isProcessing = false;
+                return { totalSent: 0, totalRequested: 0, results: [] };
             }
-
-            log('Starting Auto-COOP distribution...');
-            log('Available COOP vessels: ' + available);
 
             // Build company name map
             var companyNameMap = {};
             allianceContacts.forEach(function(c) { companyNameMap[c.id] = c.company_name; });
-            if (coopData.user && coopData.user.id && coopData.user.company_name) {
-                companyNameMap[coopData.user.id] = coopData.user.company_name;
+            if (coopData.data && coopData.data.user && coopData.data.user.id && coopData.data.user.company_name) {
+                companyNameMap[coopData.data.user.id] = coopData.data.user.company_name;
             }
 
             // Build settings map
             var settingsMap = {};
             settingsData.forEach(function(s) { settingsMap[s.user_id] = s; });
 
-            // Filter eligible members (can receive COOP)
+            // Filter eligible members (pre-filter)
+            var skippedReasons = { self: 0, disabled: 0, noVessels: 0, lowFuel: 0, timeRestriction: 0 };
             var eligibleMembers = members.filter(function(member) {
-                if (member.total_vessels === 0) return false;
+                // Skip own user
+                if (ownUserId && member.user_id === ownUserId) { skippedReasons.self++; return false; }
+
+                // Skip coop disabled (from members_coop.enabled)
+                if (member.enabled === false) { skippedReasons.disabled++; return false; }
+
+                // Skip coop disabled (from get-member-settings.coop_enabled)
+                var userSettings = settingsMap[member.user_id];
+                if (userSettings && userSettings.coop_enabled === false) { skippedReasons.disabled++; return false; }
+
+                if (member.total_vessels === 0) { skippedReasons.noVessels++; return false; }
 
                 // Check fuel (less than 10t = 10000kg)
                 var fuelTons = member.fuel / 1000;
-                if (fuelTons < 10) return false;
+                if (fuelTons < 10) { skippedReasons.lowFuel++; return false; }
 
                 // Check time restrictions
-                var userSettings = settingsMap[member.user_id];
                 if (userSettings && userSettings.restrictions && userSettings.restrictions.time_range_enabled) {
                     var startHour = userSettings.restrictions.time_restriction_arr[0];
                     var endHour = userSettings.restrictions.time_restriction_arr[1];
@@ -214,89 +266,227 @@
                         inTimeRange = currentHour >= startHour || currentHour < endHour;
                     }
 
-                    if (!inTimeRange) return false;
+                    if (!inTimeRange) { skippedReasons.timeRestriction++; return false; }
                 }
 
                 return true;
             });
 
+            var skipSummary = [];
+            if (skippedReasons.self) skipSummary.push(skippedReasons.self + ' self');
+            if (skippedReasons.disabled) skipSummary.push(skippedReasons.disabled + ' coop disabled');
+            if (skippedReasons.noVessels) skipSummary.push(skippedReasons.noVessels + ' no vessels');
+            if (skippedReasons.lowFuel) skipSummary.push(skippedReasons.lowFuel + ' low fuel');
+            if (skippedReasons.timeRestriction) skipSummary.push(skippedReasons.timeRestriction + ' time restricted');
+            if (skipSummary.length > 0) {
+                log('Pre-filtered out: ' + skipSummary.join(', '));
+            }
+
             if (eligibleMembers.length === 0) {
                 log('No eligible members found');
-                return result;
+                isProcessing = false;
+                return { totalSent: 0, totalRequested: 0, results: [] };
             }
 
             // Sort by total_vessels DESC (largest fleets first)
             eligibleMembers.sort(function(a, b) { return b.total_vessels - a.total_vessels; });
 
-            log('Found ' + eligibleMembers.length + ' eligible members');
+            log('Starting distribution: ' + available + ' vessels to ' + eligibleMembers.length + ' eligible members (2min intervals)');
+            startDistribution(eligibleMembers, companyNameMap);
 
-            // Send to each member sequentially
-            var currentAvailable = available;
-            var memberIndex = 0;
-
-            function sendToNextMember() {
-                if (memberIndex >= eligibleMembers.length || currentAvailable <= 0) {
-                    log('Distribution complete: ' + result.totalSent + '/' + result.totalRequested + ' vessels');
-
-                    if (result.totalSent > 0) {
-                        var successCount = result.results.filter(function(r) { return r.departed > 0; }).length;
-                        showToast('CoOp: Sent ' + result.totalSent + ' vessels to ' + successCount + ' members', 'success');
-                    } else if (result.totalRequested > 0) {
-                        showToast('CoOp: All sends failed', 'error');
-                    }
-
-                    return Promise.resolve(result);
-                }
-
-                var member = eligibleMembers[memberIndex];
-                var maxToSend = Math.min(currentAvailable, member.total_vessels);
-                var companyName = companyNameMap[member.user_id] || 'User ' + member.user_id;
-
-                log('Sending ' + maxToSend + ' vessels to ' + companyName + '...');
-
-                return sendCoopVessels(member.user_id, maxToSend).then(function(sendResult) {
-                    if (sendResult.error) {
-                        log('Failed: ' + sendResult.error);
-                        result.results.push({ company_name: companyName, error: sendResult.error });
-                    } else {
-                        var departed = sendResult.data && sendResult.data.vessels_departed ? sendResult.data.vessels_departed : 0;
-                        result.totalRequested += maxToSend;
-                        result.totalSent += departed;
-                        currentAvailable -= departed;
-
-                        result.results.push({
-                            company_name: companyName,
-                            requested: maxToSend,
-                            departed: departed
-                        });
-
-                        log('Sent ' + departed + '/' + maxToSend + ' to ' + companyName);
-                    }
-
-                    memberIndex++;
-
-                    // Small delay between sends
-                    return new Promise(function(resolve) {
-                        setTimeout(function() {
-                            resolve(sendToNextMember());
-                        }, 500);
-                    });
-                }).catch(function(e) {
-                    log('Error sending to ' + companyName + ': ' + e.message);
-                    result.results.push({ company_name: companyName, error: e.message });
-                    memberIndex++;
-                    return sendToNextMember();
-                });
-            }
-
-            return sendToNextMember();
+            // Return immediately - distribution continues in background via timer
+            return { started: true, members: eligibleMembers.length, available: available };
         }).catch(function(e) {
             log('Error after all retries: ' + e.message);
             showToast('CoOp Error: ' + e.message, 'error');
-            return { error: e.message };
-        }).finally(function() {
             isProcessing = false;
+            return { error: e.message };
         });
+    }
+
+    function startDistribution(members, companyNameMap) {
+        distState.active = true;
+        distState.members = members;
+        distState.companyNameMap = companyNameMap;
+        distState.memberIndex = 0;
+        distState.skipList = {};
+        distState.startTime = Date.now();
+        distState.totalSent = 0;
+        distState.totalRequested = 0;
+        distState.results = [];
+        distState.retryPass = false;
+
+        // First tick immediately
+        distributionTick();
+
+        // Then every 2 minutes
+        distState.timer = setInterval(distributionTick, DIST_INTERVAL);
+    }
+
+    function findNextMember() {
+        var now = Date.now();
+        while (distState.memberIndex < distState.members.length) {
+            var candidate = distState.members[distState.memberIndex];
+            var skip = distState.skipList[candidate.user_id];
+            if (skip) {
+                if (skip.until && now >= skip.until) {
+                    delete distState.skipList[candidate.user_id];
+                    return candidate;
+                }
+                distState.memberIndex++;
+                continue;
+            }
+            return candidate;
+        }
+        return null;
+    }
+
+    function hasTemporarySkips() {
+        var keys = Object.keys(distState.skipList);
+        for (var i = 0; i < keys.length; i++) {
+            if (distState.skipList[keys[i]].until) return true;
+        }
+        return false;
+    }
+
+    function distributionTick() {
+        if (!distState.active) return;
+
+        // Fresh fetch available count (bypass cache)
+        apiCache.coop = { data: null, timestamp: 0 };
+        getCachedOrFetch('coop', fetchCoopData).then(function(coopData) {
+            var available = coopData.data && coopData.data.coop ? coopData.data.coop.available : 0;
+
+            // Update header display
+            if (coopData.data && coopData.data.coop) {
+                coopCache.available = available;
+                coopCache.cap = coopData.data.coop.coop_boost || coopData.data.coop.cap;
+                coopCache.lastFetch = Date.now();
+            }
+            updateCoopDisplay();
+
+            if (available === 0) {
+                log('No vessels remaining, distribution complete');
+                stopDistribution();
+                return;
+            }
+
+            // Try members until one succeeds or none left
+            tryNextMember(available);
+        }).catch(function(e) {
+            log('Failed to fetch coop data during distribution: ' + e.message);
+        });
+    }
+
+    function tryNextMember(available) {
+        if (!distState.active) return;
+
+        var member = findNextMember();
+
+        if (!member) {
+            if (hasTemporarySkips() && !distState.retryPass) {
+                distState.retryPass = true;
+                log('All members processed. Waiting 15min for temporary-skipped members retry...');
+                clearInterval(distState.timer);
+                distState.timer = setTimeout(function() {
+                    distState.memberIndex = 0;
+                    distState.retryPass = false;
+                    distributionTick();
+                    distState.timer = setInterval(distributionTick, DIST_INTERVAL);
+                }, TEMP_RETRY_DELAY);
+                return;
+            }
+            log('No more eligible members');
+            stopDistribution();
+            return;
+        }
+
+        var maxToSend = Math.min(available, member.total_vessels);
+        var companyName = distState.companyNameMap[member.user_id] || 'User ' + member.user_id;
+        var memberNum = distState.memberIndex + 1;
+        var totalMembers = distState.members.length;
+
+        log('Sending ' + maxToSend + ' to ' + companyName + ' (' + memberNum + '/' + totalMembers + ' members, ' + available + ' vessels remaining)');
+
+        sendCoopVessels(member.user_id, maxToSend).then(function(sendResult) {
+            if (sendResult.error) {
+                log('Failed: ' + sendResult.error + ' (' + companyName + ')');
+                distState.results.push({ company_name: companyName, error: sendResult.error });
+
+                if (PERMANENT_ERRORS.indexOf(sendResult.error) !== -1) {
+                    distState.skipList[member.user_id] = { reason: sendResult.error };
+                    log('Permanent skip: ' + companyName + ' (' + sendResult.error + ')');
+                } else if (TEMPORARY_ERRORS.indexOf(sendResult.error) !== -1) {
+                    distState.skipList[member.user_id] = { reason: sendResult.error, until: Date.now() + TEMP_RETRY_DELAY };
+                    log('Temporary skip: ' + companyName + ' (retry in 15min)');
+                } else {
+                    distState.skipList[member.user_id] = { reason: sendResult.error };
+                    log('Unknown error skip: ' + companyName + ' (' + sendResult.error + ')');
+                }
+
+                distState.memberIndex++;
+                // Failed → immediately try next member, no 2min wait
+                tryNextMember(available);
+            } else {
+                var departed = sendResult.data && sendResult.data.vessels_departed ? sendResult.data.vessels_departed : 0;
+                distState.totalRequested += maxToSend;
+                distState.totalSent += departed;
+
+                distState.results.push({
+                    company_name: companyName,
+                    requested: maxToSend,
+                    departed: departed
+                });
+
+                log('Sent ' + departed + '/' + maxToSend + ' to ' + companyName);
+                distState.memberIndex++;
+                // Success → wait for next 2min tick
+            }
+        }).catch(function(e) {
+            log('Error sending to ' + companyName + ': ' + e.message);
+            distState.results.push({ company_name: companyName, error: e.message });
+            distState.skipList[member.user_id] = { reason: e.message };
+            distState.memberIndex++;
+            // Network error → immediately try next member
+            tryNextMember(available);
+        });
+    }
+
+    function stopDistribution() {
+        if (!distState.active) return;
+
+        if (distState.timer) {
+            clearInterval(distState.timer);
+            clearTimeout(distState.timer);
+            distState.timer = null;
+        }
+
+        var elapsed = Math.round((Date.now() - distState.startTime) / 1000);
+        log('Distribution complete: ' + distState.totalSent + '/' + distState.totalRequested + ' vessels sent in ' + elapsed + 's');
+
+        var skippedPerm = 0;
+        var skippedTemp = 0;
+        Object.keys(distState.skipList).forEach(function(uid) {
+            if (distState.skipList[uid].until) skippedTemp++;
+            else skippedPerm++;
+        });
+        if (skippedPerm > 0 || skippedTemp > 0) {
+            log('Skipped: ' + skippedPerm + ' permanent, ' + skippedTemp + ' temporary');
+        }
+
+        if (distState.totalSent > 0) {
+            var successCount = distState.results.filter(function(r) { return r.departed > 0; }).length;
+            showToast('CoOp: Sent ' + distState.totalSent + ' vessels to ' + successCount + ' members', 'success');
+        } else if (distState.totalRequested > 0) {
+            showToast('CoOp: All sends failed', 'error');
+        }
+
+        distState.active = false;
+        distState.members = [];
+        distState.companyNameMap = {};
+        distState.skipList = {};
+        distState.results = [];
+        isProcessing = false;
     }
 
     // ========== LOGGING & NOTIFICATIONS ==========
@@ -445,13 +635,16 @@
 
         allianceBtn.click();
 
+        var modalContainer = document.getElementById('modal-container');
+        if (!modalContainer) return;
+
         var observer = new MutationObserver(function(mutations, obs) {
             if (clickCoopTab()) {
                 obs.disconnect();
             }
         });
 
-        observer.observe(document.body, { childList: true, subtree: true });
+        observer.observe(modalContainer, { childList: true, subtree: true });
 
         // Timeout nach 5 Sekunden
         setTimeout(function() { observer.disconnect(); }, 5000);
@@ -516,6 +709,7 @@
                 return;
             }
 
+            var observeTarget = document.getElementById('app') || document.body;
             var observer = new MutationObserver(function(mutations, obs) {
                 container = document.querySelector('.content.led.cursor-pointer');
                 if (container) {
@@ -524,7 +718,7 @@
                 }
             });
 
-            observer.observe(document.body, { childList: true, subtree: true });
+            observer.observe(observeTarget, { childList: true, subtree: true });
 
             setTimeout(function() {
                 observer.disconnect();
@@ -748,18 +942,30 @@
                     </div>\
                 </div>\
                 <div style="display:flex;gap:12px;justify-content:space-between;margin-top:30px;">\
-                    <button id="fh-run-now" style="padding:10px 24px;background:linear-gradient(180deg,#3b82f6,#1d4ed8);border:0;border-radius:6px;color:#fff;cursor:pointer;font-size:14px;font-weight:500;">Run Now</button>\
+                    <button id="fh-run-now" style="padding:10px 24px;background:linear-gradient(180deg,#3b82f6,#1d4ed8);border:0;border-radius:6px;color:#fff;cursor:pointer;font-size:14px;font-weight:500;">' + (distState.active ? 'Stop' : 'Run Now') + '</button>\
                     <button id="fh-save" style="padding:10px 24px;background:linear-gradient(180deg,#46ff33,#129c00);border:0;border-radius:6px;color:#fff;cursor:pointer;font-size:16px;font-weight:500;">Save</button>\
                 </div>\
             </div>';
 
         document.getElementById('fh-run-now').addEventListener('click', function() {
             var btn = this;
-            btn.disabled = true;
-            btn.textContent = 'Running...';
-            runAutoCoop(true).then(function() {
+            if (distState.active) {
+                stopDistribution();
                 btn.textContent = 'Run Now';
-                btn.disabled = false;
+                btn.style.background = 'linear-gradient(180deg,#3b82f6,#1d4ed8)';
+                return;
+            }
+            btn.disabled = true;
+            btn.textContent = 'Starting...';
+            runAutoCoop(true).then(function(result) {
+                if (result && result.started) {
+                    btn.textContent = 'Stop';
+                    btn.style.background = 'linear-gradient(180deg,#ef4444,#b91c1c)';
+                    btn.disabled = false;
+                } else {
+                    btn.textContent = 'Run Now';
+                    btn.disabled = false;
+                }
             });
         });
 
@@ -851,6 +1057,7 @@
 
     // Optional: Cleanup-Funktion für Userscript-Neuladen
     window.rebelshipCleanupAutoCoop = function() {
+        stopDistribution();
         window.removeEventListener('rebelship-header-resize', headerResizeHandler);
     };
 

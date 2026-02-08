@@ -2,7 +2,7 @@
 // @name         ShippingManager - Auto Drydock
 // @namespace    http://tampermonkey.net/
 // @description  Automatic drydock management with bug prevention and moor option
-// @version      1.62
+// @version      1.66
 // @order        4
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
@@ -11,6 +11,7 @@
 // @enabled      false
 // @RequireRebelShipMenu true
 // @RequireRebelShipStorage true
+// @background-job-required true
 // ==/UserScript==
 /* globals addMenuItem */
 
@@ -95,41 +96,60 @@
         }
     }
 
-    // Shared storage with DepartManager for pendingRouteSettings and drydockVessels
+    // Per-category shared storage with DepartManager (drydockVessels, pendingRouteSettings)
     var RETRY_DELAYS = Object.freeze([500, 1000, 2000, 4000]);
 
-    async function dbGetShared(retryCount) {
+    async function getSharedCategory(category, retryCount) {
+        // Use DepartManager's in-memory cache if available (eliminates race conditions)
+        if (window._rebelshipDMStorage && window._rebelshipDMStorage.isReady()) {
+            return window._rebelshipDMStorage.getCategory(category);
+        }
+        // Fallback: direct DB read (DepartManager not loaded yet)
         retryCount = retryCount || 0;
         if (!window.RebelShipBridge || !window.RebelShipBridge.storage) return null;
         try {
-            var value = await window.RebelShipBridge.storage.get('DepartManager', 'data', 'storage');
-            return value ? JSON.parse(value) : null;
+            // Try per-category key first
+            var value = await window.RebelShipBridge.storage.get('DepartManager', 'data', 'st_' + category);
+            if (value) return JSON.parse(value);
+            // Fallback: old blob format (pre-migration)
+            var blob = await window.RebelShipBridge.storage.get('DepartManager', 'data', 'storage');
+            if (blob) {
+                var parsed = JSON.parse(blob);
+                return parsed[category] || {};
+            }
+            return {};
         } catch (e) {
             if (retryCount < RETRY_DELAYS.length) {
                 var delay = RETRY_DELAYS[retryCount];
-                log('dbGetShared retry ' + (retryCount + 1) + '/' + RETRY_DELAYS.length + ' in ' + delay + 'ms: ' + e.message, 'warn');
+                log('getSharedCategory(' + category + ') retry ' + (retryCount + 1) + '/' + RETRY_DELAYS.length + ' in ' + delay + 'ms: ' + e.message, 'warn');
                 await new Promise(function(r) { setTimeout(r, delay); });
-                return dbGetShared(retryCount + 1);
+                return getSharedCategory(category, retryCount + 1);
             }
-            log('dbGetShared FAILED after retries: ' + e.message, 'error');
+            log('getSharedCategory(' + category + ') FAILED after retries: ' + e.message, 'error');
             return null;
         }
     }
 
-    async function dbSetShared(storage, retryCount) {
+    async function saveSharedCategory(category, data, retryCount) {
+        // Use DepartManager's debounced save if available (eliminates race conditions)
+        if (window._rebelshipDMStorage && window._rebelshipDMStorage.isReady()) {
+            window._rebelshipDMStorage.saveCategory(category, data);
+            return true;
+        }
+        // Fallback: direct DB write (DepartManager not loaded yet)
         retryCount = retryCount || 0;
         if (!window.RebelShipBridge || !window.RebelShipBridge.storage) return false;
         try {
-            await window.RebelShipBridge.storage.set('DepartManager', 'data', 'storage', JSON.stringify(storage));
+            await window.RebelShipBridge.storage.set('DepartManager', 'data', 'st_' + category, JSON.stringify(data));
             return true;
         } catch (e) {
             if (retryCount < RETRY_DELAYS.length) {
                 var delay = RETRY_DELAYS[retryCount];
-                log('dbSetShared retry ' + (retryCount + 1) + '/' + RETRY_DELAYS.length + ' in ' + delay + 'ms: ' + e.message, 'warn');
+                log('saveSharedCategory(' + category + ') retry ' + (retryCount + 1) + '/' + RETRY_DELAYS.length + ' in ' + delay + 'ms: ' + e.message, 'warn');
                 await new Promise(function(r) { setTimeout(r, delay); });
-                return dbSetShared(storage, retryCount + 1);
+                return saveSharedCategory(category, data, retryCount + 1);
             }
-            log('dbSetShared FAILED after retries: ' + e.message, 'error');
+            log('saveSharedCategory(' + category + ') FAILED after retries: ' + e.message, 'error');
             return false;
         }
     }
@@ -168,14 +188,13 @@
     // If we can't read storage after retries, refuse to write to prevent data loss.
     // ============================================
     async function saveDrydockVessel(vesselId, data) {
-        var storage = await dbGetShared();
-        if (!storage) {
+        var drydockVessels = await getSharedCategory('drydockVessels');
+        if (drydockVessels === null) {
             log('Cannot save drydock vessel - storage unavailable after retries', 'error');
             return false;
         }
-        if (!storage.drydockVessels) storage.drydockVessels = {};
-        storage.drydockVessels[vesselId] = data;
-        var success = await dbSetShared(storage);
+        drydockVessels[vesselId] = data;
+        var success = await saveSharedCategory('drydockVessels', drydockVessels);
         if (success) {
             log('Saved drydock vessel: ' + data.name + ' (' + data.status + ')');
         }
@@ -183,26 +202,26 @@
     }
 
     async function updateDrydockVesselStatus(vesselId, status) {
-        var storage = await dbGetShared();
-        if (!storage || !storage.drydockVessels || !storage.drydockVessels[vesselId]) return;
-        storage.drydockVessels[vesselId].status = status;
-        await dbSetShared(storage);
+        var drydockVessels = await getSharedCategory('drydockVessels');
+        if (!drydockVessels || !drydockVessels[vesselId]) return;
+        drydockVessels[vesselId].status = status;
+        await saveSharedCategory('drydockVessels', drydockVessels);
     }
 
     async function deleteDrydockVessel(vesselId) {
-        var storage = await dbGetShared();
-        if (!storage || !storage.drydockVessels) return;
-        delete storage.drydockVessels[vesselId];
-        await dbSetShared(storage);
+        var drydockVessels = await getSharedCategory('drydockVessels');
+        if (!drydockVessels) return;
+        delete drydockVessels[vesselId];
+        await saveSharedCategory('drydockVessels', drydockVessels);
     }
 
     async function getDrydockVesselsByStatus(status) {
-        var storage = await dbGetShared();
-        if (!storage || !storage.drydockVessels) return [];
+        var drydockVessels = await getSharedCategory('drydockVessels');
+        if (!drydockVessels) return [];
         var result = [];
-        for (var id in storage.drydockVessels) {
-            if (storage.drydockVessels[id].status === status) {
-                result.push({ vesselId: parseInt(id), data: storage.drydockVessels[id] });
+        for (var id in drydockVessels) {
+            if (drydockVessels[id].status === status) {
+                result.push({ vesselId: parseInt(id), data: drydockVessels[id] });
             }
         }
         return result;
@@ -213,14 +232,13 @@
     // CRITICAL: Never create default storage - refuse to write if storage unavailable
     // ============================================
     async function savePendingRouteSettings(vesselId, data) {
-        var storage = await dbGetShared();
-        if (!storage) {
+        var pendingRouteSettings = await getSharedCategory('pendingRouteSettings');
+        if (pendingRouteSettings === null) {
             log('Cannot save pending route - storage unavailable after retries', 'error');
             return false;
         }
-        if (!storage.pendingRouteSettings) storage.pendingRouteSettings = {};
-        storage.pendingRouteSettings[vesselId] = data;
-        var success = await dbSetShared(storage);
+        pendingRouteSettings[vesselId] = data;
+        var success = await saveSharedCategory('pendingRouteSettings', pendingRouteSettings);
         if (success) {
             log('Saved pending route settings for: ' + data.name);
         }
@@ -250,7 +268,7 @@
     // ============================================
     // NOTIFICATIONS
     // ============================================
-    function notify(message, type, _category) {
+    function notify(message, type) {
         var settings = getSettings();
         var formattedMessage = '[AutoDrydock] ' + message;
 
@@ -487,8 +505,8 @@
         if (vessels.length === 0) return;
 
         // Check if any tracking is active before processing
-        var storage = await dbGetShared();
-        if (!storage || !storage.drydockVessels || Object.keys(storage.drydockVessels).length === 0) {
+        var drydockVessels = await getSharedCategory('drydockVessels');
+        if (!drydockVessels || Object.keys(drydockVessels).length === 0) {
             return;
         }
 

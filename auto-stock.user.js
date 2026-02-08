@@ -2,7 +2,7 @@
 // @name         ShippingManager - Auto Stock
 // @namespace    http://tampermonkey.net/
 // @description  IPO Alerts and Investments tabs in Finance modal
-// @version      2.92
+// @version      2.95
 // @order        61
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
@@ -10,8 +10,8 @@
 // @run-at       document-end
 // @RequireRebelShipMenu true
 // @background-job-required true
-// @RequireRebelShipStorage true
 // @enabled      false
+// @RequireRebelShipStorage true
 // ==/UserScript==
 /* globals addMenuItem */
 
@@ -36,7 +36,6 @@
         desktopNotifications: false
     };
 
-    var AUTOBUY_INTERVAL_MS = 5 * 60 * 1000;
     var purchasedIpoIds = new Set();
 
     // State
@@ -377,7 +376,13 @@
                 }
                 sendSystemNotification('Auto Stock - Purchase', buyMsg);
             } else {
-                log('Auto-Buy: FAILED - ' + (result && result.error ? result.error : 'Unknown error'));
+                var errMsg = (result && result.error ? result.error : (result && result.message ? result.message : 'Unknown error'));
+                log('Auto-Buy: FAILED - ' + errMsg);
+                var failMsg = 'Failed to buy ' + ipo.company_name + ': ' + errMsg;
+                if (settings.inAppAlerts) {
+                    showToast(failMsg, 'error');
+                }
+                sendSystemNotification('Auto Stock - Purchase Failed', failMsg);
             }
         }
     }
@@ -514,6 +519,12 @@
                 showToast(alertMsg, 'success');
             }
             sendSystemNotification('IPO Alert', alertMsg);
+        }
+
+        // Auto-buy immediately with fresh data — don't wait for separate timer
+        if (settings.autoBuyEnabled && freshIpos.length > 0) {
+            log('Running Auto-Buy immediately after IPO refresh...');
+            await runAutoBuy();
         }
 
         return true;
@@ -1141,10 +1152,11 @@
                 sendSystemNotification('Stock Purchased', formatNumber(amount) + ' shares of ' + ipo.company_name);
                 setTimeout(function() { openTab('ipo-alerts'); }, 1000);
             } else {
-                var errMsg = result && result.error ? result.error : 'Unknown error';
+                var errMsg = result && result.error ? result.error : (result && result.message ? result.message : 'Unknown error');
                 confirmBtn.textContent = 'Failed!';
                 confirmBtn.style.background = '#ef4444';
                 showToast('Purchase failed: ' + errMsg, 'error');
+                sendSystemNotification('Stock Purchase Failed', ipo.company_name + ': ' + errMsg);
                 setTimeout(function() {
                     confirmBtn.textContent = 'Buy Now';
                     confirmBtn.style.background = 'linear-gradient(180deg,#46ff33,#129c00)';
@@ -1447,20 +1459,10 @@
                 await runAutoBuy();
             }
 
-            // Periodic IPO check every 15 minutes
+            // Periodic IPO check every 6 minutes (auto-buy runs inside refreshIpoCache)
             setInterval(async function() {
                 await refreshIpoCache();
-            }, CHECK_INTERVAL_MS);
-
-            // Auto-Buy check every 5 minutes
-            setInterval(async function() {
-                if (settings.autoBuyEnabled) {
-                    await runAutoBuy();
-                }
-            }, AUTOBUY_INTERVAL_MS);
-
-            // Auto-Sell check every 15 minutes (after IPO refresh)
-            setInterval(async function() {
+                // Auto-Sell piggybacks on IPO refresh cycle
                 if (settings.autoSellEnabled) {
                     await runAutoSell();
                 }

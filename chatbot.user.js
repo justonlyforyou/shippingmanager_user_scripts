@@ -2,7 +2,7 @@
 // @name         ShippingManager - ChatBot
 // @namespace    http://tampermonkey.net/
 // @description  Automated chatbot for alliance chat and DMs with command system
-// @version      2.18
+// @version      2.20
 // @order        60
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
@@ -10,8 +10,8 @@
 // @run-at       document-end
 // @RequireRebelShipMenu true
 // @background-job-required true
-// @RequireRebelShipStorage true
 // @enabled      false
+// @RequireRebelShipStorage true
 // ==/UserScript==
 /* globals addMenuItem */
 
@@ -52,6 +52,9 @@
     var MAX_PROCESSED_IDS = 500;
     var MAX_CHAT_USER_ID_CACHE = 200;
     var ALLIANCE_ID_TTL_MS = 3600000; // 1 hour
+    var processedIdsDirty = false;
+    var processedIdsSaveTimer = null;
+    var PROCESSED_IDS_SAVE_INTERVAL = 60000; // flush every 60s
 
     // Command registry - other scripts can register commands
     var registeredCommands = {};
@@ -127,22 +130,46 @@
     }
 
     async function loadProcessedIds() {
+        // Try combined key first (new format)
+        var combined = await dbGet('processedData');
+        if (combined) {
+            if (combined.dmIds && Array.isArray(combined.dmIds)) processedDmIds = new Set(combined.dmIds);
+            if (combined.allianceIds && Array.isArray(combined.allianceIds)) processedAllianceIds = new Set(combined.allianceIds);
+            if (combined.chatUserIdCache && typeof combined.chatUserIdCache === 'object') chatUserIdCache = combined.chatUserIdCache;
+            return;
+        }
+        // Fallback: read old separate keys (migration)
         var dmIds = await dbGet('processedDmIds');
         if (dmIds && Array.isArray(dmIds)) processedDmIds = new Set(dmIds);
         var allianceIds = await dbGet('processedAllianceIds');
         if (allianceIds && Array.isArray(allianceIds)) processedAllianceIds = new Set(allianceIds);
         var userIdCache = await dbGet('chatUserIdCache');
         if (userIdCache && typeof userIdCache === 'object') chatUserIdCache = userIdCache;
+        // Migrate: save combined and mark dirty to flush
+        if (processedDmIds.size > 0 || processedAllianceIds.size > 0) {
+            processedIdsDirty = true;
+        }
     }
 
     async function saveProcessedIds() {
+        if (!processedIdsDirty) return;
+        processedIdsDirty = false;
         var dmArray = Array.from(processedDmIds).slice(-500);
         var allianceArray = Array.from(processedAllianceIds).slice(-500);
         processedDmIds = new Set(dmArray);
         processedAllianceIds = new Set(allianceArray);
-        await dbSet('processedDmIds', dmArray);
-        await dbSet('processedAllianceIds', allianceArray);
-        await dbSet('chatUserIdCache', chatUserIdCache);
+        await dbSet('processedData', {
+            dmIds: dmArray,
+            allianceIds: allianceArray,
+            chatUserIdCache: chatUserIdCache
+        });
+    }
+
+    function startProcessedIdsSaveTimer() {
+        if (processedIdsSaveTimer) return;
+        processedIdsSaveTimer = setInterval(function() {
+            if (processedIdsDirty) saveProcessedIds();
+        }, PROCESSED_IDS_SAVE_INTERVAL);
     }
 
     // ============================================
@@ -270,6 +297,7 @@
                         delete chatUserIdCache[cacheKeys[0]];
                     }
                     chatUserIdCache[chatId] = msg.user_id;
+                    processedIdsDirty = true;
                     log('Cached user_id ' + msg.user_id + ' for chat ' + chatId);
                     return msg.user_id;
                 }
@@ -668,6 +696,7 @@
                 processedDmIds = new Set(dmArray.slice(-MAX_PROCESSED_IDS + 1));
             }
             processedDmIds.add(messageId);
+            processedIdsDirty = true;
 
             // chat.body contains the last message text directly!
             var messageText = chat.body || '';
@@ -688,7 +717,6 @@
                 }, 'DM:' + parsed.command);
             }
         }
-        await saveProcessedIds();
     }
 
     async function processAllianceChat() {
@@ -708,6 +736,7 @@
                 processedAllianceIds = new Set(allianceArray.slice(-MAX_PROCESSED_IDS + 1));
             }
             processedAllianceIds.add(messageId);
+            processedIdsDirty = true;
 
             var parsed = parseCommand(msg);
             if (parsed) {
@@ -719,7 +748,6 @@
                 }, 'Alliance:' + parsed.command);
             }
         }
-        await saveProcessedIds();
     }
 
     // ============================================
@@ -733,6 +761,7 @@
             await processDmChats();
             await processAllianceChat();
         }, POLL_INTERVAL_MS);
+        startProcessedIdsSaveTimer();
         log('Polling started (10s)');
     }
 
@@ -740,8 +769,14 @@
         if (pollInterval) {
             clearInterval(pollInterval);
             pollInterval = null;
-            log('Polling stopped');
         }
+        if (processedIdsSaveTimer) {
+            clearInterval(processedIdsSaveTimer);
+            processedIdsSaveTimer = null;
+        }
+        // Flush any unsaved state
+        if (processedIdsDirty) saveProcessedIds();
+        log('Polling stopped');
     }
 
     // ============================================
@@ -1450,6 +1485,8 @@
                     // Process DMs and alliance chat
                     await processDmChats();
                     await processAllianceChat();
+                    // Flush processed IDs after background run
+                    if (processedIdsDirty) await saveProcessedIds();
                 } catch (e) {
                     log('Background job error: ' + e.message);
                     return { success: false, error: e.message };
@@ -1475,4 +1512,9 @@
     } else {
         init();
     }
+
+    window.addEventListener('beforeunload', function() {
+        if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+        if (processedIdsSaveTimer) { clearInterval(processedIdsSaveTimer); processedIdsSaveTimer = null; }
+    });
 })();

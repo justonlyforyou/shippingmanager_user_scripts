@@ -2,7 +2,7 @@
 // @name         ShippingManager - Departure Log Viewer
 // @namespace    https://rebelship.org/
 // @description  View departure tracking logs from Depart Manager
-// @version      1.20
+// @version      1.25
 // @author       https://github.com/justonlyforyou/
 // @order        11
 // @match        https://shippingmanager.cc/*
@@ -160,14 +160,21 @@
     // ============================================
     // SEARCH & FILTER
     // ============================================
+    function getDepartInfo(resp) {
+        if (resp.teuDry !== undefined) {
+            return resp;
+        }
+        var fullApi = resp.fullApiResponse || {};
+        return fullApi.depart_info || resp.fullDepartInfo || {};
+    }
+
     function getLogUtilization(log) {
         var resp = log.departResponse || {};
-        var fullApi = resp.fullApiResponse || {};
-        var info = fullApi.depart_info || resp.fullDepartInfo || {};
-        var teuDry = info.teu_dry || 0;
-        var teuRef = info.teu_refrigerated || 0;
-        var crudeOil = info.crude_oil || 0;
-        var fuelCargo = info.fuel || 0;
+        var info = getDepartInfo(resp);
+        var teuDry = info.teuDry || info.teu_dry || 0;
+        var teuRef = info.teuRef || info.teu_refrigerated || 0;
+        var crudeOil = info.crudeOil || info.crude_oil || 0;
+        var fuelCargo = info.fuelCargo || info.fuel || 0;
         var capacityMax = log.capacityMax || {};
         var totalLoaded = 0;
         var maxCapacity = 0;
@@ -255,23 +262,20 @@
     // ============================================
     function renderLogItem(log, index) {
         var resp = log.departResponse || {};
-        // Support both old (fullDepartInfo) and new (fullApiResponse) format
-        var fullApi = resp.fullApiResponse || {};
-        var info = fullApi.depart_info || resp.fullDepartInfo || {};
+        var info = getDepartInfo(resp);
 
         var netIncome = resp.income || info.depart_income || 0;
         var grossIncome = getGrossIncome(log);
         var harborFee = resp.harborFee || info.harbor_fee || 0;
         var channelFee = resp.channelFee || info.channel_payment || 0;
-        var guardFee = info.guard_payment || 0;
+        var guardFee = resp.guardFee || info.guard_payment || 0;
         var fuelUsed = resp.fuelUsed || (info.fuel_usage ? info.fuel_usage / 1000 : 0);
         var co2Used = resp.co2Used || (info.co2_emission ? info.co2_emission / 1000 : 0);
 
-        // Cargo/Price fields from API (shown as-is)
-        var teuDry = info.teu_dry || 0;
-        var teuRef = info.teu_refrigerated || 0;
-        var crudeOil = info.crude_oil || 0;
-        var fuelCargo = info.fuel || 0;
+        var teuDry = info.teuDry || info.teu_dry || 0;
+        var teuRef = info.teuRef || info.teu_refrigerated || 0;
+        var crudeOil = info.crudeOil || info.crude_oil || 0;
+        var fuelCargo = info.fuelCargo || info.fuel || 0;
 
         // My contribution (only if tracked - user in alliance)
         var myContribBefore = log.myContributionBefore;
@@ -907,14 +911,22 @@
                         fleetTabInjected = true;
                     }
                 } else {
+                    // Only remove if fleet modal is truly gone (not just Vue re-rendering)
+                    // Double-check after a short delay to avoid false positives during Vue transitions
                     if (fleetTabInjected) {
-                        removeFleetStatsTab();
-                        fleetTabInjected = false;
+                        setTimeout(function() {
+                            var navRecheck = document.getElementById('bottom-nav');
+                            if (!navRecheck) {
+                                removeFleetStatsTab();
+                                fleetTabInjected = false;
+                            }
+                        }, 200);
                     }
                 }
             }, 300);
         });
-        observer.observe(document.body, { childList: true, subtree: true });
+        var modalContainer = document.getElementById('modal-container') || document.getElementById('app') || document.body;
+        observer.observe(modalContainer, { childList: true, subtree: true });
     }
 
     function injectFleetStatsTab(bottomNav) {
@@ -981,8 +993,9 @@
         loadingEl.textContent = 'Loading data...';
         container.appendChild(loadingEl);
 
-        // Fix #10: Always reload fleetStatsLogs on tab open (never reuse stale cache)
+        // Always load fresh from DB for stats (allLogs may be stale from a previous modal open)
         fleetStatsLogs = await loadDepartLogs();
+        precomputeUtilization(fleetStatsLogs);
         loadingEl.remove();
 
         // Build filter bar (stays, never re-rendered)
@@ -1033,7 +1046,16 @@
 
     function renderFleetStatsTable() {
         var tableArea = document.getElementById('dlv-stats-table-area');
-        if (!tableArea || !fleetStatsLogs) return;
+        if (!fleetStatsLogs) return;
+        // If tableArea was removed (e.g. Vue re-render), recreate it inside stats container
+        if (!tableArea) {
+            var statsContainer = document.getElementById('dlv-stats-content');
+            if (!statsContainer) return;
+            tableArea = document.createElement('div');
+            tableArea.id = 'dlv-stats-table-area';
+            tableArea.style.cssText = 'flex:1;overflow-y:auto;';
+            statsContainer.appendChild(tableArea);
+        }
         tableArea.innerHTML = '';
 
         var logs = fleetStatsLogs;
@@ -1063,7 +1085,7 @@
             var totalContrib = 0;
             v.logs.forEach(function(log) {
                 totalIncome += (log.departResponse?.income || 0);
-                totalUtil += getLogUtilization(log);
+                totalUtil += (log.utilization != null ? log.utilization : getLogUtilization(log));
                 totalContrib += getLogContribDelta(log);
             });
             return {

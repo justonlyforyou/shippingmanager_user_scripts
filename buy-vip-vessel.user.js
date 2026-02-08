@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - VIP Vessel Shop
 // @description Quick access to purchase all VIP vessels as much as you have points for ;)
-// @version     2.26
+// @version     2.27
 // @author      https://github.com/justonlyforyou/
 // @order        8
 // @match       https://shippingmanager.cc/*
@@ -129,6 +129,15 @@
 
     // Open modal with vessel data (extracted for cache reuse)
     function openModalWithVesselData(stores, vesselId, vesselData) {
+        // If a modal is already open, close it first and reopen with new vessel
+        if (stores.modalStore && stores.modalStore.component) {
+            stores.modalStore.closeAll();
+            setTimeout(function() {
+                openModalWithVesselData(stores, vesselId, vesselData);
+            }, 150);
+            return;
+        }
+
         var vipInfo = VIP_VESSELS.find(function(v) { return v.id === vesselId; });
 
         // Build full product object matching game's expected structure

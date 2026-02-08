@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name        ShippingManager - Vessel Shopping Cart
 // @description Add vessels to cart and bulk purchase them
-// @version     4.30
+// @version     4.33
 // @author      https://github.com/justonlyforyou/
 // @order        63
 // @match       https://shippingmanager.cc/*
 // @grant       none
 // @run-at      document-end
-// @RequireRebelShipStorage true
 // @enabled     false
+// @RequireRebelShipStorage true
 // ==/UserScript==
 
 /* global MutationObserver */
@@ -38,8 +38,11 @@
     ];
     var POINTS_ICON_URL = '/images/icons/points_icon.svg';
 
-    // Cached cart data
+    // Cached cart data (object keyed by cart item key)
     var cachedCart = null;
+    var drydockPortsCache = null;
+    var watchDebounceTimer = null;
+    var watchObserver = null;
 
     async function dbGet(key) {
         try {
@@ -64,6 +67,21 @@
         }
     }
 
+    // Migrate cart from array format to object format
+    function migrateCart(data) {
+        if (Array.isArray(data)) {
+            var obj = {};
+            for (var i = 0; i < data.length; i++) {
+                var key = data[i].key || getCartItemKey(data[i].vessel);
+                data[i].key = key;
+                obj[key] = data[i];
+            }
+            return obj;
+        }
+        if (data && typeof data === 'object') return data;
+        return {};
+    }
+
     // Get cart from storage (async with callback)
     function getCart(callback) {
         if (cachedCart !== null) {
@@ -71,18 +89,23 @@
             return;
         }
         dbGet('cart').then(function(data) {
-            cachedCart = data ? data : [];
+            var migrated = migrateCart(data);
+            // Persist migrated format if it was an array
+            if (Array.isArray(data)) {
+                dbSet('cart', migrated);
+            }
+            cachedCart = migrated;
             callback(cachedCart);
         }).catch(function(e) {
             console.error('[VesselCart] Failed to load cart:', e);
-            cachedCart = [];
+            cachedCart = {};
             callback(cachedCart);
         });
     }
 
     // Get cart synchronously (uses cache)
     function getCartSync() {
-        return cachedCart !== null ? cachedCart : [];
+        return cachedCart !== null ? cachedCart : {};
     }
 
     // Save cart to storage
@@ -112,22 +135,15 @@
         quantity = quantity || 1;
         getCart(function(cart) {
             var key = getCartItemKey(vessel);
-            var existingIndex = -1;
-            for (var i = 0; i < cart.length; i++) {
-                if (getCartItemKey(cart[i].vessel) === key) {
-                    existingIndex = i;
-                    break;
-                }
-            }
 
-            if (existingIndex > -1) {
-                var oldQty = cart[existingIndex].quantity;
-                cart[existingIndex].quantity += quantity;
-                if (vessel.type === 'build' && cart[existingIndex].ships) {
+            if (cart[key]) {
+                var oldQty = cart[key].quantity;
+                cart[key].quantity += quantity;
+                if (vessel.type === 'build' && cart[key].ships) {
                     var baseName = vessel.buildConfig.name || vessel.name;
                     var basePort = vessel.buildConfig.ship_yard || '';
                     for (var j = 0; j < quantity; j++) {
-                        cart[existingIndex].ships.push({
+                        cart[key].ships.push({
                             name: baseName + '_' + (oldQty + j + 1),
                             port: basePort
                         });
@@ -146,7 +162,7 @@
                         });
                     }
                 }
-                cart.push(item);
+                cart[key] = item;
             }
 
             saveCart(cart);
@@ -157,60 +173,50 @@
     // Remove from cart by key
     function removeFromCart(key) {
         getCart(function(cart) {
-            var newCart = cart.filter(function(item) {
-                return (item.key || getCartItemKey(item.vessel)) !== key;
-            });
-            saveCart(newCart);
+            delete cart[key];
+            saveCart(cart);
         });
     }
 
     // Update quantity in cart by key
     function updateQuantity(key, newQuantity) {
         getCart(function(cart) {
-            var index = -1;
-            for (var i = 0; i < cart.length; i++) {
-                if ((cart[i].key || getCartItemKey(cart[i].vessel)) === key) {
-                    index = i;
-                    break;
-                }
-            }
-
-            if (index > -1 && newQuantity > 0) {
-                var item = cart[index];
-                var oldQty = item.quantity;
-                item.quantity = newQuantity;
-
-                if (item.vessel.type === 'build' && item.ships) {
-                    if (newQuantity > oldQty) {
-                        var baseName = item.vessel.buildConfig.name || item.vessel.name;
-                        var basePort = item.vessel.buildConfig.ship_yard || '';
-                        for (var j = oldQty; j < newQuantity; j++) {
-                            item.ships.push({
-                                name: baseName + '_' + (j + 1),
-                                port: basePort
-                            });
-                        }
-                    } else if (newQuantity < oldQty) {
-                        item.ships = item.ships.slice(0, newQuantity);
-                    }
-                }
-                saveCart(cart);
-            } else if (newQuantity <= 0) {
+            if (newQuantity <= 0) {
                 removeFromCart(key);
+                return;
             }
+            var item = cart[key];
+            if (!item) return;
+
+            var oldQty = item.quantity;
+            item.quantity = newQuantity;
+
+            if (item.vessel.type === 'build' && item.ships) {
+                if (newQuantity > oldQty) {
+                    var baseName = item.vessel.buildConfig.name || item.vessel.name;
+                    var basePort = item.vessel.buildConfig.ship_yard || '';
+                    for (var j = oldQty; j < newQuantity; j++) {
+                        item.ships.push({
+                            name: baseName + '_' + (j + 1),
+                            port: basePort
+                        });
+                    }
+                } else if (newQuantity < oldQty) {
+                    item.ships = item.ships.slice(0, newQuantity);
+                }
+            }
+            saveCart(cart);
         });
     }
 
     // Update individual ship config (name/port) for build items
     function updateShipConfig(cartKey, shipIndex, field, value) {
+        if (field !== 'name' && field !== 'port') return;
+        if (field === 'name' && typeof value === 'string' && value.length > 100) {
+            value = value.substring(0, 100);
+        }
         getCart(function(cart) {
-            var item = null;
-            for (var i = 0; i < cart.length; i++) {
-                if ((cart[i].key || getCartItemKey(cart[i].vessel)) === cartKey) {
-                    item = cart[i];
-                    break;
-                }
-            }
+            var item = cart[cartKey];
             if (item && item.ships && item.ships[shipIndex]) {
                 item.ships[shipIndex][field] = value;
                 saveCart(cart);
@@ -220,8 +226,14 @@
 
     // Clear cart
     function clearCart() {
-        cachedCart = [];
-        dbSet('cart', []).then(function() {
+        if (cachedCart) {
+            var keys = Object.keys(cachedCart);
+            for (var i = 0; i < keys.length; i++) {
+                delete cachedCart[keys[i]];
+            }
+        }
+        cachedCart = {};
+        dbSet('cart', {}).then(function() {
             updateCartBadge();
         }).catch(function(e) {
             console.error('[VesselCart] Failed to clear cart:', e);
@@ -250,23 +262,26 @@
         }
     }
 
-    // Get ports with drydock from route store
+    // Get ports with drydock from route store (cached)
     function getDrydockPorts() {
+        if (drydockPortsCache) return drydockPortsCache;
         var stores = getStores();
         if (!stores || !stores.route) {
             return [];
         }
         // Use drydockPorts directly if available (already filtered and sorted)
         if (stores.route.drydockPorts && stores.route.drydockPorts.length > 0) {
-            return stores.route.drydockPorts;
+            drydockPortsCache = stores.route.drydockPorts;
+            return drydockPortsCache;
         }
         // Fallback to filtering ports manually
         if (!stores.route.ports) {
             return [];
         }
-        return stores.route.ports
+        drydockPortsCache = stores.route.ports
             .filter(function(p) { return p.drydock !== null; })
             .sort(function(a, b) { return a.code.localeCompare(b.code); });
+        return drydockPortsCache;
     }
 
     // Get anchor points info from stores
@@ -348,7 +363,7 @@
             }
         }
 
-        var allVessels = window._rebelshipAllVessels || [];
+        var allVessels = Array.isArray(window._rebelshipAllVessels) ? window._rebelshipAllVessels : [];
         var vesselName2 = getVesselNameFromUI();
 
         if (!vesselName2) {
@@ -465,9 +480,10 @@
         if (document.getElementById('rebelship-cart-btn')) return;
 
         var cart = getCartSync();
+        var cartKeys = Object.keys(cart);
         var count = 0;
-        for (var i = 0; i < cart.length; i++) {
-            count += cart[i].quantity;
+        for (var i = 0; i < cartKeys.length; i++) {
+            count += cart[cartKeys[i]].quantity;
         }
 
         var btn = document.createElement('button');
@@ -501,9 +517,10 @@
     // Update cart badge
     function updateCartBadge() {
         var cart = getCartSync();
+        var cartKeys = Object.keys(cart);
         var totalItems = 0;
-        for (var i = 0; i < cart.length; i++) {
-            totalItems += cart[i].quantity;
+        for (var i = 0; i < cartKeys.length; i++) {
+            totalItems += cart[cartKeys[i]].quantity;
         }
 
         var cartCount = document.getElementById('rebelship-cart-count');
@@ -514,9 +531,8 @@
 
     // Helper functions
     function escapeHtml(text) {
-        var div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+        if (typeof text !== 'string') text = String(text);
+        return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
     function formatNumber(num) {
@@ -549,7 +565,8 @@
     // Show shopping cart modal
     function showCartModal() {
         getCart(function(cart) {
-            if (cart.length === 0) {
+            var cartKeys = Object.keys(cart);
+            if (cartKeys.length === 0) {
                 showNotification('Cart is empty');
                 return;
             }
@@ -559,6 +576,12 @@
             var userCash = userStore && userStore.user ? userStore.user.cash : 0;
             var userPoints = userStore && userStore.user ? userStore.user.points : 0;
 
+            // Pre-compute VIP info once per item
+            var vipInfoMap = {};
+            for (var vi = 0; vi < cartKeys.length; vi++) {
+                vipInfoMap[cartKeys[vi]] = getVipInfo(cart[cartKeys[vi]].vessel);
+            }
+
             var hasBuildItems = false;
             var hasUnpricedBuilds = false;
             var hasVipItems = false;
@@ -566,10 +589,10 @@
             var pointsTotal = 0;
             var totalItems = 0;
 
-            for (var i = 0; i < cart.length; i++) {
-                var item = cart[i];
+            for (var i = 0; i < cartKeys.length; i++) {
+                var item = cart[cartKeys[i]];
                 totalItems += item.quantity;
-                var itemVipInfo = getVipInfo(item.vessel);
+                var itemVipInfo = vipInfoMap[cartKeys[i]];
                 if (item.vessel.type === 'build') {
                     hasBuildItems = true;
                     var buildPrice = item.vessel.buildConfig.price || 0;
@@ -604,11 +627,11 @@
 
             var drydockPorts = getDrydockPorts();
 
-            for (var idx = 0; idx < cart.length; idx++) {
-                var cartItem = cart[idx];
-                var key = cartItem.key || getCartItemKey(cartItem.vessel);
+            for (var idx = 0; idx < cartKeys.length; idx++) {
+                var cartItem = cart[cartKeys[idx]];
+                var key = cartKeys[idx];
                 var isBuild = cartItem.vessel.type === 'build';
-                var cartVipInfo = getVipInfo(cartItem.vessel);
+                var cartVipInfo = vipInfoMap[key];
                 var isVipItem = cartItem.vessel.type === 'vip' || cartVipInfo !== null;
 
                 if (isBuild) {
@@ -663,7 +686,7 @@
                             var selected = ship.port === p.code ? ' selected' : '';
                             var formattedCode = formatPortName(p.code);
                             var formattedCountry = formatPortName(p.country);
-                            portOptions += '<option value="' + p.code + '"' + selected + '>' + formattedCode + ' (' + formattedCountry + ') [' + p.drydock + ']</option>';
+                            portOptions += '<option value="' + escapeHtml(p.code) + '"' + selected + '>' + escapeHtml(formattedCode) + ' (' + escapeHtml(formattedCountry) + ') [' + escapeHtml(String(p.drydock)) + ']</option>';
                         }
 
                         shipDiv.innerHTML = '<span style="color:#6b7280;font-size:11px;min-width:20px;">#' + (shipIdx + 1) + '</span>' +
@@ -698,9 +721,10 @@
 
             var buildCount = 0;
             var vipCount = 0;
-            for (var bi = 0; bi < cart.length; bi++) {
-                if (cart[bi].vessel.type === 'build') buildCount += cart[bi].quantity;
-                if (cart[bi].vessel.type === 'vip' || getVipInfo(cart[bi].vessel)) vipCount += cart[bi].quantity;
+            for (var bi = 0; bi < cartKeys.length; bi++) {
+                var bKey = cartKeys[bi];
+                if (cart[bKey].vessel.type === 'build') buildCount += cart[bKey].quantity;
+                if (cart[bKey].vessel.type === 'vip' || vipInfoMap[bKey]) vipCount += cart[bKey].quantity;
             }
 
             var itemsDetail = '';
@@ -742,84 +766,70 @@
             var dropdown = document.getElementById('rebelship-dropdown');
             if (dropdown) dropdown.style.display = 'none';
 
-            overlay.querySelector('#cart-close-btn').addEventListener('click', function() { overlay.remove(); });
-            overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
-
-            var checkoutBtn = overlay.querySelector('#cart-checkout-btn');
-            if (checkoutBtn && canAfford) {
-                checkoutBtn.addEventListener('click', function() {
+            // Event delegation: single click handler instead of N per-element listeners
+            overlay.addEventListener('click', function(e) {
+                var target = e.target;
+                if (target === overlay) {
+                    overlay.remove();
+                    return;
+                }
+                if (target.id === 'cart-close-btn') {
+                    overlay.remove();
+                    return;
+                }
+                if (target.id === 'cart-checkout-btn' && canAfford) {
                     overlay.remove();
                     processCheckout();
-                });
-            }
-
-            overlay.querySelectorAll('.cart-qty-minus').forEach(function(btn) {
-                btn.addEventListener('click', function() {
-                    var k = btn.dataset.key;
-                    var currentCart = getCartSync();
-                    var found = null;
-                    for (var ci = 0; ci < currentCart.length; ci++) {
-                        if ((currentCart[ci].key || getCartItemKey(currentCart[ci].vessel)) === k) {
-                            found = currentCart[ci];
-                            break;
-                        }
-                    }
-                    if (found) {
-                        updateQuantity(k, found.quantity - 1);
+                    return;
+                }
+                if (target.classList.contains('cart-qty-minus')) {
+                    var k1 = target.dataset.key;
+                    var currentCart1 = getCartSync();
+                    var found1 = currentCart1[k1];
+                    if (found1) {
+                        updateQuantity(k1, found1.quantity - 1);
                         overlay.remove();
-                        setTimeout(showCartModal, 100);
+                        showCartModal();
                     }
-                });
-            });
-
-            overlay.querySelectorAll('.cart-qty-plus').forEach(function(btn) {
-                btn.addEventListener('click', function() {
-                    var k = btn.dataset.key;
-                    var currentCart = getCartSync();
-                    var found = null;
-                    for (var ci = 0; ci < currentCart.length; ci++) {
-                        if ((currentCart[ci].key || getCartItemKey(currentCart[ci].vessel)) === k) {
-                            found = currentCart[ci];
-                            break;
-                        }
-                    }
-                    if (found) {
-                        updateQuantity(k, found.quantity + 1);
+                    return;
+                }
+                if (target.classList.contains('cart-qty-plus')) {
+                    var k2 = target.dataset.key;
+                    var currentCart2 = getCartSync();
+                    var found2 = currentCart2[k2];
+                    if (found2) {
+                        updateQuantity(k2, found2.quantity + 1);
                         overlay.remove();
-                        setTimeout(showCartModal, 100);
+                        showCartModal();
                     }
-                });
-            });
-
-            overlay.querySelectorAll('.cart-remove').forEach(function(btn) {
-                btn.addEventListener('click', function() {
-                    var k = btn.dataset.key;
-                    removeFromCart(k);
+                    return;
+                }
+                if (target.classList.contains('cart-remove')) {
+                    var k3 = target.dataset.key;
+                    removeFromCart(k3);
                     var newCart = getCartSync();
-                    if (newCart.length === 0) {
+                    if (Object.keys(newCart).length === 0) {
                         overlay.remove();
                         showNotification('Cart is empty');
                     } else {
                         overlay.remove();
-                        setTimeout(showCartModal, 100);
+                        showCartModal();
                     }
-                });
+                    return;
+                }
             });
 
-            overlay.querySelectorAll('.ship-name-input').forEach(function(input) {
-                input.addEventListener('change', function() {
-                    var inputKey = input.dataset.key;
-                    var inputShipIdx = parseInt(input.dataset.idx);
-                    updateShipConfig(inputKey, inputShipIdx, 'name', input.value);
-                });
-            });
-
-            overlay.querySelectorAll('.ship-port-select').forEach(function(select) {
-                select.addEventListener('change', function() {
-                    var selectKey = select.dataset.key;
-                    var selectShipIdx = parseInt(select.dataset.idx);
-                    updateShipConfig(selectKey, selectShipIdx, 'port', select.value);
-                });
+            // Event delegation: single change handler for ship name/port inputs
+            overlay.addEventListener('change', function(e) {
+                var target = e.target;
+                if (target.classList.contains('ship-name-input')) {
+                    updateShipConfig(target.dataset.key, parseInt(target.dataset.idx), 'name', target.value);
+                    return;
+                }
+                if (target.classList.contains('ship-port-select')) {
+                    updateShipConfig(target.dataset.key, parseInt(target.dataset.idx), 'port', target.value);
+                    return;
+                }
             });
         });
     }
@@ -833,20 +843,34 @@
             return Promise.reject(new Error('Stores not available'));
         }
 
-        // Step 1: Load vessel data via show-acquirable-vessel (game does this before purchase)
-        return fetch('/api/vessel/show-acquirable-vessel', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({ vessel_id: vessel.id })
-        })
-        .then(function(response) { return response.json(); })
-        .then(function(showData) {
-            var vesselData = showData && showData.data ? showData.data.vessels_for_sale : null;
-            if (!vesselData) {
-                vesselData = vessel;
+        // Check cached vessels before API call
+        var cachedVessel = null;
+        if (Array.isArray(window._rebelshipAllVessels)) {
+            for (var ci = 0; ci < window._rebelshipAllVessels.length; ci++) {
+                if (window._rebelshipAllVessels[ci].id === vessel.id) {
+                    cachedVessel = window._rebelshipAllVessels[ci];
+                    break;
+                }
             }
+        }
 
+        var vesselDataPromise;
+        if (cachedVessel) {
+            vesselDataPromise = Promise.resolve(cachedVessel);
+        } else {
+            vesselDataPromise = fetch('/api/vessel/show-acquirable-vessel', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ vessel_id: vessel.id })
+            })
+            .then(function(response) { return response.json(); })
+            .then(function(showData) {
+                return showData && showData.data ? showData.data.vessels_for_sale : vessel;
+            });
+        }
+
+        return vesselDataPromise.then(function(vesselData) {
             // Set up stores as the game does (fleet_b.js:7030-7034)
             if (stores.modal) {
                 stores.modal.props = stores.modal.props || {};
@@ -860,7 +884,6 @@
                 stores.vessel.acquiringVessel = vesselData;
             }
 
-            // Step 2: Purchase via vessel/purchase-vessel (same endpoint as regular vessels)
             console.log('[VesselCart] Purchasing VIP vessel via /api/vessel/purchase-vessel, id:', vessel.id);
             return fetch('/api/vessel/purchase-vessel', {
                 method: 'POST',
@@ -875,7 +898,8 @@
     // Process checkout - purchase all vessels
     function processCheckout() {
         getCart(function(cart) {
-            if (cart.length === 0) return;
+            var checkoutKeys = Object.keys(cart);
+            if (checkoutKeys.length === 0) return;
 
             var progressOverlay = document.createElement('div');
             progressOverlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center;';
@@ -889,8 +913,8 @@
             var failCount = 0;
             var errors = [];
             var totalPurchases = 0;
-            for (var ti = 0; ti < cart.length; ti++) {
-                totalPurchases += cart[ti].quantity;
+            for (var ti = 0; ti < checkoutKeys.length; ti++) {
+                totalPurchases += cart[checkoutKeys[ti]].quantity;
             }
 
             var itemIndex = 0;
@@ -898,7 +922,7 @@
             var currentPurchase = 0;
 
             function processNext() {
-                if (itemIndex >= cart.length) {
+                if (itemIndex >= checkoutKeys.length) {
                     // Done
                     clearCart();
 
@@ -914,13 +938,15 @@
                         var stores = getStores();
                         var userStore = stores ? stores.user : null;
                         if (userStore && userStore.fetchUser) {
-                            userStore.fetchUser();
+                            userStore.fetchUser().catch(function(e) {
+                                console.error('[VesselCart] Failed to refresh user:', e);
+                            });
                         }
                     }, errors.length > 0 ? 4000 : 2000);
                     return;
                 }
 
-                var item = cart[itemIndex];
+                var item = cart[checkoutKeys[itemIndex]];
                 if (subIndex >= item.quantity) {
                     itemIndex++;
                     subIndex = 0;
@@ -981,16 +1007,16 @@
                         successCount++;
                     } else {
                         failCount++;
-                        errors.push(vesselName + ': unknown error');
+                        errors.push(escapeHtml(vesselName) + ': unknown error');
                         console.error('[VesselCart] Failed:', data);
                     }
                 }).catch(function(e) {
                     failCount++;
-                    errors.push(vesselName + ': ' + e.message);
+                    errors.push(escapeHtml(vesselName) + ': ' + escapeHtml(e.message));
                     console.error('[VesselCart] Error:', e);
                 }).finally(function() {
                     subIndex++;
-                    setTimeout(processNext, 1500);
+                    setTimeout(processNext, failCount > 0 ? 2000 : 500);
                 });
             }
 
@@ -1000,52 +1026,56 @@
 
     // Watch for order button and inject add-to-cart button
     function watchForOrderButton() {
-        var observer = new MutationObserver(function() {
-            var bottomControls = document.getElementById('bottom-controls');
-            var existingCartBtn = document.getElementById('add-to-cart-btn');
+        watchObserver = new MutationObserver(function() {
+            if (watchDebounceTimer) return;
+            watchDebounceTimer = setTimeout(function() {
+                watchDebounceTimer = null;
 
-            if (!bottomControls) {
-                if (existingCartBtn) existingCartBtn.remove();
-                return;
-            }
+                var bottomControls = document.getElementById('bottom-controls');
+                var existingCartBtn = document.getElementById('add-to-cart-btn');
 
-            var orderBtn = bottomControls.querySelector('#order-btn');
-
-            if (!orderBtn) {
-                if (existingCartBtn) existingCartBtn.remove();
-                return;
-            }
-
-            if (existingCartBtn && bottomControls.contains(existingCartBtn)) return;
-
-            if (existingCartBtn) existingCartBtn.remove();
-
-
-            var backBtn = bottomControls.querySelector('.light-blue');
-            if (backBtn) backBtn.style.width = '25%';
-            orderBtn.style.width = '40%';
-
-            var cartBtn = document.createElement('div');
-            cartBtn.id = 'add-to-cart-btn';
-            cartBtn.className = 'control-btn flex-centered';
-            cartBtn.style.cssText = 'width:35%;background:#f59e0b;cursor:pointer;';
-            cartBtn.innerHTML = '<span>' + CART_ICON + ' Add to Cart</span>';
-
-            cartBtn.addEventListener('click', function() {
-                var currentVessel = getCurrentVessel();
-                if (currentVessel) {
-                    var qty = getQuantityFromModal();
-                    addToCart(currentVessel, qty);
-                } else {
-                    showNotification('Could not get vessel data', 'error');
+                if (!bottomControls) {
+                    if (existingCartBtn) existingCartBtn.remove();
+                    return;
                 }
-            });
 
-            orderBtn.parentNode.insertBefore(cartBtn, orderBtn);
+                var orderBtn = bottomControls.querySelector('#order-btn');
 
+                if (!orderBtn) {
+                    if (existingCartBtn) existingCartBtn.remove();
+                    return;
+                }
+
+                if (existingCartBtn && bottomControls.contains(existingCartBtn)) return;
+
+                if (existingCartBtn) existingCartBtn.remove();
+
+                var backBtn = bottomControls.querySelector('.light-blue');
+                if (backBtn) backBtn.style.width = '25%';
+                orderBtn.style.width = '40%';
+
+                var cartBtn = document.createElement('div');
+                cartBtn.id = 'add-to-cart-btn';
+                cartBtn.className = 'control-btn flex-centered';
+                cartBtn.style.cssText = 'width:35%;background:#f59e0b;cursor:pointer;';
+                cartBtn.innerHTML = '<span>Add to ' + CART_ICON + '</span>';
+
+                cartBtn.addEventListener('click', function() {
+                    var currentVessel = getCurrentVessel();
+                    if (currentVessel) {
+                        var qty = getQuantityFromModal();
+                        addToCart(currentVessel, qty);
+                    } else {
+                        showNotification('Could not get vessel data', 'error');
+                    }
+                });
+
+                orderBtn.parentNode.insertBefore(cartBtn, orderBtn);
+            }, 250);
         });
 
-        observer.observe(document.body, { childList: true, subtree: true });
+        var target = document.getElementById('app') || document.body;
+        watchObserver.observe(target, { childList: true, subtree: true });
     }
 
     // Initialize
@@ -1055,6 +1085,17 @@
             createCartButton();
             updateCartBadge();
             watchForOrderButton();
+        });
+
+        // Invalidate drydock ports cache on navigation
+        window.addEventListener('hashchange', function() {
+            drydockPortsCache = null;
+        });
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', function() {
+            if (watchObserver) { watchObserver.disconnect(); watchObserver = null; }
+            if (watchDebounceTimer) { clearTimeout(watchDebounceTimer); watchDebounceTimer = null; }
         });
     }
 

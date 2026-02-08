@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Game Bug-Using: Fast Delivery for built vessels
 // @namespace    https://rebelship.org/
-// @version      1.11
+// @version      1.12
 // @description  Fast delivery for built vessels via drydock exploit. Sends pending vessels in drydock, for resetting the delivery time with the maintenance end ;)
 // @author       https://github.com/justonlyforyou/
 // @order        57
@@ -15,56 +15,50 @@
 (function() {
     'use strict';
 
-    const API_BASE = 'https://shippingmanager.cc/api';
+    // ============================================
+    // CONSTANTS
+    // ============================================
+    var API_BASE = 'https://shippingmanager.cc/api';
+    var DEBOUNCE_MS = 200;
+    var RETRY_BASE_DELAY_MS = 1000;
+    var MAX_RETRIES = 3;
+    var DRYDOCK_DURATION_MIN = 60;
 
     function log(msg) {
         console.log('[Fast Delivery] ' + msg);
     }
 
-    // State
-    let selectedVessels = new Set();
-    let vesselDataMap = new Map(); // Maps vessel ID to vessel data
-    let isProcessing = false;
+    // ============================================
+    // STATE
+    // ============================================
+    var selectedVessels = new Set();
+    var vesselDataMap = new Map();
+    var isProcessing = false;
+
 
     // ============================================
     // PINIA STORE ACCESS
     // ============================================
+    var cachedPinia = null;
+
     function getPinia() {
+        if (cachedPinia) return cachedPinia;
         try {
-            const appEl = document.querySelector('#app');
+            var appEl = document.getElementById('app');
             if (!appEl || !appEl.__vue_app__) return null;
-            const app = appEl.__vue_app__;
-            return app._context.provides.pinia || app.config.globalProperties.$pinia;
+            var app = appEl.__vue_app__;
+            cachedPinia = app._context.provides.pinia || app.config.globalProperties.$pinia;
+            return cachedPinia;
         } catch {
             return null;
         }
     }
 
-    function getVesselStore() {
+    function getStore(name) {
         try {
-            const pinia = getPinia();
+            var pinia = getPinia();
             if (!pinia || !pinia._s) return null;
-            return pinia._s.get('vessel');
-        } catch {
-            return null;
-        }
-    }
-
-    function getToastStore() {
-        try {
-            const pinia = getPinia();
-            if (!pinia || !pinia._s) return null;
-            return pinia._s.get('toast');
-        } catch {
-            return null;
-        }
-    }
-
-    function getModalStore() {
-        try {
-            const pinia = getPinia();
-            if (!pinia || !pinia._s) return null;
-            return pinia._s.get('modal');
+            return pinia._s.get(name);
         } catch {
             return null;
         }
@@ -72,7 +66,7 @@
 
     function showToast(message, type) {
         type = type || 'success';
-        const toastStore = getToastStore();
+        var toastStore = getStore('toast');
         if (toastStore) {
             try {
                 if (type === 'error' && toastStore.error) {
@@ -92,7 +86,7 @@
 
     // Uses XMLHttpRequest to bypass window.fetch interceptors (e.g. AutoDrydock)
     function xhrPost(url, body, maxRetries) {
-        maxRetries = maxRetries ?? 3;
+        maxRetries = maxRetries ?? MAX_RETRIES;
         var lastError;
 
         return (async function tryRequest(attempt) {
@@ -118,7 +112,7 @@
                 lastError = e;
                 log('xhrPost (' + url + ') attempt ' + attempt + '/' + maxRetries + ' failed: ' + e.message);
                 if (attempt < maxRetries) {
-                    var delay = attempt * 1000;
+                    var delay = attempt * RETRY_BASE_DELAY_MS;
                     await new Promise(function(resolve) { setTimeout(resolve, delay); });
                     return tryRequest(attempt + 1);
                 }
@@ -128,13 +122,12 @@
     }
 
     async function fetchDrydockStatus(vesselIds, maxRetries) {
-        // POST /api/maintenance/get - returns maintenance_data with drydock costs
-        maxRetries = maxRetries ?? 3;
-        let lastError;
+        maxRetries = maxRetries ?? MAX_RETRIES;
+        var lastError;
 
-        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        for (var attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-                const response = await fetch(API_BASE + '/maintenance/get', {
+                var response = await fetch(API_BASE + '/maintenance/get', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     credentials: 'include',
@@ -145,29 +138,31 @@
                 if (!response.ok) {
                     throw new Error('HTTP ' + response.status);
                 }
-                const data = await response.json();
+                var data = await response.json();
+                var vessels = data.data && data.data.vessels ? data.data.vessels : [];
 
-                // Extract drydock_minor costs from maintenance_data
-                let totalCost = 0;
-                const vessels = data.data?.vessels || [];
-                for (const vessel of vessels) {
-                    const drydockMinor = vessel.maintenance_data?.find(m => m.type === 'drydock_minor');
-                    if (drydockMinor) {
-                        totalCost += drydockMinor.discounted_price || drydockMinor.price || 0;
+                var totalCost = vessels.reduce(function(sum, vessel) {
+                    var md = vessel.maintenance_data;
+                    if (!md) return sum;
+                    for (var i = 0; i < md.length; i++) {
+                        if (md[i].type === 'drydock_minor') {
+                            return sum + (md[i].discounted_price || md[i].price || 0);
+                        }
                     }
-                }
+                    return sum;
+                }, 0);
 
                 return {
                     vessels: vessels,
                     totalCost: totalCost,
-                    cash: data.user?.cash || 0
+                    cash: data.user ? data.user.cash || 0 : 0
                 };
             } catch (e) {
                 lastError = e;
                 log('fetchDrydockStatus attempt ' + attempt + '/' + maxRetries + ' failed: ' + e.message);
                 if (attempt < maxRetries) {
-                    const delay = attempt * 1000;
-                    await new Promise(resolve => setTimeout(resolve, delay));
+                    var delay = attempt * RETRY_BASE_DELAY_MS;
+                    await new Promise(function(resolve) { setTimeout(resolve, delay); });
                 }
             }
         }
@@ -188,78 +183,77 @@
     // GET BUILT VESSELS IN PENDING
     // ============================================
     function getBuiltPendingVessels() {
-        const vesselStore = getVesselStore();
+        var vesselStore = getStore('vessel');
         if (!vesselStore || !vesselStore.userVessels) return [];
 
-        // Filter for pending vessels that have delivery_price (built vessels)
-        return vesselStore.userVessels.filter(v =>
-            v.status === 'pending' && v.delivery_price !== null && v.delivery_price > 0
-        );
+        return vesselStore.userVessels.filter(function(v) {
+            return v.status === 'pending' && v.delivery_price !== null && v.delivery_price > 0;
+        });
     }
 
     // ============================================
     // UI INJECTION
     // ============================================
     function isPendingTab() {
-        const header = document.querySelector('#notifications-vessels-listing .header-text .text-center');
+        var header = document.querySelector('#notifications-vessels-listing .header-text .text-center');
         if (!header) return false;
-        const headerText = header.textContent.trim().toLowerCase();
-        return headerText.includes('pending');
+        return header.textContent.trim().toLowerCase().indexOf('pending') !== -1;
     }
 
     function injectCheckboxes() {
         if (!isPendingTab()) {
-            // Remove checkboxes if not in pending tab
-            document.querySelectorAll('.fast-delivery-checkbox').forEach(cb => cb.remove());
+            var existing = document.querySelectorAll('.fast-delivery-checkbox');
+            if (existing.length > 0) {
+                existing.forEach(function(cb) { cb.remove(); });
+            }
             selectedVessels.clear();
+            vesselDataMap.clear();
             return;
         }
 
-        const vesselList = document.querySelector('#notifications-vessels-listing .vesselList');
+        var vesselList = document.querySelector('#notifications-vessels-listing .vesselList');
         if (!vesselList) return;
 
-        const builtVessels = getBuiltPendingVessels();
-        const builtVesselNames = new Set(builtVessels.map(v => v.name));
+        var builtVessels = getBuiltPendingVessels();
+        // Build name→vessel map for O(1) lookup
+        var nameMap = {};
+        for (var i = 0; i < builtVessels.length; i++) {
+            nameMap[builtVessels[i].name] = builtVessels[i];
+            vesselDataMap.set(builtVessels[i].id, builtVessels[i]);
+        }
 
-        // Store vessel data for later use
-        builtVessels.forEach(v => vesselDataMap.set(v.id, v));
-
-        const vesselRows = vesselList.querySelectorAll('.vesselRow');
-        vesselRows.forEach(row => {
-            const nameEl = row.querySelector('.vesselName .nameValue');
+        var vesselRows = vesselList.querySelectorAll('.vesselRow');
+        vesselRows.forEach(function(row) {
+            var nameEl = row.querySelector('.vesselName .nameValue');
             if (!nameEl) return;
-            const vesselName = nameEl.textContent.trim();
+            var vesselName = nameEl.textContent.trim();
 
-            const existingCheckbox = row.querySelector('.fast-delivery-checkbox');
+            var existingCheckbox = row.querySelector('.fast-delivery-checkbox');
 
-            // Only show checkbox for built vessels (have delivery_price)
-            if (!builtVesselNames.has(vesselName)) {
+            var vessel = nameMap[vesselName];
+            if (!vessel) {
                 if (existingCheckbox) existingCheckbox.remove();
                 return;
             }
 
-            // Skip if already has checkbox
             if (existingCheckbox) return;
 
-            // Find vessel ID from name
-            const vessel = builtVessels.find(v => v.name === vesselName);
-            if (!vessel) return;
-
-            // Create checkbox wrapper
-            const checkboxWrapper = document.createElement('div');
+            var checkboxWrapper = document.createElement('div');
             checkboxWrapper.className = 'fast-delivery-checkbox';
-            checkboxWrapper.style.cssText = 'position: absolute; left: 8px; top: 50%; transform: translateY(-50%); z-index: 10;';
+            checkboxWrapper.style.cssText = 'position:absolute;left:8px;top:50%;transform:translateY(-50%);z-index:10;';
 
-            const checkbox = document.createElement('input');
+            var checkbox = document.createElement('input');
             checkbox.type = 'checkbox';
-            checkbox.style.cssText = 'width: 18px; height: 18px; cursor: pointer; accent-color: #f59e0b;';
+            checkbox.dataset.vesselId = vessel.id;
+            checkbox.style.cssText = 'width:18px;height:18px;cursor:pointer;accent-color:#f59e0b;';
 
             checkbox.addEventListener('change', function(e) {
                 e.stopPropagation();
-                if (checkbox.checked) {
-                    selectedVessels.add(vessel.id);
+                var vid = parseInt(this.dataset.vesselId, 10);
+                if (this.checked) {
+                    selectedVessels.add(vid);
                 } else {
-                    selectedVessels.delete(vessel.id);
+                    selectedVessels.delete(vid);
                 }
                 updateButtonStates();
             });
@@ -269,64 +263,45 @@
             });
 
             checkboxWrapper.appendChild(checkbox);
-
-            // Make row position relative for absolute positioning
             row.style.position = 'relative';
             row.style.paddingLeft = '40px';
-
             row.insertBefore(checkboxWrapper, row.firstChild);
         });
     }
 
     function injectButtons() {
-        const existing = document.getElementById('fast-delivery-buttons');
+        var existing = document.getElementById('fast-delivery-buttons');
 
         if (!isPendingTab()) {
-            if (existing) existing.remove();
+            if (existing) { existing.remove(); }
             return;
         }
 
-        // Check if any built vessels exist in pending
-        const builtVessels = getBuiltPendingVessels();
+        var builtVessels = getBuiltPendingVessels();
         if (builtVessels.length === 0) {
-            if (existing) existing.remove();
+            if (existing) { existing.remove(); }
             return;
         }
 
         if (existing) return;
 
-        // Find the button container (buttonWrapper in pending tab)
-        let container = document.querySelector('#notifications-vessels-listing .buttonWrapper');
+        var container = document.querySelector('#notifications-vessels-listing .buttonWrapper');
         if (!container) {
-            // Try without the parent selector
             container = document.querySelector('.buttonWrapper');
-            log('Fallback buttonWrapper found: ' + !!container);
         }
-        if (!container) {
-            log('No buttonWrapper found');
-            return;
-        }
+        if (!container) return;
 
-        const buttonContainer = document.createElement('div');
+        var buttonContainer = document.createElement('div');
         buttonContainer.id = 'fast-delivery-buttons';
-        buttonContainer.style.cssText = 'grid-column: 1 / -1; width: 100%; display: flex; gap: 4px; padding: 0; box-sizing: border-box; margin-bottom: 4px;';
+        buttonContainer.style.cssText = 'grid-column:1/-1;width:100%;display:flex;gap:4px;padding:0;box-sizing:border-box;margin-bottom:4px;';
 
-        // All button
-        const allBtn = createButton('All', function() {
-            selectAll(true);
-        });
+        var allBtn = createButton('All', function() { selectAll(true); });
         allBtn.id = 'fast-delivery-all-btn';
 
-        // None button
-        const noneBtn = createButton('None', function() {
-            selectAll(false);
-        });
+        var noneBtn = createButton('None', function() { selectAll(false); });
         noneBtn.id = 'fast-delivery-none-btn';
 
-        // Fast Delivery button
-        const fastBtn = createButton('Fast Delivery', function() {
-            processSelectedVessels();
-        });
+        var fastBtn = createButton('Fast Delivery', function() { processSelectedVessels(); });
         fastBtn.id = 'fast-delivery-btn';
         fastBtn.disabled = true;
         fastBtn.style.background = 'linear-gradient(135deg, #f59e0b, #d97706)';
@@ -335,53 +310,50 @@
         buttonContainer.appendChild(noneBtn);
         buttonContainer.appendChild(fastBtn);
 
-        // Insert at TOP of container
         container.insertBefore(buttonContainer, container.firstChild);
 
         log('Buttons injected');
     }
 
     function createButton(text, onClick) {
-        const btn = document.createElement('button');
+        var btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'btn btn-depart btn-block default light-blue';
-        btn.style.cssText = 'flex: 1;';
+        btn.style.cssText = 'flex:1;';
 
-        const btnContent = document.createElement('div');
+        var btnContent = document.createElement('div');
         btnContent.className = 'btn-content-wrapper fit-btn-text';
         btnContent.style.fontSize = '14px';
         btnContent.textContent = text;
 
         btn.appendChild(btnContent);
         btn.addEventListener('click', onClick);
-
         return btn;
     }
 
     function updateButtonStates() {
-        const fastBtn = document.getElementById('fast-delivery-btn');
-        const hasSelection = selectedVessels.size > 0;
-
-        if (fastBtn) {
-            fastBtn.disabled = !hasSelection || isProcessing;
-            fastBtn.style.opacity = fastBtn.disabled ? '0.5' : '1';
-            fastBtn.style.cursor = fastBtn.disabled ? 'not-allowed' : 'pointer';
-        }
+        var fastBtn = document.getElementById('fast-delivery-btn');
+        if (!fastBtn) return;
+        var disabled = selectedVessels.size === 0 || isProcessing;
+        fastBtn.disabled = disabled;
+        fastBtn.style.opacity = disabled ? '0.5' : '1';
+        fastBtn.style.cursor = disabled ? 'not-allowed' : 'pointer';
     }
 
     // ============================================
     // SELECTION FUNCTIONS
     // ============================================
     function selectAll(select) {
-        const checkboxes = document.querySelectorAll('.fast-delivery-checkbox input[type="checkbox"]');
-        const builtVessels = getBuiltPendingVessels();
+        var listing = document.getElementById('notifications-vessels-listing');
+        var checkboxes = listing ? listing.querySelectorAll('.fast-delivery-checkbox input[type="checkbox"]') : [];
 
-        checkboxes.forEach(cb => {
+        checkboxes.forEach(function(cb) {
             cb.checked = select;
         });
 
         if (select) {
-            builtVessels.forEach(v => selectedVessels.add(v.id));
+            var builtVessels = getBuiltPendingVessels();
+            builtVessels.forEach(function(v) { selectedVessels.add(v.id); });
         } else {
             selectedVessels.clear();
         }
@@ -398,25 +370,19 @@
             showToast('No vessels selected', 'error');
             return;
         }
-
         if (isProcessing) return;
 
         isProcessing = true;
         updateButtonStates();
 
-        const vesselIds = Array.from(selectedVessels);
+        var vesselIds = Array.from(selectedVessels);
 
         try {
-            // Fetch drydock cost
-            const drydockStatus = await fetchDrydockStatus(vesselIds);
-            const totalCost = drydockStatus.totalCost || 0;
-            const cash = drydockStatus.cash || 0;
-
-            // Show confirmation modal
-            showConfirmationModal(vesselIds, totalCost, cash);
+            var drydockStatus = await fetchDrydockStatus(vesselIds);
+            showConfirmationModal(vesselIds, drydockStatus.totalCost || 0, drydockStatus.cash || 0);
         } catch (err) {
             log('Error fetching drydock status: ' + err.message);
-            showToast('Failed to get drydock cost: ' + err.message, 'error');
+            showToast('Failed to get drydock cost', 'error');
             isProcessing = false;
             updateButtonStates();
         }
@@ -470,9 +436,22 @@
         updateButtonStates();
     }
 
+    function createInfoRow(label, value, noMargin) {
+        var row = document.createElement('div');
+        row.style.cssText = 'display:flex;justify-content:space-between;' + (noMargin ? '' : 'margin-bottom:10px;');
+        var labelSpan = document.createElement('span');
+        labelSpan.style.cssText = 'font-size:14px;color:#626b90;';
+        labelSpan.textContent = label;
+        var valueSpan = document.createElement('span');
+        valueSpan.style.cssText = 'font-size:14px;font-weight:700;color:#01125d;';
+        valueSpan.textContent = value;
+        row.appendChild(labelSpan);
+        row.appendChild(valueSpan);
+        return row;
+    }
+
     function showConfirmationModal(vesselIds, totalCost, cash) {
-        // Close any open game modal first
-        var modalStore = getModalStore();
+        var modalStore = getStore('modal');
         if (modalStore && modalStore.closeAll) {
             modalStore.closeAll();
         }
@@ -480,9 +459,7 @@
         injectFDModalStyles();
 
         var existing = document.getElementById('fd-modal-wrapper');
-        if (existing) {
-            existing.remove();
-        }
+        if (existing) existing.remove();
 
         var headerEl = document.querySelector('header');
         var headerHeight = headerEl ? headerEl.offsetHeight : 89;
@@ -533,45 +510,56 @@
         var centralContainer = document.createElement('div');
         centralContainer.id = 'fd-central-container';
 
-        var vesselCount = vesselIds.length;
         var canAfford = cash >= totalCost;
 
-        var contentHtml = '<div style="padding:20px;max-width:400px;margin:0 auto;font-family:Lato,sans-serif;color:#01125d;">' +
-            '<div style="margin-bottom:16px;font-size:14px;color:#626b90;line-height:1.5;">' +
-                'By triggering drydock immediately after build, delivery time is reduced to 60 minutes (the drydock duration). ' +
-                'This is a known game exploit.' +
-            '</div>' +
-            '<div style="background:#ebe9ea;border-radius:8px;padding:16px;margin-bottom:16px;">' +
-                '<div style="display:flex;justify-content:space-between;margin-bottom:10px;">' +
-                    '<span style="font-size:14px;color:#626b90;">Vessels</span>' +
-                    '<span style="font-size:14px;font-weight:700;color:#01125d;">' + vesselCount + '</span>' +
-                '</div>' +
-                '<div style="display:flex;justify-content:space-between;margin-bottom:10px;">' +
-                    '<span style="font-size:14px;color:#626b90;">Total Drydock Cost</span>' +
-                    '<span style="font-size:14px;font-weight:700;color:#01125d;">$' + totalCost.toLocaleString() + '</span>' +
-                '</div>' +
-                '<div style="display:flex;justify-content:space-between;">' +
-                    '<span style="font-size:14px;color:#626b90;">Your Cash</span>' +
-                    '<span style="font-size:14px;font-weight:700;color:#01125d;">$' + cash.toLocaleString() + '</span>' +
-                '</div>' +
-            '</div>';
+        // Build modal body with DOM methods (XSS-safe)
+        var contentDiv = document.createElement('div');
+        contentDiv.style.cssText = 'padding:20px;max-width:400px;margin:0 auto;font-family:Lato,sans-serif;color:#01125d;';
+
+        var desc = document.createElement('div');
+        desc.style.cssText = 'margin-bottom:16px;font-size:14px;color:#626b90;line-height:1.5;';
+        desc.textContent = 'By triggering drydock immediately after build, delivery time is reduced to ' + DRYDOCK_DURATION_MIN + ' minutes (the drydock duration). This is a known game exploit.';
+        contentDiv.appendChild(desc);
+
+        var infoBox = document.createElement('div');
+        infoBox.style.cssText = 'background:#ebe9ea;border-radius:8px;padding:16px;margin-bottom:16px;';
+        infoBox.appendChild(createInfoRow('Vessels', String(vesselIds.length)));
+        infoBox.appendChild(createInfoRow('Total Drydock Cost', '$' + totalCost.toLocaleString()));
+        infoBox.appendChild(createInfoRow('Your Cash', '$' + cash.toLocaleString(), true));
+        contentDiv.appendChild(infoBox);
 
         if (!canAfford) {
-            contentHtml += '<div style="background:#fee2e2;border-radius:8px;padding:12px;margin-bottom:16px;color:#dc2626;font-size:13px;font-weight:500;">' +
-                'Not enough cash to afford drydock!' +
-            '</div>';
+            var warning = document.createElement('div');
+            warning.style.cssText = 'background:#fee2e2;border-radius:8px;padding:12px;margin-bottom:16px;color:#dc2626;font-size:13px;font-weight:500;';
+            warning.textContent = 'Not enough cash to afford drydock!';
+            contentDiv.appendChild(warning);
         }
 
-        contentHtml += '<div style="display:flex;gap:12px;justify-content:center;margin-top:24px;">' +
-            '<button id="fast-delivery-cancel" style="padding:10px 24px;background:linear-gradient(90deg,#d7d8db,#95969b);border:0;border-radius:6px;color:#393939;cursor:pointer;font-size:16px;font-weight:500;font-family:Lato,sans-serif;">' +
-                'Cancel' +
-            '</button>' +
-            '<button id="fast-delivery-confirm"' + (!canAfford ? ' disabled' : '') + ' style="padding:10px 24px;background:' + (canAfford ? 'linear-gradient(180deg,#f59e0b,#d97706)' : '#9ca3af') + ';border:0;border-radius:6px;color:#fff;cursor:' + (canAfford ? 'pointer' : 'not-allowed') + ';font-size:16px;font-weight:500;font-family:Lato,sans-serif;opacity:' + (canAfford ? '1' : '0.6') + ';">' +
-                'Activate Fast Delivery' +
-            '</button>' +
-        '</div></div>';
+        var btnRow = document.createElement('div');
+        btnRow.style.cssText = 'display:flex;gap:12px;justify-content:center;margin-top:24px;';
 
-        centralContainer.innerHTML = contentHtml;
+        var cancelBtn = document.createElement('button');
+        cancelBtn.style.cssText = 'padding:10px 24px;background:linear-gradient(90deg,#d7d8db,#95969b);border:0;border-radius:6px;color:#393939;cursor:pointer;font-size:16px;font-weight:500;font-family:Lato,sans-serif;';
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.addEventListener('click', function() { closeFDModal(); });
+
+        var confirmBtn = document.createElement('button');
+        confirmBtn.disabled = !canAfford;
+        confirmBtn.style.cssText = 'padding:10px 24px;background:' + (canAfford ? 'linear-gradient(180deg,#f59e0b,#d97706)' : '#9ca3af') + ';border:0;border-radius:6px;color:#fff;cursor:' + (canAfford ? 'pointer' : 'not-allowed') + ';font-size:16px;font-weight:500;font-family:Lato,sans-serif;opacity:' + (canAfford ? '1' : '0.6') + ';';
+        confirmBtn.textContent = 'Activate Fast Delivery';
+        confirmBtn.addEventListener('click', async function() {
+            if (!canAfford || this.disabled) return;
+            this.disabled = true;
+            this.style.opacity = '0.6';
+            this.style.cursor = 'not-allowed';
+            await executeFastDelivery(vesselIds);
+            closeFDModal();
+        });
+
+        btnRow.appendChild(cancelBtn);
+        btnRow.appendChild(confirmBtn);
+        contentDiv.appendChild(btnRow);
+        centralContainer.appendChild(contentDiv);
 
         modalContent.appendChild(centralContainer);
         modalContainer.appendChild(modalHeader);
@@ -582,39 +570,28 @@
         document.body.appendChild(modalWrapper);
 
         isFDModalOpen = true;
-
-        document.getElementById('fast-delivery-cancel').addEventListener('click', function() {
-            closeFDModal();
-        });
-
-        document.getElementById('fast-delivery-confirm').addEventListener('click', async function() {
-            if (!canAfford) return;
-            await executeFastDelivery(vesselIds);
-            closeFDModal();
-        });
     }
 
     async function executeFastDelivery(vesselIds) {
         try {
             log('Triggering fast delivery for ' + vesselIds.length + ' vessels');
-            const result = await triggerBulkDrydock(vesselIds);
+            var result = await triggerBulkDrydock(vesselIds);
 
             if (result.data && result.data.success) {
-                const msg = vesselIds.length === 1
-                    ? 'Fast delivery activated - vessel will arrive in 60 minutes'
-                    : `Fast delivery activated - ${vesselIds.length} vessels will arrive in 60 minutes`;
+                var msg = vesselIds.length === 1
+                    ? 'Fast delivery activated - vessel will arrive in ' + DRYDOCK_DURATION_MIN + ' minutes'
+                    : 'Fast delivery activated - ' + vesselIds.length + ' vessels will arrive in ' + DRYDOCK_DURATION_MIN + ' minutes';
                 showToast(msg, 'success');
                 log(msg);
 
-                // Trigger refresh
                 window.dispatchEvent(new CustomEvent('drydock-completed'));
                 refreshVesselList();
             } else {
-                throw new Error(result.error || 'Unknown error');
+                throw new Error('API returned failure');
             }
         } catch (err) {
             log('Fast delivery failed: ' + err.message);
-            showToast('Fast delivery failed: ' + err.message, 'error');
+            showToast('Fast delivery failed. Check console for details.', 'error');
         } finally {
             selectedVessels.clear();
             isProcessing = false;
@@ -623,70 +600,85 @@
     }
 
     function refreshVesselList() {
-        const vesselStore = getVesselStore();
-        if (vesselStore && vesselStore.fetchUserVessels) {
-            vesselStore.fetchUserVessels().then(() => {
-                log('Refreshed vessel list');
-                setTimeout(() => {
-                    injectCheckboxes();
-                    updateButtonStates();
-                }, 500);
-            });
-        }
+        var vesselStore = getStore('vessel');
+        if (!vesselStore || !vesselStore.fetchUserVessels) return;
+
+        vesselStore.fetchUserVessels().then(function() {
+            log('Refreshed vessel list');
+            injectCheckboxes();
+            updateButtonStates();
+        }).catch(function(err) {
+            log('refreshVesselList error: ' + err.message);
+        });
     }
 
     // ============================================
     // INITIALIZE WITH MUTATION OBSERVER
     // ============================================
-    let debounceTimer = null;
+    var debounceTimer = null;
+    var observer = null;
 
     function debouncedInject() {
         if (debounceTimer) clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(() => {
+        debounceTimer = setTimeout(function() {
             injectCheckboxes();
             injectButtons();
-        }, 100);
+        }, DEBOUNCE_MS);
     }
 
-    function initObserver() {
-        // Watch for changes in the vessel listing area
-        const observer = new MutationObserver(function(mutations) {
-            let shouldInject = false;
-            for (const mutation of mutations) {
-                // Check if relevant elements changed
-                if (mutation.target.id === 'notifications-vessels-listing' ||
-                    mutation.target.classList?.contains('vesselList') ||
-                    mutation.target.classList?.contains('vesselRow') ||
-                    mutation.target.classList?.contains('header-text') ||
-                    mutation.addedNodes.length > 0) {
-                    shouldInject = true;
-                    break;
-                }
-            }
-            if (shouldInject) {
-                debouncedInject();
-            }
+    function startObserver() {
+        if (observer) observer.disconnect();
+
+        observer = new MutationObserver(function() {
+            debouncedInject();
         });
 
-        // Start observing when app is ready
-        function startObserving() {
-            const app = document.getElementById('app');
-            if (app) {
-                observer.observe(app, {
-                    childList: true,
-                    subtree: true
-                });
-                log('MutationObserver started');
-                // Initial injection
-                debouncedInject();
-            } else {
-                setTimeout(startObserving, 500);
-            }
+        // Try narrow scope first, fall back to #app
+        var listing = document.getElementById('notifications-vessels-listing');
+        var target = listing || document.getElementById('app');
+        if (!target) return false;
+
+        observer.observe(target, { childList: true, subtree: true });
+
+        log('Observer started on ' + (listing ? '#notifications-vessels-listing' : '#app'));
+
+        // If we started on #app, try to narrow scope when listing appears
+        if (!listing) {
+            var narrowObserver = new MutationObserver(function() {
+                var el = document.getElementById('notifications-vessels-listing');
+                if (el) {
+                    narrowObserver.disconnect();
+                    observer.disconnect();
+                    observer.observe(el, { childList: true, subtree: true });
+
+                    log('Observer narrowed to #notifications-vessels-listing');
+                }
+            });
+            narrowObserver.observe(target, { childList: true, subtree: true });
+            setTimeout(function() { narrowObserver.disconnect(); }, 30000);
         }
 
-        startObserving();
+        return true;
     }
 
-    initObserver();
+    function init() {
+        if (!startObserver()) {
+            var initTimer = setInterval(function() {
+                if (startObserver()) {
+                    clearInterval(initTimer);
+                    debouncedInject();
+                }
+            }, 500);
+            setTimeout(function() { clearInterval(initTimer); }, 30000);
+        } else {
+            debouncedInject();
+        }
+    }
+
+    window.addEventListener('beforeunload', function() {
+        if (observer) observer.disconnect();
+    });
+
+    init();
     log('Script loaded');
 })();

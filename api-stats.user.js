@@ -2,7 +2,7 @@
 // @name         ShippingManager - API Stats Monitor
 // @namespace    http://tampermonkey.net/
 // @description  Monitor all API calls to shippingmanager.cc in the background
-// @version      1.92
+// @version      1.94
 // @order        2
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
@@ -20,12 +20,13 @@
     var SCRIPT_NAME = 'ApiStats';
     var STORE_NAME = 'calls';
     var MAX_AGE_MS = 61 * 60 * 1000;
-    var SAVE_DEBOUNCE_MS = 1000;
+    var SAVE_DEBOUNCE_MS = 30000; // 30s - 60s interval handles regular persistence
     var apiCalls = [];
     var aggregatedStats = {};
     var modalVisible = false;
     var currentFilter = 5;
     var saveTimeout = null;
+    var statsDirty = false;
     var updateTimeout = null;
     var bridgeReady = false;
     var filterButtons = [];
@@ -79,6 +80,8 @@
     }
 
     async function saveToDb() {
+        if (!statsDirty) return;
+        statsDirty = false;
         await dbSet('apiCalls', apiCalls);
     }
 
@@ -153,6 +156,7 @@
         aggregatedStats[endpoint].count++;
         aggregatedStats[endpoint].lastCall = now;
         aggregatedStats[endpoint].timestamps.push(now);
+        statsDirty = true;
 
         if (bridgeReady) {
             scheduleSave();
@@ -408,4 +412,8 @@
     } else {
         init();
     }
+
+    window.addEventListener('beforeunload', function() {
+        if (saveTimeout) { clearTimeout(saveTimeout); saveTimeout = null; }
+    });
 })();

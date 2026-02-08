@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Auto Anchor Points
 // @namespace    https://rebelship.org/
-// @version      1.42
+// @version      1.44
 // @description  Auto-purchase anchor points when timer expires
 // @author       https://github.com/justonlyforyou/
 // @order        8
@@ -403,7 +403,8 @@
             }
         });
 
-        observer.observe(document.body, { childList: true, subtree: true });
+        var modalContainer = document.getElementById('modal-container') || document.getElementById('app') || document.body;
+        observer.observe(modalContainer, { childList: true, subtree: true });
         log('Game modal observer started');
     }
 

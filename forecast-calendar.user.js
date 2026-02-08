@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Fuel / CO2 Price Forecast Calendar
 // @namespace    http://tampermonkey.net/
-// @version      3.40
+// @version      3.42
 // @description  Embedded forecast calendar with page-flip navigation
 // @author       https://github.com/justonlyforyou/
 // @order        13
@@ -11,6 +11,7 @@
 // @enabled      false
 // @RequireRebelShipMenu true
 // @RequireRebelShipStorage true
+// @background-job-required true
 // ==/UserScript==
 /* globals addMenuItem */
 
@@ -20,14 +21,17 @@
     // ============================================
     // DYNAMIC TABLE SIZING (rows only, title stays small)
     // ============================================
+    var lastPageHeight = null;
     function applyDynamicStyles(pageHeight) {
-        const titleHeight = 16;
-        const headerHeight = 18;
-        const numRows = 24;
-        const availableHeight = pageHeight - titleHeight - headerHeight - 4;
-        const rowHeight = Math.floor(availableHeight / numRows);
-        const fontSize = Math.max(9, Math.min(14, Math.floor(rowHeight * 0.75)));
-        const cellPadding = Math.max(0, Math.floor((rowHeight - fontSize) / 3));
+        if (lastPageHeight === pageHeight) return;
+        lastPageHeight = pageHeight;
+        var titleHeight = 16;
+        var headerHeight = 18;
+        var numRows = 24;
+        var availableHeight = pageHeight - titleHeight - headerHeight - 4;
+        var rowHeight = Math.floor(availableHeight / numRows);
+        var fontSize = Math.max(9, Math.min(14, Math.floor(rowHeight * 0.75)));
+        var cellPadding = Math.max(0, Math.floor((rowHeight - fontSize) / 3));
 
         var el = document.getElementById('forecast-dynamic-styles');
         if (!el) { el = document.createElement('style'); el.id = 'forecast-dynamic-styles'; document.head.appendChild(el); }
@@ -325,6 +329,30 @@
     var pageFlip = null;
     var daysData = [];
     var browserTimezone = null;
+    var forecastDataCache = { data: null, timestamp: 0, ttl: 21600000 }; // 6h TTL
+    var cachedAppEl = null;
+    var cachedHeaderEl = null;
+    var lastRenderDataLength = 0;
+    var autoPostTimer = null;
+
+    function escapeHtml(text) {
+        var div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    async function getForecastData() {
+        var now = Date.now();
+        if (forecastDataCache.data && (now - forecastDataCache.timestamp) < forecastDataCache.ttl) {
+            return forecastDataCache.data;
+        }
+        var response = await fetch(FORECAST_DATA_URL);
+        if (!response.ok) return null;
+        var data = await response.json();
+        forecastDataCache.data = data;
+        forecastDataCache.timestamp = Date.now();
+        return data;
+    }
 
     function getFuelClass(price) {
         if (price > 750) return 'fuel-red';
@@ -374,9 +402,9 @@
             var currentClass = isCurrentHour ? ' current-hour' : '';
 
             html += '<tr class="' + currentClass + '">' +
-                '<td class="time-cell">' + time + '</td>' +
-                '<td class="' + fuelClass + '">' + interval.fuel_price_per_ton + '</td>' +
-                '<td class="' + co2Class + '">' + interval.co2_price_per_ton + '</td>' +
+                '<td class="time-cell">' + escapeHtml(time) + '</td>' +
+                '<td class="' + fuelClass + '">' + escapeHtml(String(interval.fuel_price_per_ton)) + '</td>' +
+                '<td class="' + co2Class + '">' + escapeHtml(String(interval.co2_price_per_ton)) + '</td>' +
             '</tr>';
         }
 
@@ -393,14 +421,25 @@
             }
             pageFlip = null;
         }
+        // Explicit DOM cleanup to prevent detached nodes
+        var bookElement = document.getElementById('forecast-book');
+        if (bookElement) {
+            bookElement.innerHTML = '';
+        }
     }
 
-    function renderBook() {
+    function renderBook(forceRebuild) {
         var bookElement = document.getElementById('forecast-book');
         if (!bookElement) return;
 
+        // Skip rebuild if data unchanged and PageFlip exists
+        if (!forceRebuild && pageFlip && bookElement.children.length > 0 && lastRenderDataLength === daysData.length) {
+            try { pageFlip.update(); } catch { /* ignore */ }
+            return;
+        }
+        lastRenderDataLength = daysData.length;
+
         destroyPageFlip();
-        bookElement.innerHTML = '';
 
         var now = new Date();
 
@@ -511,34 +550,46 @@
     }
 
     function loadForecastData() {
+        var now = Date.now();
+        // Cache hit - reuse raw data
+        if (forecastDataCache.data && (now - forecastDataCache.timestamp) < forecastDataCache.ttl) {
+            browserTimezone = getBrowserTimezone();
+            var cached = convertCESTToTimezone(forecastDataCache.data, browserTimezone);
+            daysData = cached.success ? cached.data : forecastDataCache.data;
+            if (!cached.success) browserTimezone = 'CEST';
+            renderBook(true);
+            return;
+        }
+
         fetch(FORECAST_DATA_URL)
-            .then(function(response) { return response.json(); })
+            .then(function(response) {
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                return response.json();
+            })
             .then(function(rawData) {
-                // Get browser timezone and convert data
+                forecastDataCache.data = rawData;
+                forecastDataCache.timestamp = Date.now();
+
                 browserTimezone = getBrowserTimezone();
                 var conversionResult = convertCESTToTimezone(rawData, browserTimezone);
+                daysData = conversionResult.success ? conversionResult.data : rawData;
+                if (!conversionResult.success) browserTimezone = 'CEST';
 
-                if (conversionResult.success) {
-                    daysData = conversionResult.data;
-                } else {
-                    daysData = rawData;
-                    browserTimezone = 'CEST';
-                }
-
-                renderBook();
+                renderBook(true);
             })
             .catch(function(error) {
                 console.error('[Forecast] Error loading data:', error);
-                document.getElementById('forecast-book').innerHTML = '<p style="color:#ef4444;text-align:center;padding:40px;">Failed to load forecast data</p>';
+                var bookEl = document.getElementById('forecast-book');
+                if (bookEl) bookEl.innerHTML = '<p style="color:#ef4444;text-align:center;padding:40px;">Failed to load forecast data</p>';
             });
     }
 
     // Get Pinia modalStore from Vue app
     function getModalStore() {
         try {
-            var appEl = document.querySelector('#app');
-            if (!appEl || !appEl.__vue_app__) return null;
-            var app = appEl.__vue_app__;
+            if (!cachedAppEl) cachedAppEl = document.getElementById('app');
+            if (!cachedAppEl || !cachedAppEl.__vue_app__) return null;
+            var app = cachedAppEl.__vue_app__;
             var pinia = app._context.provides.pinia || app.config.globalProperties.$pinia;
             if (!pinia || !pinia._s) return null;
             return pinia._s.get('modal');
@@ -615,10 +666,19 @@
         // Clean up pageflip
         destroyPageFlip();
 
-        // Hide our modal
+        // Clear rendered data but keep cache for re-use
+        daysData = [];
+        lastRenderDataLength = 0;
+
+        // Hide our modal with animation, then remove DOM
         var modalWrapper = document.getElementById('forecast-modal-wrapper');
         if (modalWrapper) {
             modalWrapper.classList.add('hide');
+            setTimeout(function() {
+                if (!isForecastModalOpen) {
+                    modalWrapper.remove();
+                }
+            }, 200);
         }
     }
 
@@ -633,6 +693,14 @@
                 closeForecastModal();
             }
         });
+    }
+
+    function ensureForecastDataLoaded() {
+        if (daysData.length === 0) {
+            loadForecastData();
+        } else {
+            renderBook();
+        }
     }
 
     function openForecast() {
@@ -651,14 +719,7 @@
             if (contentCheck) {
                 existing.classList.remove('hide');
                 isForecastModalOpen = true;
-                // Re-render book in case data changed
-                setTimeout(function() {
-                    if (daysData.length === 0) {
-                        loadForecastData();
-                    } else {
-                        renderBook();
-                    }
-                }, 100);
+                setTimeout(ensureForecastDataLoaded, 100);
                 return;
             }
             // Content missing, remove old wrapper and rebuild
@@ -666,8 +727,8 @@
         }
 
         // Get header height for positioning (same as game modal)
-        var headerEl = document.querySelector('header');
-        var headerHeight = headerEl ? headerEl.offsetHeight : 89;
+        if (!cachedHeaderEl) cachedHeaderEl = document.querySelector('header');
+        var headerHeight = cachedHeaderEl ? cachedHeaderEl.offsetHeight : 89;
 
         // Create game-identical modal structure
         var modalWrapper = document.createElement('div');
@@ -735,13 +796,7 @@
         isForecastModalOpen = true;
 
         // Wait for CSS to apply, then render
-        setTimeout(function() {
-            if (daysData.length === 0) {
-                loadForecastData();
-            } else {
-                renderBook();
-            }
-        }, 200);
+        setTimeout(ensureForecastDataLoaded, 200);
     }
 
     // ============================================
@@ -859,43 +914,46 @@
 
         return '<div style="' + rowStyle + 'margin-top:4px;">' +
             '<span style="' + labelStyle + '">Default Timezone:</span>' +
-            '<select id="forecast-cmd-timezone" style="' + inputStyle + '" onchange="window.forecastCmdTimezoneChanged(this.value)">' +
+            '<select id="forecast-cmd-timezone" style="' + inputStyle + '">' +
             tzOptions +
             '</select>' +
             '</div>' +
             '<div style="' + rowStyle + '">' +
-            '<input type="checkbox" id="forecast-autopost-today"' + todayChecked + ' onchange="window.forecastAutoPostChanged(\'today\', \'enabled\', this.checked)">' +
+            '<input type="checkbox" id="forecast-autopost-today"' + todayChecked + '>' +
             '<span style="' + labelStyle + '">Auto-post today\'s forecast at</span>' +
-            '<input type="time" id="forecast-autopost-today-time" value="' + todayTime + '" style="' + inputStyle + '" onchange="window.forecastAutoPostChanged(\'today\', \'time\', this.value)">' +
+            '<input type="time" id="forecast-autopost-today-time" value="' + todayTime + '" style="' + inputStyle + '">' +
             '</div>' +
             '<div style="' + rowStyle + '">' +
-            '<input type="checkbox" id="forecast-autopost-tomorrow"' + tomorrowChecked + ' onchange="window.forecastAutoPostChanged(\'tomorrow\', \'enabled\', this.checked)">' +
+            '<input type="checkbox" id="forecast-autopost-tomorrow"' + tomorrowChecked + '>' +
             '<span style="' + labelStyle + '">Auto-post tomorrow\'s forecast at</span>' +
-            '<input type="time" id="forecast-autopost-tomorrow-time" value="' + tomorrowTime + '" style="' + inputStyle + '" onchange="window.forecastAutoPostChanged(\'tomorrow\', \'time\', this.value)">' +
+            '<input type="time" id="forecast-autopost-tomorrow-time" value="' + tomorrowTime + '" style="' + inputStyle + '">' +
             '</div>';
     }
 
-    window.forecastCmdTimezoneChanged = function(value) {
-        forecastCmdSettings.defaultTimezone = value;
-        saveForecastCmdSettings();
-    };
-
-    window.forecastAutoPostChanged = function(which, field, value) {
-        if (which === 'today') {
-            if (field === 'enabled') {
-                forecastCmdSettings.autoPostToday.enabled = value;
-            } else if (field === 'time') {
-                forecastCmdSettings.autoPostToday.time = value;
-            }
-        } else if (which === 'tomorrow') {
-            if (field === 'enabled') {
-                forecastCmdSettings.autoPostTomorrow.enabled = value;
-            } else if (field === 'time') {
-                forecastCmdSettings.autoPostTomorrow.time = value;
-            }
+    // Event delegation for settings inputs (no inline onchange, no window globals)
+    document.addEventListener('change', function(e) {
+        var id = e.target.id;
+        if (id === 'forecast-cmd-timezone') {
+            forecastCmdSettings.defaultTimezone = e.target.value;
+            saveForecastCmdSettings();
+        } else if (id === 'forecast-autopost-today') {
+            forecastCmdSettings.autoPostToday.enabled = e.target.checked;
+            saveForecastCmdSettings();
+            scheduleNextAutoPost();
+        } else if (id === 'forecast-autopost-today-time') {
+            forecastCmdSettings.autoPostToday.time = e.target.value;
+            saveForecastCmdSettings();
+            scheduleNextAutoPost();
+        } else if (id === 'forecast-autopost-tomorrow') {
+            forecastCmdSettings.autoPostTomorrow.enabled = e.target.checked;
+            saveForecastCmdSettings();
+            scheduleNextAutoPost();
+        } else if (id === 'forecast-autopost-tomorrow-time') {
+            forecastCmdSettings.autoPostTomorrow.time = e.target.value;
+            saveForecastCmdSettings();
+            scheduleNextAutoPost();
         }
-        saveForecastCmdSettings();
-    };
+    });
 
     function padLeft(str, len) {
         str = String(str);
@@ -950,14 +1008,13 @@
             targetDay = new Date().getDate();
         }
 
-        // Fetch forecast data
+        // Fetch forecast data (uses 6h cache)
         try {
-            var response = await fetch(FORECAST_DATA_URL);
-            if (!response.ok) {
+            var forecastData = await getForecastData();
+            if (!forecastData) {
                 await sendResponse('Forecast data unavailable. Try again later.', userId, isDm);
                 return;
             }
-            var forecastData = await response.json();
 
             // Convert timezone
             var converted = convertCESTToTimezone(forecastData, targetTimezone);
@@ -1008,11 +1065,8 @@
         var targetTimezone = forecastCmdSettings.defaultTimezone;
 
         try {
-            var response = await fetch(FORECAST_DATA_URL);
-            if (!response.ok) {
-                return null;
-            }
-            var forecastData = await response.json();
+            var forecastData = await getForecastData();
+            if (!forecastData) return null;
 
             var converted = convertCESTToTimezone(forecastData, targetTimezone);
             if (!converted.success) {
@@ -1096,8 +1150,40 @@
         }
     }
 
-    function startAutoPostTimer() {
-        setInterval(checkAutoPost, 60000);
+    function calculateMsUntil(timeStr) {
+        var parts = timeStr.split(':');
+        var targetH = parseInt(parts[0], 10);
+        var targetM = parseInt(parts[1], 10);
+        var now = new Date();
+        var target = new Date(now);
+        target.setHours(targetH, targetM, 0, 0);
+        if (target <= now) {
+            target.setDate(target.getDate() + 1);
+        }
+        return target.getTime() - now.getTime();
+    }
+
+    function scheduleNextAutoPost() {
+        if (autoPostTimer) {
+            clearTimeout(autoPostTimer);
+            autoPostTimer = null;
+        }
+
+        var delays = [];
+        if (forecastCmdSettings.autoPostToday.enabled) {
+            delays.push(calculateMsUntil(forecastCmdSettings.autoPostToday.time));
+        }
+        if (forecastCmdSettings.autoPostTomorrow.enabled) {
+            delays.push(calculateMsUntil(forecastCmdSettings.autoPostTomorrow.time));
+        }
+
+        if (delays.length === 0) return;
+
+        var nextDelay = Math.min.apply(Math, delays);
+        autoPostTimer = setTimeout(function() {
+            checkAutoPost();
+            scheduleNextAutoPost();
+        }, nextDelay + 1000); // +1s buffer to ensure past target minute
     }
 
     // Background job for Android BackgroundScriptService
@@ -1190,8 +1276,8 @@
             usage: 'Same as !forecast - see !help forecast'
         });
 
-        // Start auto-post timer
-        startAutoPostTimer();
+        // Schedule next auto-post (dynamic setTimeout)
+        scheduleNextAutoPost();
 
         // Register background job for Android
         registerBackgroundJob();
