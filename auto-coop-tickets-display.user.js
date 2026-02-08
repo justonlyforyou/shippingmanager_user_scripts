@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Auto Co-Op & Co-Op Header Display
 // @description Shows open Co-Op tickets, auto-sends COOP vessels to alliance members
-// @version     5.48
+// @version     5.50
 // @author      https://github.com/justonlyforyou/
 // @order        3
 // @match       https://shippingmanager.cc/*
@@ -709,7 +709,7 @@
                 return;
             }
 
-            var observeTarget = document.getElementById('app') || document.body;
+            var observeTarget = document.querySelector('header') || document.getElementById('app') || document.body;
             var observer = new MutationObserver(function(mutations, obs) {
                 container = document.querySelector('.content.led.cursor-pointer');
                 if (container) {
@@ -1061,10 +1061,12 @@
         window.removeEventListener('rebelship-header-resize', headerResizeHandler);
     };
 
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
-    } else {
-        init();
+    if (!window.__rebelshipHeadless) {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init);
+        } else {
+            init();
+        }
     }
 
     // Register for background job system

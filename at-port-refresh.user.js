@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Auto Port Refresh
 // @description Automatically refreshes the port (left side menu) every 30 seconds.
-// @version     1.5
+// @version     1.6
 // @author      https://github.com/justonlyforyou/
 // @order        52
 // @match       https://shippingmanager.cc/*
@@ -88,7 +88,7 @@
             observer = new MutationObserver(function() {
                 checkPinia();
             });
-            observer.observe(appElement, { childList: true, subtree: true });
+            observer.observe(appElement, { childList: true });
         }
 
         // Timeout after 30 seconds

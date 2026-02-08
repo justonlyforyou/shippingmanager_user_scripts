@@ -2,7 +2,7 @@
 // @name         ShippingManager - Depart Manager
 // @namespace    https://rebelship.org/
 // @description  Unified departure management: Auto bunker rebuy, auto-depart, route settings
-// @version      3.88
+// @version      3.91
 // @author       https://github.com/justonlyforyou/
 // @order        10
 // @match        https://shippingmanager.cc/*
@@ -1105,6 +1105,10 @@
     }
 
     async function departVesselAPI(vesselId, speed, guards) {
+        if (!vesselId || typeof vesselId !== 'number') {
+            log('departVesselAPI called with invalid vesselId: ' + vesselId, 'error');
+            return { success: false, error: 'invalid vessel id' };
+        }
         try {
             var response = await originalFetch(API_BASE + '/route/depart', {
                 method: 'POST',
@@ -1878,9 +1882,18 @@
             }
         });
 
-        // Observe #app instead of document.body for better performance in Vue SPA
-        var observeRoot = document.getElementById('app') || document.body;
-        uiObserver.observe(observeRoot, { childList: true, subtree: true });
+        var modalRoot = document.getElementById('modal-container');
+        var sidebarRoot = document.getElementById('mainSideBarContent');
+        if (modalRoot) {
+            uiObserver.observe(modalRoot, { childList: true, subtree: true });
+        }
+        if (sidebarRoot) {
+            uiObserver.observe(sidebarRoot, { childList: true, subtree: true });
+        }
+        if (!modalRoot && !sidebarRoot) {
+            var fallback = document.getElementById('app') || document.body;
+            uiObserver.observe(fallback, { childList: true, subtree: true });
+        }
     }
 
     // ============================================
@@ -4234,36 +4247,12 @@
 
         // Use MutationObserver to watch for vessel listing changes
         // instead of polling every 5 seconds
-        utilObserver = new MutationObserver(function(mutations) {
-            // Quick check: is the listing in the DOM?
-            var listing = document.querySelector('#notifications-vessels-listing');
-            if (!listing) return;
-
-            // Check if any mutation is relevant (inside or adding the listing area)
-            var isRelevant = false;
-            for (var m = 0; m < mutations.length; m++) {
-                var mutation = mutations[m];
-                if (listing.contains(mutation.target) || mutation.target === listing) {
-                    isRelevant = true;
-                    break;
-                }
-                for (var a = 0; a < mutation.addedNodes.length; a++) {
-                    var node = mutation.addedNodes[a];
-                    if (node.nodeType !== 1) continue;
-                    if (node.id === 'notifications-vessels-listing') {
-                        isRelevant = true;
-                        break;
-                    }
-                }
-                if (isRelevant) break;
-            }
-
-            if (isRelevant) {
-                scheduleUtilCheck();
-            }
+        utilObserver = new MutationObserver(function() {
+            scheduleUtilCheck();
         });
 
-        var observeRoot = document.getElementById('app') || document.body;
+        var listing = document.getElementById('notifications-vessels-listing');
+        var observeRoot = listing || document.getElementById('mainSideBarContent') || document.getElementById('app') || document.body;
         utilObserver.observe(observeRoot, { childList: true, subtree: true });
 
         // Initial check after a short delay
@@ -4491,10 +4480,12 @@
         }
     }
 
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
-    } else {
-        init();
+    if (!window.__rebelshipHeadless) {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init);
+        } else {
+            init();
+        }
     }
 
     // Crash backup: save dirty storage to localStorage before page unload

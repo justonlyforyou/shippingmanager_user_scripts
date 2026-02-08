@@ -2,7 +2,7 @@
 // @name         ShippingManager - Demand Summary
 // @namespace    https://rebelship.org/
 // @description  Demand & ranking dashboard with map tooltips, CSV export, and route-popup demand/vessel filters
-// @version      5.03
+// @version      5.04
 // @author       https://github.com/justonlyforyou/
 // @order        9
 // @match        https://shippingmanager.cc/*
@@ -1801,7 +1801,7 @@
                 }
             }, 250);
         });
-        var observeTarget = document.getElementById('app') || document.body;
+        var observeTarget = document.getElementById('modal-container') || document.getElementById('app') || document.body;
         routePopupObserver.observe(observeTarget, { childList: true, subtree: true });
 
         document.addEventListener('click', function(e) {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Game Bug-Fix: Move down harbor details button
 // @namespace    https://rebelship.org/
-// @version      2.8
+// @version      2.9
 // @description  Just a simple repositioning of the details button on harbor menu.
 // @author       https://github.com/justonlyforyou/
 // @order        61
@@ -114,8 +114,7 @@
         }
     }
 
-    // Main observer: childList only on #app, no attribute watching on body
-    var target = document.getElementById('app') || document.body;
+    var target = document.querySelector('.leaflet-container') || document.getElementById('app') || document.body;
     observer = new MutationObserver(function(mutations) {
         for (var i = 0; i < mutations.length; i++) {
             var added = mutations[i].addedNodes;

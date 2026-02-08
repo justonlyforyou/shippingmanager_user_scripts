@@ -2,7 +2,7 @@
 // @name         ShippingManager - Speed Break-Even
 // @namespace    https://rebelship.org/
 // @description  Colors speed sliders green/red based on fuel break-even point
-// @version      2.03
+// @version      2.04
 // @author       https://github.com/justonlyforyou/
 // @order        56
 // @match        https://shippingmanager.cc/*
@@ -201,7 +201,7 @@
     // MUTATION OBSERVER
     // ============================================
     function startObserver() {
-        var target = document.getElementById('app') || document.body;
+        var target = document.getElementById('modal-container') || document.getElementById('app') || document.body;
         observer = new MutationObserver(function(mutations) {
             for (var i = 0; i < mutations.length; i++) {
                 var added = mutations[i].addedNodes;

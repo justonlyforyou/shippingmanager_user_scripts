@@ -2,7 +2,7 @@
 // @name        ShippingManager - Depart All Loop Button
 // @description Clicks Depart All button repeatedly until all vessels departed
 // @author      https://github.com/justonlyforyou/
-// @version     2.8
+// @version     2.9
 // @order        54
 // @match       https://shippingmanager.cc/*
 // @grant       none
@@ -199,6 +199,7 @@
             addButton();
             if (document.getElementById('depart-loop-btn')) {
                 buttonInserted = true;
+                observer.disconnect();
             }
         }, 200);
     }
@@ -217,8 +218,8 @@
             }
         }
     });
-    var modalContainer = document.getElementById('modal-container') || document.getElementById('app') || document.body;
-    observer.observe(modalContainer, { childList: true, subtree: true });
+    var sidebarContent = document.getElementById('mainSideBarContent') || document.getElementById('app') || document.body;
+    observer.observe(sidebarContent, { childList: true, subtree: true });
 
     // Initial check in case DOM is already ready
     debouncedAddButton();

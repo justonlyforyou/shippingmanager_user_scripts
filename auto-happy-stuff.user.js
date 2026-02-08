@@ -2,7 +2,7 @@
 // @name         ShippingManager - Auto Happy Staff & Stuff Header Display
 // @namespace    http://tampermonkey.net/
 // @description  Automatically manages staff salaries to maintain crew and management morale at target levels
-// @version      1.45
+// @version      1.47
 // @author       https://github.com/justonlyforyou/
 // @order        5
 // @match        https://shippingmanager.cc/*
@@ -145,7 +145,7 @@
                 }
             });
 
-            var observeTarget = document.getElementById('app') || document.body;
+            var observeTarget = document.querySelector('header') || document.getElementById('app') || document.body;
             observer.observe(observeTarget, { childList: true, subtree: true });
             setTimeout(function() {
                 observer.disconnect();
@@ -1097,10 +1097,12 @@
 
     window.addEventListener('rebelship-header-resize', headerResizeListener);
 
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
-    } else {
-        init();
+    if (!window.__rebelshipHeadless) {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init);
+        } else {
+            init();
+        }
     }
 
     // Register for background job system

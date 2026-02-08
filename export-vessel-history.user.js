@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Export Vessel History
 // @namespace    http://tampermonkey.net/
-// @version      3.7
+// @version      3.8
 // @description  Detect vessel history API calls and offer CSV download
 // @author       https://github.com/justonlyforyou/
 // @order        56
@@ -142,7 +142,7 @@
         // Try immediately, if not ready use MutationObserver
         if (insertButton()) return;
 
-        var observeRoot = document.getElementById('app') || document.body;
+        var observeRoot = document.getElementById('modal-container') || document.getElementById('app') || document.body;
         var insertObserver = new MutationObserver(function() {
             if (insertButton()) {
                 insertObserver.disconnect();

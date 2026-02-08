@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Vessel Shopping Cart
 // @description Add vessels to cart and bulk purchase them
-// @version     4.33
+// @version     4.34
 // @author      https://github.com/justonlyforyou/
 // @order        63
 // @match       https://shippingmanager.cc/*
@@ -1074,7 +1074,7 @@
             }, 250);
         });
 
-        var target = document.getElementById('app') || document.body;
+        var target = document.getElementById('modal-container') || document.getElementById('app') || document.body;
         watchObserver.observe(target, { childList: true, subtree: true });
     }
 

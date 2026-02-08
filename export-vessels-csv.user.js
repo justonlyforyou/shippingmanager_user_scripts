@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Export all your vessels details
 // @description Export all your vessels with details as CSV
-// @version     1.20
+// @version     1.21
 // @author      https://github.com/justonlyforyou/
 // @order        12
 // @match       https://shippingmanager.cc/*
@@ -158,7 +158,7 @@
                 addExportMenuItem();
             }
         });
-        initObserver.observe(observeRoot, { childList: true, subtree: true });
+        initObserver.observe(observeRoot, { childList: true });
         setTimeout(function() { initObserver.disconnect(); }, 30000);
     }
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Alliance Chat Notification
 // @description Shows a red dot on Alliance button when there are unread messages
-// @version     2.22
+// @version     2.25
 // @author      https://github.com/justonlyforyou/
 // @order        51
 // @match       https://shippingmanager.cc/*
@@ -343,6 +343,7 @@
     }
 
     // Update all notification dots based on hasUnread state
+    var dotRetryTimer = null;
     function updateNotificationDots() {
         // Alliance button dot - wrap the img in a relative container
         var allianceBtn = document.getElementById('alliance-modal-btn');
@@ -372,12 +373,22 @@
         // Chat tab dot (inside alliance modal)
         var chatTab = findChatTab();
         if (chatTab) {
+            if (dotRetryTimer) { clearTimeout(dotRetryTimer); dotRetryTimer = null; }
             var tabDot = document.getElementById('alliance-chat-tab-notify-dot');
             if (!tabDot) {
                 tabDot = createDot(chatTab, 'alliance-chat-tab-notify-dot');
             }
             if (tabDot) {
                 tabDot.style.display = hasUnread ? 'block' : 'none';
+            }
+        } else {
+            // Modal may be open but #top-nav not rendered yet - retry once
+            var modalWrapper = document.getElementById('modal-wrapper');
+            if (modalWrapper && modalWrapper.offsetParent !== null && !dotRetryTimer) {
+                dotRetryTimer = setTimeout(function() {
+                    dotRetryTimer = null;
+                    updateNotificationDots();
+                }, 500);
             }
         }
     }
@@ -658,22 +669,6 @@
             });
         }
 
-        // Fallback: observe modal-container for modal wrapper appearance
-        var modalContainer = document.getElementById('modal-container');
-        if (modalContainer && !modalWrapper) {
-            var containerObserver = new MutationObserver(function() {
-                var foundWrapper = document.getElementById('modal-wrapper');
-                if (foundWrapper && !modalObserver) {
-                    modalObserver = new MutationObserver(checkModalState);
-                    modalObserver.observe(foundWrapper, {
-                        attributes: true,
-                        attributeFilter: ['style', 'class']
-                    });
-                    containerObserver.disconnect();
-                }
-            });
-            containerObserver.observe(modalContainer, { childList: true });
-        }
     }
 
     // ============================================
@@ -701,7 +696,7 @@
         var modalContainer = document.getElementById('modal-container');
         if (modalContainer) {
             dotObserver = new MutationObserver(debouncedUpdate);
-            dotObserver.observe(modalContainer, { childList: true, subtree: true });
+            dotObserver.observe(modalContainer, { childList: true });
         }
 
         // Initial dot update
@@ -742,9 +737,11 @@
     });
 
     // Wait for page to load
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', function() { setTimeout(init, 500); });
-    } else {
-        setTimeout(init, 500);
+    if (!window.__rebelshipHeadless) {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', function() { setTimeout(init, 500); });
+        } else {
+            setTimeout(init, 500);
+        }
     }
 })();

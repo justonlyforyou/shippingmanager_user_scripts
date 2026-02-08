@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Auto Repair
 // @namespace    https://rebelship.org/
-// @version      2.44
+// @version      2.46
 // @description  Auto-repair vessels when wear reaches threshold
 // @author       https://github.com/justonlyforyou/
 // @order        7
@@ -152,6 +152,10 @@
     }
 
     function fetchMaintenanceCost(vesselIds) {
+        if (!Array.isArray(vesselIds) || vesselIds.length === 0) {
+            log('fetchMaintenanceCost called with invalid vesselIds', 'error');
+            return Promise.reject(new Error('invalid vessel ids'));
+        }
         return fetchWithCookie('https://shippingmanager.cc/api/maintenance/get', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -181,6 +185,10 @@
     }
 
     function bulkRepairVessels(vesselIds) {
+        if (!Array.isArray(vesselIds) || vesselIds.length === 0) {
+            log('bulkRepairVessels called with invalid vesselIds', 'error');
+            return Promise.reject(new Error('invalid vessel ids'));
+        }
         return fetchWithCookie('https://shippingmanager.cc/api/maintenance/do-wear-maintenance-bulk', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -853,10 +861,12 @@
         });
     };
 
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
-    } else {
-        init();
+    if (!window.__rebelshipHeadless) {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init);
+        } else {
+            init();
+        }
     }
 
     // Register for background job system

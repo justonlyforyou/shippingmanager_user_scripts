@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Fuel / CO2 Price Forecast Calendar
 // @namespace    http://tampermonkey.net/
-// @version      3.42
+// @version      3.43
 // @description  Embedded forecast calendar with page-flip navigation
 // @author       https://github.com/justonlyforyou/
 // @order        13
@@ -1299,9 +1299,13 @@
         setTimeout(registerChatBotCommands, 1000);
     }
 
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
+    if (!window.__rebelshipHeadless) {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init);
+        } else {
+            init();
+        }
     } else {
-        init();
+        registerBackgroundJob();
     }
 })();

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Auto Anchor Points
 // @namespace    https://rebelship.org/
-// @version      1.44
+// @version      1.46
 // @description  Auto-purchase anchor points when timer expires
 // @author       https://github.com/justonlyforyou/
 // @order        8
@@ -862,28 +862,19 @@
                 setTimeout(startMonitoring, 3000);
             }
         } else {
-            // Use MutationObserver instead of recursive setTimeout
             var bridgeObserver = new MutationObserver(function() {
                 if (window.RebelShipBridge) {
                     bridgeObserver.disconnect();
                     initBridge();
                 }
             });
-            // Observe window object for RebelShipBridge property (fallback with timeout check)
-            var checkCount = 0;
-            var maxChecks = 50; // 5 seconds max
-            var checkInterval = setInterval(function() {
-                checkCount++;
-                if (window.RebelShipBridge) {
-                    clearInterval(checkInterval);
-                    bridgeObserver.disconnect();
-                    initBridge();
-                } else if (checkCount >= maxChecks) {
-                    clearInterval(checkInterval);
-                    bridgeObserver.disconnect();
+            bridgeObserver.observe(document.documentElement, { childList: true, subtree: true });
+            setTimeout(function() {
+                bridgeObserver.disconnect();
+                if (!window.RebelShipBridge) {
                     log('RebelShipBridge not found after 5 seconds', 'error');
                 }
-            }, 100);
+            }, 5000);
         }
     }
 
@@ -916,7 +907,9 @@
         });
     };
 
-    init();
+    if (!window.__rebelshipHeadless) {
+        init();
+    }
 
     window.rebelshipBackgroundJobs = window.rebelshipBackgroundJobs || [];
     window.rebelshipBackgroundJobs.push({

@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         ShippingManager - Mass-Moore/Resume
 // @namespace    http://tampermonkey.net/
-// @version      4.17
+// @version      4.22
 // @description  Mass Moor and Resume vessels with checkbox selection
 // @author       https://github.com/justonlyforyou/
-// @order        60
+// @order        15
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-end
@@ -37,6 +37,7 @@
     var heightObserver = null;
     var debounceTimer = null;
     var heightDebounceTimer = null;
+    var observerTarget = null;
 
     // Header cache for getCurrentTab()
     var headerCache = { text: '', timestamp: 0 };
@@ -101,6 +102,9 @@
     // API FUNCTIONS
     // ============================================
     async function parkVessel(vesselId) {
+        if (!vesselId || typeof vesselId !== 'number') {
+            throw new Error('Invalid vesselId: ' + vesselId);
+        }
         var response = await fetch(API_BASE + '/vessel/park-vessel', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -118,6 +122,9 @@
     }
 
     async function resumeVessel(vesselId) {
+        if (!vesselId || typeof vesselId !== 'number') {
+            throw new Error('Invalid vesselId: ' + vesselId);
+        }
         var response = await fetch(API_BASE + '/vessel/resume-parked-vessel', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -558,26 +565,64 @@
     }
 
     // ============================================
-    // INITIALIZE - MutationObserver instead of setInterval
+    // INITIALIZE - Observer + heartbeat fallback
     // ============================================
+    var heartbeatTimer = null;
+    var HEARTBEAT_MS = 2000;
+
+    function attachObserver() {
+        var ideal = document.getElementById('mainSideBarContent');
+        var best = ideal || document.getElementById('app') || document.body;
+
+        if (observerTarget === best && best.isConnected) return;
+
+        if (mainObserver) mainObserver.disconnect();
+        mainObserver = new MutationObserver(function() {
+            debouncedInit();
+        });
+        mainObserver.observe(best, { childList: true, subtree: true });
+        observerTarget = best;
+    }
+
     function debouncedInit() {
         if (debounceTimer) clearTimeout(debounceTimer);
         debounceTimer = setTimeout(function() {
+            attachObserver();
             injectCheckboxes();
             injectButtons();
             setupHeightObserver();
         }, DEBOUNCE_MS);
     }
 
+    // Heartbeat: lightweight periodic check that guarantees the UI
+    // works even when the MutationObserver is dead (GeckoView/Android).
+    // Only does querySelector checks - no API calls, no heavy work.
+    function heartbeat() {
+        // Reconnect observer if target died
+        if (!observerTarget || !observerTarget.isConnected) {
+            observerTarget = null;
+            attachObserver();
+        }
+
+        var vesselList = document.querySelector('#notifications-vessels-listing .vesselList');
+        if (!vesselList) return;
+
+        // Check if checkboxes are missing but should be present
+        var rows = vesselList.querySelectorAll('.vesselRow');
+        if (rows.length === 0) return;
+
+        var hasCheckboxes = vesselList.querySelector('.fleet-manager-checkbox');
+        if (!hasCheckboxes) {
+            injectCheckboxes();
+            injectButtons();
+            setupHeightObserver();
+        }
+    }
+
     function init() {
-        var target = document.getElementById('app') || document.body;
-
-        mainObserver = new MutationObserver(function() {
-            debouncedInit();
-        });
-        mainObserver.observe(target, { childList: true, subtree: true });
-
+        attachObserver();
         debouncedInit();
+        heartbeatTimer = setInterval(heartbeat, HEARTBEAT_MS);
     }
 
     window.addEventListener('beforeunload', function() {
@@ -585,6 +630,8 @@
         if (heightObserver) { heightObserver.disconnect(); heightObserver = null; }
         if (debounceTimer) clearTimeout(debounceTimer);
         if (heightDebounceTimer) clearTimeout(heightDebounceTimer);
+        if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+        observerTarget = null;
     });
 
     if (document.readyState === 'loading') {

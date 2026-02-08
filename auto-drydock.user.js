@@ -2,7 +2,7 @@
 // @name         ShippingManager - Auto Drydock
 // @namespace    http://tampermonkey.net/
 // @description  Automatic drydock management with bug prevention and moor option
-// @version      1.66
+// @version      1.68
 // @order        4
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
@@ -354,6 +354,10 @@
     }
 
     async function sendToDrydock(vesselIds, speed, maintenanceType) {
+        if (!Array.isArray(vesselIds) || vesselIds.length === 0) {
+            log('sendToDrydock called with invalid vesselIds: ' + JSON.stringify(vesselIds), 'error');
+            return null;
+        }
         var body = {
             vessel_ids: JSON.stringify(vesselIds),
             speed: speed,
@@ -363,6 +367,10 @@
     }
 
     async function getMaintenanceCost(vesselIds, speed, maintenanceType) {
+        if (!Array.isArray(vesselIds) || vesselIds.length === 0) {
+            log('getMaintenanceCost called with invalid vesselIds: ' + JSON.stringify(vesselIds), 'error');
+            return null;
+        }
         var body = {
             vessel_ids: JSON.stringify(vesselIds),
             speed: speed,
@@ -374,10 +382,18 @@
     }
 
     async function parkVessel(vesselId) {
+        if (!vesselId || typeof vesselId !== 'number') {
+            log('parkVessel called with invalid vesselId: ' + vesselId, 'error');
+            return null;
+        }
         return await apiFetch('/vessel/park-vessel', { vessel_id: vesselId });
     }
 
     async function updateRouteData(vesselId, speed, guards, prices) {
+        if (!vesselId || typeof vesselId !== 'number') {
+            log('updateRouteData called with invalid vesselId: ' + vesselId, 'error');
+            return null;
+        }
         var body = {
             user_vessel_id: vesselId,
             speed: speed,
@@ -1176,10 +1192,12 @@
         });
     };
 
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
-    } else {
-        init();
+    if (!window.__rebelshipHeadless) {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init);
+        } else {
+            init();
+        }
     }
 
     // Register for background job system
