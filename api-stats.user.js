@@ -2,8 +2,8 @@
 // @name         ShippingManager - API Stats Monitor
 // @namespace    http://tampermonkey.net/
 // @description  Monitor all API calls to shippingmanager.cc in the background
-// @version      2.0
-// @order        2
+// @version      2.01
+// @order        1
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
 // @grant        none

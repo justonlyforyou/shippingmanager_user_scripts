@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name        ShippingManager - Open Alliance Search
 // @description Search all open alliances
-// @version     3.54
+// @version     3.55
 // @author      https://github.com/justonlyforyou/
-// @order        1
+// @order        2
 // @match       https://shippingmanager.cc/*
 // @grant       none
 // @run-at      document-end

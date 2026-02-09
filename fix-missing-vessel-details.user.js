@@ -2,8 +2,8 @@
 // @name         ShippingManager - Vessel Details Fix
 // @namespace    http://tampermonkey.net/
 // @description  Fix missing vessel details (Engine, Port, Fuel Factor)
-// @version      2.11
-// @order        65
+// @version      2.12
+// @order        26
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
 // @grant        none

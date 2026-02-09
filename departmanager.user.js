@@ -2,9 +2,9 @@
 // @name         ShippingManager - Depart Manager
 // @namespace    https://rebelship.org/
 // @description  Unified departure management: Auto bunker rebuy, auto-depart, route settings
-// @version      3.96
+// @version      3.97
 // @author       https://github.com/justonlyforyou/
-// @order        10
+// @order        11
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-end

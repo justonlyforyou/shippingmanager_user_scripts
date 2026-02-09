@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name        ShippingManager - Vessel Shopping Cart
 // @description Add vessels to cart and bulk purchase them
-// @version     4.34
+// @version     4.35
 // @author      https://github.com/justonlyforyou/
-// @order        63
+// @order        24
 // @match       https://shippingmanager.cc/*
 // @grant       none
 // @run-at      document-end

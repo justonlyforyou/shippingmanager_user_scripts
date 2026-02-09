@@ -2,8 +2,8 @@
 // @name         ShippingManager - ChatBot
 // @namespace    http://tampermonkey.net/
 // @description  Automated chatbot for alliance chat and DMs with command system
-// @version      2.21
-// @order        60
+// @version      2.22
+// @order        23
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
 // @grant        none

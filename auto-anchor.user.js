@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         ShippingManager - Auto Anchor Points
 // @namespace    https://rebelship.org/
-// @version      1.47
+// @version      1.48
 // @description  Auto-purchase anchor points when timer expires
 // @author       https://github.com/justonlyforyou/
-// @order        8
+// @order        9
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-start

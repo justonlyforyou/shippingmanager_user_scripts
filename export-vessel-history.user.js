@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         ShippingManager - Export Vessel History
 // @namespace    http://tampermonkey.net/
-// @version      3.8
+// @version      3.81
 // @description  Detect vessel history API calls and offer CSV download
 // @author       https://github.com/justonlyforyou/
-// @order        56
+// @order        996
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-end

@@ -2,9 +2,9 @@
 // @name         ShippingManager - Demand Summary
 // @namespace    https://rebelship.org/
 // @description  Demand & ranking dashboard with map tooltips, CSV export, and route-popup demand/vessel filters
-// @version      5.06
+// @version      5.07
 // @author       https://github.com/justonlyforyou/
-// @order        9
+// @order        10
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-end

@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name        ShippingManager - Alliance Tools
 // @description Alliance ID display, interim CEO edit buttons, member exclude for management/COO
-// @version     1.0
+// @version     1.01
 // @author      https://github.com/justonlyforyou/
-// @order        58
+// @order        18
 // @match       https://shippingmanager.cc/*
 // @grant       none
 // @run-at      document-end

@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name        ShippingManager - Vessel Sell Cart
 // @description Select and bulk-sell vessels with lazy-loaded sell prices
-// @version     1.1
+// @version     1.11
 // @author      https://github.com/justonlyforyou/
-// @order        64
+// @order        25
 // @match       https://shippingmanager.cc/*
 // @grant       none
 // @run-at      document-end

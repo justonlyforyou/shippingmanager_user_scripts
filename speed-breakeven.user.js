@@ -2,9 +2,9 @@
 // @name         ShippingManager - Speed Break-Even
 // @namespace    https://rebelship.org/
 // @description  Colors speed sliders green/red based on fuel break-even point
-// @version      2.05
+// @version      2.06
 // @author       https://github.com/justonlyforyou/
-// @order        56
+// @order        21
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-end

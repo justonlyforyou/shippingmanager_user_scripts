@@ -2,8 +2,8 @@
 // @name         ShippingManager - Auto Stock
 // @namespace    http://tampermonkey.net/
 // @description  IPO Alerts and Investments tabs in Finance modal
-// @version      2.96
-// @order        61
+// @version      2.97
+// @order        16
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
 // @grant        none

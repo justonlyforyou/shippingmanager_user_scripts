@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name        ShippingManager - Export your messages
 // @description Export all DM's as CSV or JSON
-// @version     1.26
+// @version     1.27
 // @author      https://github.com/justonlyforyou/
-// @order        11
+// @order        995
 // @match       https://shippingmanager.cc/*
 // @grant       none
 // @run-at      document-end

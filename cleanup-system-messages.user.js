@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         ShippingManager - Cleanup System Messages
 // @namespace    https://rebelship.org/
-// @version      1.0
+// @version      1.01
 // @description  Bulk delete alliance join and donation system messages from your inbox
 // @author       https://github.com/justonlyforyou/
-// @order        998
+// @order        997
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-end

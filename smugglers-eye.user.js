@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         ShippingManager - Smuggler's Eye
 // @namespace    https://rebelship.org/
-// @version      1.96
+// @version      1.97
 // @description  Auto-adjust cargo prices: 4% instant markup, gradual increase, max guards on pirate routes
 // @author       https://github.com/justonlyforyou/
-// @order        14
+// @order        12
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-end

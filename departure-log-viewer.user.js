@@ -2,9 +2,9 @@
 // @name         ShippingManager - Departure Log Viewer
 // @namespace    https://rebelship.org/
 // @description  View departure tracking logs from Depart Manager
-// @version      1.26
+// @version      1.27
 // @author       https://github.com/justonlyforyou/
-// @order        11
+// @order        15
 // @match        https://shippingmanager.cc/*
 // @grant        none
 // @run-at       document-end
