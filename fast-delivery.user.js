@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Game Bug-Using: Fast Delivery for built vessels
 // @namespace    https://rebelship.org/
-// @version      1.12
+// @version      1.14
 // @description  Fast delivery for built vessels via drydock exploit. Sends pending vessels in drydock, for resetting the delivery time with the maintenance end ;)
 // @author       https://github.com/justonlyforyou/
 // @order        57
@@ -319,7 +319,7 @@
         var btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'btn btn-depart btn-block default light-blue';
-        btn.style.cssText = 'flex:1;';
+        btn.style.cssText = 'flex:1;padding-top:2px;padding-bottom:2px;min-height:0;';
 
         var btnContent = document.createElement('div');
         btnContent.className = 'btn-content-wrapper fit-btn-text';

@@ -84,41 +84,41 @@ Previous versions of these scripts worked with Tampermonkey, but the current arc
 
 | Script | Version | Menu | Storage | BG | Description |
 |--------|---------|:----:|:-------:|:--:|-------------|
-| rebelship-header-optimizer.user.js | 3.80 | | | | Header UI optimization, desktop 2-row + mobile compact layout |
-| departmanager.user.js | 3.88 | ✓ | ✓ | ✓ | Auto-Bunker, Auto-Depart, Route Settings, Min Utilization |
+| rebelship-header-optimizer.user.js | 3.90 | | | | Header UI optimization, desktop 2-row + mobile compact layout |
+| departmanager.user.js | 3.92 | ✓ | ✓ | ✓ | Auto-Bunker, Auto-Depart, Route Settings, Min Utilization |
 | departure-log-viewer.user.js | 1.25 | ✓ | ✓ | | View departure tracking logs with fleet stats |
-| captain-blackbeard.user.js | 1.23 | ✓ | ✓ | ✓ | Auto-negotiate hijacked vessels (2x 25% offers, pay 3rd price) |
-| auto-repair.user.js | 2.44 | ✓ | ✓ | ✓ | Auto-repair at wear threshold |
-| auto-happy-stuff.user.js | 1.45 | ✓ | ✓ | ✓ | Auto salary adjustment for crew/management morale |
-| auto-coop-tickets-display.user.js | 5.48 | ✓ | ✓ | ✓ | Co-Op display in header, Auto-COOP sending |
-| auto-marketing-reputation-display.user.js | 5.33 | ✓ | ✓ | ✓ | Reputation in header, auto campaign renewal |
-| auto-drydock.user.js | 1.66 | ✓ | ✓ | ✓ | Auto-drydock at hours threshold, drydock bug prevention |
-| smugglers-eye.user.js | 1.95 | ✓ | ✓ | ✓ | Price optimization: 4% markup, gradual increase, max guards |
-| speed-breakeven.user.js | 2.03 | | ✓ | | Colors speed sliders green/red based on fuel break-even point |
-| mass-moor.user.js | 4.17 | | | | Mass Moor/Resume with checkboxes |
-| vessel-cart.user.js | 4.33 | | ✓ | | Shopping cart for vessel purchase/build |
+| captain-blackbeard.user.js | 1.24 | ✓ | ✓ | ✓ | Auto-negotiate hijacked vessels (2x 25% offers, pay 3rd price) |
+| auto-repair.user.js | 2.46 | ✓ | ✓ | ✓ | Auto-repair at wear threshold |
+| auto-happy-stuff.user.js | 1.47 | ✓ | ✓ | ✓ | Auto salary adjustment for crew/management morale |
+| auto-coop-tickets-display.user.js | 5.51 | ✓ | ✓ | ✓ | Co-Op display in header, Auto-COOP sending |
+| auto-marketing-reputation-display.user.js | 5.34 | ✓ | ✓ | ✓ | Reputation in header, auto campaign renewal |
+| auto-drydock.user.js | 1.68 | ✓ | ✓ | ✓ | Auto-drydock at hours threshold, drydock bug prevention |
+| smugglers-eye.user.js | 1.96 | ✓ | ✓ | ✓ | Price optimization: 4% markup, gradual increase, max guards |
+| speed-breakeven.user.js | 2.04 | | ✓ | | Colors speed sliders green/red based on fuel break-even point |
+| mass-moor.user.js | 4.28 | | | | Mass Moor/Resume with checkboxes |
+| vessel-cart.user.js | 4.34 | | ✓ | | Shopping cart for vessel purchase/build |
 | vessel-sell.user.js | 1.1 | ✓ | | | Bulk-sell vessels with lazy-loaded sell prices |
-| bunker-price-display.user.js | 3.21 | | | | Fuel/CO2 prices and fill level in header |
-| forecast-calendar.user.js | 3.42 | ✓ | ✓ | ✓ | Page-flip calendar with price forecasts |
-| demand-summary.user.js | 5.03 | ✓ | ✓ | | Port demand with capacity overview, alliance ranking |
-| api-stats.user.js | 1.94 | ✓ | ✓ | | Monitor and analyze API call patterns |
-| enable-distance-filter.user.js | 9.23 | | | | Filter ports by distance |
+| bunker-price-display.user.js | 3.22 | | | | Fuel/CO2 prices and fill level in header |
+| forecast-calendar.user.js | 3.43 | ✓ | ✓ | ✓ | Page-flip calendar with price forecasts |
+| demand-summary.user.js | 5.04 | ✓ | ✓ | | Port demand with capacity overview, alliance ranking |
+| api-stats.user.js | 2.0 | ✓ | ✓ | | Monitor and analyze API call patterns |
+| enable-distance-filter.user.js | 9.24 | | | | Filter ports by distance |
 | map-unlock.user.js | 1.11 | | | | Premium Map Themes, Tanker Ops, Metropolis, Zoom |
-| fast-delivery.user.js | 1.12 | | | | Fast vessel delivery via drydock bug |
-| depart-all-loop.user.js | 2.8 | | | | Clicks Depart All until all departed |
-| alliance-chat-notification.user.js | 2.22 | ✓ | ✓ | ✓ | Red dot + notifications for unread alliance messages |
+| fast-delivery.user.js | 1.14 | | | | Fast vessel delivery via drydock bug |
+| depart-all-loop.user.js | 2.9 | | | | Clicks Depart All until all departed |
+| alliance-chat-notification.user.js | 2.26 | ✓ | ✓ | ✓ | Red dot + notifications for unread alliance messages |
 | alliance-search.user.js | 3.54 | ✓ | ✓ | | Search all open alliances |
 | alliance-bug-fixes.user.js | 1.0 | | | | Alliance ID badge, Interim CEO edit, member exclude |
-| harbor-improvements.user.js | 2.8 | | | | Details button repositioning in harbor menu |
-| at-port-refresh.user.js | 1.5 | | | | Auto-refresh At Port list every 30 sec |
+| harbor-improvements.user.js | 2.9 | | | | Details button repositioning in harbor menu |
+| at-port-refresh.user.js | 1.6 | | | | Auto-refresh At Port list every 30 sec |
 | buy-vip-vessel.user.js | 2.27 | ✓ | | | Buy VIP vessels with modal switching |
-| export-vessels-csv.user.js | 1.20 | ✓ | | | Export fleet as CSV |
+| export-vessels-csv.user.js | 1.21 | ✓ | | | Export fleet as CSV |
 | export-messages.user.js | 1.26 | ✓ | | | Export messages as CSV/JSON |
-| export-vessel-history.user.js | 3.7 | | | | Save vessel history as CSV |
-| admin-view.user.js | 8.9 | | | | Shows Admin UI (visual only, no permissions) |
-| auto-anchor.user.js | 1.44 | ✓ | ✓ | ✓ | Auto-purchase anchor points when timer expires |
-| auto-stock.user.js | 2.95 | ✓ | ✓ | ✓ | IPO Alerts and Investments tabs in Finance modal |
-| chatbot.user.js | 2.20 | ✓ | ✓ | ✓ | Automated chatbot for alliance chat and DMs |
+| export-vessel-history.user.js | 3.8 | | | | Save vessel history as CSV |
+| admin-view.user.js | 9.0 | | | | Shows Admin UI (visual only, no permissions) |
+| auto-anchor.user.js | 1.46 | ✓ | ✓ | ✓ | Auto-purchase anchor points when timer expires |
+| auto-stock.user.js | 2.96 | ✓ | ✓ | ✓ | IPO Alerts and Investments tabs in Finance modal |
+| chatbot.user.js | 2.21 | ✓ | ✓ | ✓ | Automated chatbot for alliance chat and DMs |
 | fix-missing-vessel-details.user.js | 2.11 | | | | Fix missing vessel details (Engine, Port, Fuel Factor) via fetch interceptor |
 | cleanup-system-messages.user.js | 1.0 | ✓ | | | Bulk delete alliance join and donation system messages |
 
@@ -132,7 +132,7 @@ Previous versions of these scripts worked with Tampermonkey, but the current arc
 
 ### rebelship-header-optimizer.user.js - Header Optimizer
 
-**Version:** 3.80 | **Order:** 1 (loads first)
+**Version:** 3.90 | **Order:** 1 (loads first)
 
 **IMPORTANT:** This script should be installed for proper header layout on all devices. It optimizes the header UI for both desktop and mobile views.
 
@@ -147,7 +147,7 @@ Previous versions of these scripts worked with Tampermonkey, but the current arc
 
 ### departmanager.user.js - Depart Manager
 
-**Version:** 3.88 | **Background Job:** Yes
+**Version:** 3.92 | **Background Job:** Yes
 
 The main automation script for departure and route management.
 
@@ -213,7 +213,7 @@ View departure tracking logs from Depart Manager with per-vessel fleet statistic
 
 ### captain-blackbeard.user.js - Captain Blackbeard
 
-**Version:** 1.23 | **Background Job:** Yes
+**Version:** 1.24 | **Background Job:** Yes
 
 Automatically negotiates hijacked vessels using a 3-step strategy to reduce ransom payments.
 
@@ -255,7 +255,7 @@ Result: 2 low-ball offers force the pirate price down before paying.
 
 ### auto-repair.user.js - Auto Repair
 
-**Version:** 2.44 | **Background Job:** Yes
+**Version:** 2.46 | **Background Job:** Yes
 
 Automatically repairs vessels when wear reaches threshold.
 
@@ -271,7 +271,7 @@ Automatically repairs vessels when wear reaches threshold.
 
 ### auto-happy-stuff.user.js - Auto Happy Staff
 
-**Version:** 1.45 | **Background Job:** Yes
+**Version:** 1.47 | **Background Job:** Yes
 
 Automatically adjusts salaries to keep crew and management morale at target levels.
 
@@ -279,7 +279,7 @@ Automatically adjusts salaries to keep crew and management morale at target leve
 
 ### auto-coop-tickets-display.user.js - Auto CO-OP
 
-**Version:** 5.48 | **Background Job:** Yes
+**Version:** 5.51 | **Background Job:** Yes
 
 Shows Co-Op tickets in header and automatically sends COOP vessels.
 
@@ -287,7 +287,7 @@ Shows Co-Op tickets in header and automatically sends COOP vessels.
 
 ### auto-marketing-reputation-display.user.js - Auto Reputation
 
-**Version:** 5.33 | **Background Job:** Yes
+**Version:** 5.34 | **Background Job:** Yes
 
 Shows reputation in header and auto-renews expired marketing campaigns.
 
@@ -295,7 +295,7 @@ Shows reputation in header and auto-renews expired marketing campaigns.
 
 ### auto-drydock.user.js - Auto Drydock
 
-**Version:** 1.66 | **Background Job:** Yes
+**Version:** 1.68 | **Background Job:** Yes
 
 Automatically sends vessels to drydock when antifouling hours drop below threshold. Also prevents the drydock bug by saving and restoring route settings.
 
@@ -328,7 +328,7 @@ Every 15 minutes:
 
 ### smugglers-eye.user.js - Smuggler's Eye
 
-**Version:** 1.95 | **Background Job:** Yes
+**Version:** 1.96 | **Background Job:** Yes
 
 Automatic price optimization system for cargo routes.
 
@@ -357,7 +357,7 @@ RebelShip Menu > **"Smuggler's Eye"**
 
 ### speed-breakeven.user.js - Speed Break-Even
 
-**Version:** 2.03
+**Version:** 2.04
 
 Colors speed sliders green/red based on the fuel break-even point, helping you decide the optimal speed for each route.
 
@@ -373,7 +373,7 @@ Colors speed sliders green/red based on the fuel break-even point, helping you d
 
 ### mass-moor.user.js - Mass Moor/Resume
 
-**Version:** 4.17
+**Version:** 4.28
 
 Mass moor and resume vessels with checkbox selection.
 
@@ -390,7 +390,7 @@ Mass moor and resume vessels with checkbox selection.
 
 ### vessel-cart.user.js - Vessel Shopping Cart
 
-**Version:** 4.33
+**Version:** 4.34
 
 Shopping cart for bulk vessel purchases and builds.
 
@@ -428,7 +428,7 @@ Select and bulk-sell vessels with lazy-loaded sell prices.
 
 ### bunker-price-display.user.js - Bunker Prices
 
-**Version:** 3.21
+**Version:** 3.22
 
 Shows current fuel and CO2 prices with fill levels in header.
 
@@ -446,7 +446,7 @@ Shows current fuel and CO2 prices with fill levels in header.
 
 ### forecast-calendar.user.js - Forecast Calendar
 
-**Version:** 3.42 | **Background Job:** Yes
+**Version:** 3.43 | **Background Job:** Yes
 
 Visual page-flip calendar with fuel and CO2 price forecasts.
 
@@ -465,7 +465,7 @@ Visual page-flip calendar with fuel and CO2 price forecasts.
 
 ### demand-summary.user.js - Demand Summary
 
-**Version:** 5.03
+**Version:** 5.04
 
 Shows port demand with capacity overview and alliance rankings.
 
@@ -490,7 +490,7 @@ Shows port demand with capacity overview and alliance rankings.
 
 ### api-stats.user.js - API Stats Monitor
 
-**Version:** 1.94 | **Run-at:** document-start
+**Version:** 2.0 | **Run-at:** document-start
 
 Monitors all API calls to shippingmanager.cc in the background. Useful for debugging, rate limit monitoring, and understanding game API patterns.
 
@@ -516,7 +516,7 @@ Monitors all API calls to shippingmanager.cc in the background. Useful for debug
 
 ### enable-distance-filter.user.js - Distance Filter
 
-**Version:** 9.23
+**Version:** 9.24
 
 Filters destination ports by distance when creating new routes.
 
@@ -548,7 +548,7 @@ Unlocks premium map features without VIP subscription.
 
 ### fast-delivery.user.js - Fast Delivery
 
-**Version:** 1.12
+**Version:** 1.14
 
 Uses a game bug to reduce vessel delivery time from days to 60 minutes.
 
@@ -566,7 +566,7 @@ Uses a game bug to reduce vessel delivery time from days to 60 minutes.
 
 ### depart-all-loop.user.js - Depart All Loop
 
-**Version:** 2.8
+**Version:** 2.9
 
 Repeatedly clicks "Depart All" until all vessels have departed.
 
@@ -581,7 +581,7 @@ Repeatedly clicks "Depart All" until all vessels have departed.
 
 ### alliance-chat-notification.user.js - Chat Notification
 
-**Version:** 2.22 | **Background Job:** Yes
+**Version:** 2.26 | **Background Job:** Yes
 
 Shows a red notification dot and sends alerts when there are unread alliance messages.
 
@@ -663,7 +663,7 @@ Bulk delete alliance join and donation system messages from your inbox.
 
 ### auto-anchor.user.js - Auto Anchor
 
-**Version:** 1.44 | **Background Job:** Yes
+**Version:** 1.46 | **Background Job:** Yes
 
 Automatically purchases anchor points when the build timer expires.
 
@@ -689,7 +689,7 @@ Automatically purchases anchor points when the build timer expires.
 
 ### auto-stock.user.js - Auto Stock
 
-**Version:** 2.94 | **Background Job:** Yes
+**Version:** 2.96 | **Background Job:** Yes
 
 IPO alerts, auto-buy, auto-sell, and investment tracking in the Finance modal.
 
@@ -718,7 +718,7 @@ IPO alerts, auto-buy, auto-sell, and investment tracking in the Finance modal.
 
 ### chatbot.user.js - ChatBot
 
-**Version:** 2.20 | **Background Job:** Yes
+**Version:** 2.21 | **Background Job:** Yes
 
 Automated chatbot for alliance chat and DMs with an extensible command system.
 
@@ -757,7 +757,7 @@ Automated chatbot for alliance chat and DMs with an extensible command system.
 
 ### harbor-improvements.user.js - Harbor Improvements
 
-**Version:** 2.8
+**Version:** 2.9
 
 Fixes UI issues in the harbor/port menu.
 
@@ -770,7 +770,7 @@ Fixes UI issues in the harbor/port menu.
 
 ### at-port-refresh.user.js - Auto Port Refresh
 
-**Version:** 1.5
+**Version:** 1.6
 
 Automatically refreshes the "At Port" vessel list.
 
@@ -802,7 +802,7 @@ Access to VIP-exclusive vessels.
 
 #### export-vessels-csv.user.js
 
-**Version:** 1.20
+**Version:** 1.21
 
 Export your entire fleet as a CSV file.
 
@@ -825,7 +825,7 @@ Export your messages as CSV or JSON.
 
 #### export-vessel-history.user.js
 
-**Version:** 3.7
+**Version:** 3.8
 
 Save vessel voyage history as CSV.
 
@@ -859,7 +859,7 @@ Fixes missing vessel details in vessel modals (Engine type, Port name, Fuel Fact
 
 ### admin-view.user.js - Admin View
 
-**Version:** 8.9
+**Version:** 9.0
 
 Shows Admin/Moderator UI elements for testing purposes.
 

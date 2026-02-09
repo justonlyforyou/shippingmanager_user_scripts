@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Auto Co-Op & Co-Op Header Display
 // @description Shows open Co-Op tickets, auto-sends COOP vessels to alliance members
-// @version     5.50
+// @version     5.51
 // @author      https://github.com/justonlyforyou/
 // @order        3
 // @match       https://shippingmanager.cc/*
@@ -205,6 +205,9 @@
             var allianceContacts = contactData.data && contactData.data.alliance_contacts ? contactData.data.alliance_contacts : [];
             var settingsData = memberSettings.data || [];
             var ownUserId = coopData.data && coopData.data.user ? coopData.data.user.id : null;
+            if (!ownUserId && coopData.user) {
+                ownUserId = coopData.user.id;
+            }
             if (!ownUserId) {
                 var userStore = getPiniaStore('user');
                 ownUserId = userStore && userStore.user ? userStore.user.id : null;

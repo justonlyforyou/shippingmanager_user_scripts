@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Mass-Moore/Resume
 // @namespace    http://tampermonkey.net/
-// @version      4.22
+// @version      4.28
 // @description  Mass Moor and Resume vessels with checkbox selection
 // @author       https://github.com/justonlyforyou/
 // @order        15
@@ -34,9 +34,7 @@
     var vesselIdMap = new Map();
     var isProcessing = false;
     var mainObserver = null;
-    var heightObserver = null;
     var debounceTimer = null;
-    var heightDebounceTimer = null;
     var observerTarget = null;
 
     // Header cache for getCurrentTab()
@@ -47,10 +45,34 @@
         if (headerCache.text && now - headerCache.timestamp < 500) {
             return headerCache.text;
         }
-        var header = document.querySelector('#notifications-vessels-listing .header-text .text-center');
-        headerCache.text = header ? header.textContent.trim().toLowerCase() : '';
+        var listing = document.getElementById('notifications-vessels-listing');
+        if (!listing) {
+            headerCache.text = '';
+            headerCache.timestamp = now;
+            return '';
+        }
+        var result = '';
+        if (document.getElementById('depart-all-btn')) {
+            result = 'port';
+        } else if (document.querySelector('.singleButtonWrapper')) {
+            var firstNameEl = listing.querySelector('.vesselRow .vesselName .nameValue');
+            if (firstNameEl) {
+                var lookupName = sanitizeName(firstNameEl.textContent);
+                var store = getVesselStore();
+                if (store && store.userVessels) {
+                    for (var idx = 0; idx < store.userVessels.length; idx++) {
+                        if (store.userVessels[idx].name === lookupName) {
+                            result = store.userVessels[idx].is_parked ? 'anchor' : 'enroute';
+                            break;
+                        }
+                    }
+                }
+            }
+            if (!result) result = 'enroute';
+        }
+        headerCache.text = result;
         headerCache.timestamp = now;
-        return headerCache.text;
+        return result;
     }
 
     // Sanitize vessel name from DOM
@@ -184,11 +206,11 @@
 
         var headerText = getCurrentTab();
         var candidates;
-        if (headerText.indexOf('at port') !== -1) {
+        if (headerText === 'port') {
             candidates = vesselStore.userVessels.filter(function(v) { return v.status === 'port' && !v.is_parked; });
-        } else if (headerText.indexOf('anchored') !== -1) {
+        } else if (headerText === 'anchor') {
             candidates = vesselStore.userVessels.filter(function(v) { return v.is_parked === true; });
-        } else if (headerText.indexOf('at sea') !== -1) {
+        } else if (headerText === 'enroute') {
             candidates = vesselStore.userVessels.filter(function(v) { return v.status !== 'port' && !v.is_parked; });
         } else {
             candidates = vesselStore.userVessels;
@@ -220,9 +242,9 @@
         var headerText = getCurrentTab();
         if (!headerText) return;
 
-        var isAtPort = headerText.indexOf('at port') !== -1;
-        var isAnchored = headerText.indexOf('anchored') !== -1;
-        var isAtSea = headerText.indexOf('at sea') !== -1;
+        var isAtPort = headerText === 'port';
+        var isAnchored = headerText === 'anchor';
+        var isAtSea = headerText === 'enroute';
 
         if (!isAtPort && !isAnchored && !isAtSea) {
             var existingCbs = vesselList.querySelectorAll('.fleet-manager-checkbox');
@@ -313,18 +335,16 @@
             var style = document.createElement('style');
             style.id = 'fleet-manager-style';
             style.textContent = [
-                '#notifications-vessels-listing .vesselList { padding-bottom: 2px !important; }',
+                '#notifications-vessels-listing { height: calc(100% - 120px) !important; }',
                 '#notifications-vessels-listing .header-text { padding: 3px !important; }',
-                '.bottomWrapper.btn-group { position: absolute !important; bottom: 0 !important; left: 0 !important; width: 100% !important; }',
-                '.singleButtonWrapper { position: absolute !important; bottom: 46px !important; left: 0 !important; width: 100% !important; padding: 0 4px !important; box-sizing: border-box !important; background: var(--background-light) !important; }',
-                '.buttonWrapper { position: absolute !important; bottom: 46px !important; left: 0 !important; width: 100% !important; padding: 0 2px !important; box-sizing: border-box !important; gap: 2px !important; background: var(--background-light) !important; }',
+                '.countdownBox { order: -1 !important; width: 100% !important; }',
                 '#fleet-manager-buttons { background: var(--background-light) !important; padding: 4px 2px !important; margin-bottom: 2px !important; }',
+                '#fleet-manager-buttons .btn { min-height: 0 !important; padding-top: 2px !important; padding-bottom: 2px !important; }',
                 '.fleet-manager-checkbox { position: absolute !important; left: 8px !important; top: 50% !important; transform: translateY(-50%) !important; z-index: 100 !important; }',
                 '.fleet-manager-cb-input { width: 18px; height: 18px; cursor: pointer; accent-color: #22c55e; }',
                 '.vesselRow { position: relative !important; z-index: 1 !important; }',
                 '.vesselRow.with-checkbox { padding-left: 40px !important; }',
-                '.btn-disabled { opacity: 0.5 !important; cursor: not-allowed !important; }',
-                '@media (max-width: 768px) { #notifications-vessels-listing .vesselList { max-height: calc(100% - 70px) !important; height: calc(100% - 70px) !important; } }'
+                '.btn-disabled { opacity: 0.5 !important; cursor: not-allowed !important; }'
             ].join(' ');
             document.head.appendChild(style);
         }
@@ -528,43 +548,6 @@
     }
 
     // ============================================
-    // FORCE HEIGHT ON VESSEL LISTING
-    // ============================================
-    function getTargetHeight() {
-        var headerText = getCurrentTab();
-        if (headerText.indexOf('at sea') !== -1) {
-            return 'calc(100% - 80px)';
-        }
-        return 'calc(100% - 140px)';
-    }
-
-    function setupHeightObserver() {
-        var listing = document.getElementById('notifications-vessels-listing');
-        if (!listing) return;
-
-        var targetHeight = getTargetHeight();
-        if (listing.style.height !== targetHeight) {
-            listing.style.height = targetHeight;
-        }
-
-        if (listing._fleetManagerObserver) return;
-
-        heightObserver = new MutationObserver(function() {
-            if (heightDebounceTimer) clearTimeout(heightDebounceTimer);
-            heightDebounceTimer = setTimeout(function() {
-                var target = getTargetHeight();
-                if (listing.style.height !== target) {
-                    listing.style.height = target;
-                }
-            }, 100);
-        });
-
-        heightObserver.observe(listing, { attributes: true, attributeFilter: ['style'] });
-        listing._fleetManagerObserver = true;
-        log('Height observer attached');
-    }
-
-    // ============================================
     // INITIALIZE - Observer + heartbeat fallback
     // ============================================
     var heartbeatTimer = null;
@@ -590,7 +573,6 @@
             attachObserver();
             injectCheckboxes();
             injectButtons();
-            setupHeightObserver();
         }, DEBOUNCE_MS);
     }
 
@@ -607,16 +589,12 @@
         var vesselList = document.querySelector('#notifications-vessels-listing .vesselList');
         if (!vesselList) return;
 
-        // Check if checkboxes are missing but should be present
         var rows = vesselList.querySelectorAll('.vesselRow');
         if (rows.length === 0) return;
 
-        var hasCheckboxes = vesselList.querySelector('.fleet-manager-checkbox');
-        if (!hasCheckboxes) {
-            injectCheckboxes();
-            injectButtons();
-            setupHeightObserver();
-        }
+        // Always re-inject: handles new rows added after initial injection
+        injectCheckboxes();
+        injectButtons();
     }
 
     function init() {
@@ -627,9 +605,7 @@
 
     window.addEventListener('beforeunload', function() {
         if (mainObserver) { mainObserver.disconnect(); mainObserver = null; }
-        if (heightObserver) { heightObserver.disconnect(); heightObserver = null; }
         if (debounceTimer) clearTimeout(debounceTimer);
-        if (heightDebounceTimer) clearTimeout(heightDebounceTimer);
         if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
         observerTarget = null;
     });

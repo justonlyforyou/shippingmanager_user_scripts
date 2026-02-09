@@ -2,7 +2,7 @@
 // @name         ShippingManager - Depart Manager
 // @namespace    https://rebelship.org/
 // @description  Unified departure management: Auto bunker rebuy, auto-depart, route settings
-// @version      3.91
+// @version      3.92
 // @author       https://github.com/justonlyforyou/
 // @order        10
 // @match        https://shippingmanager.cc/*
@@ -4266,6 +4266,7 @@
     // ============================================
     async function periodicCheck() {
         var settings = getSettings();
+        var departResult = null;
         log('Running periodic check...');
 
         // Clear cycle cache at start - all getCached* calls will fetch fresh
@@ -4308,7 +4309,7 @@
 
             if (settings.autoDepartEnabled) {
                 try {
-                    await autoDepartVessels(false);
+                    departResult = await autoDepartVessels(false);
                 } catch (e) {
                     log('autoDepartVessels error: ' + e.message, 'error');
                 }
@@ -4322,6 +4323,8 @@
             await flushStorageToDB();
             clearCycleCache();
         }
+
+        return departResult;
     }
 
     // ============================================
@@ -4336,8 +4339,13 @@
         if (!settings.autoDepartEnabled && settings.fuelMode === 'off' && settings.co2Mode === 'off') {
             return { skipped: true, reason: 'all disabled' };
         }
-        await periodicCheck();
-        return { success: true };
+        var departResult = await periodicCheck();
+        return {
+            success: true,
+            autoDepart: settings.autoDepartEnabled,
+            departed: departResult ? departResult.departed : 0,
+            income: departResult ? departResult.income : 0
+        };
     };
 
     // ============================================

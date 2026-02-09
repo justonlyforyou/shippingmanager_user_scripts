@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Alliance Chat Notification
 // @description Shows a red dot on Alliance button when there are unread messages
-// @version     2.25
+// @version     2.26
 // @author      https://github.com/justonlyforyou/
 // @order        51
 // @match       https://shippingmanager.cc/*
@@ -550,9 +550,9 @@
                 var wasUnread = hasUnread;
                 if (checkNewest > lastReadTimestamp) {
                     hasUnread = true;
-                    if (!wasUnread) {
+                    if (!wasUnread && !window.__rebelshipHeadless) {
                         log('Unread messages detected! Newest: ' + checkNewest + ' Last read: ' + lastReadTimestamp);
-                        // Send notifications only on state change (first detection)
+                        // Send notifications only on state change (first detection) and only in foreground
                         var notifyMsg = unreadCount + ' new alliance chat message' + (unreadCount > 1 ? 's' : '') + ' (latest from ' + newestSender + ')';
                         if (settings.inAppAlerts) {
                             showToast(notifyMsg, 'info');
