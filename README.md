@@ -85,8 +85,8 @@ Previous versions of these scripts worked with Tampermonkey, but the current arc
 | Script | Version | Menu | Storage | BG | Description |
 |--------|---------|:----:|:-------:|:--:|-------------|
 | rebelship-header-optimizer.user.js | 3.90 | | | | Header UI optimization, desktop 2-row + mobile compact layout |
-| departmanager.user.js | 3.92 | ✓ | ✓ | ✓ | Auto-Bunker, Auto-Depart, Route Settings, Min Utilization |
-| departure-log-viewer.user.js | 1.25 | ✓ | ✓ | | View departure tracking logs with fleet stats |
+| departmanager.user.js | 3.96 | ✓ | ✓ | ✓ | Auto-Bunker, Auto-Depart, Route Settings, Min Utilization |
+| departure-log-viewer.user.js | 1.26 | ✓ | ✓ | | View departure tracking logs with fleet stats |
 | captain-blackbeard.user.js | 1.24 | ✓ | ✓ | ✓ | Auto-negotiate hijacked vessels (2x 25% offers, pay 3rd price) |
 | auto-repair.user.js | 2.46 | ✓ | ✓ | ✓ | Auto-repair at wear threshold |
 | auto-happy-stuff.user.js | 1.47 | ✓ | ✓ | ✓ | Auto salary adjustment for crew/management morale |
@@ -94,13 +94,13 @@ Previous versions of these scripts worked with Tampermonkey, but the current arc
 | auto-marketing-reputation-display.user.js | 5.34 | ✓ | ✓ | ✓ | Reputation in header, auto campaign renewal |
 | auto-drydock.user.js | 1.68 | ✓ | ✓ | ✓ | Auto-drydock at hours threshold, drydock bug prevention |
 | smugglers-eye.user.js | 1.96 | ✓ | ✓ | ✓ | Price optimization: 4% markup, gradual increase, max guards |
-| speed-breakeven.user.js | 2.04 | | ✓ | | Colors speed sliders green/red based on fuel break-even point |
-| mass-moor.user.js | 4.28 | | | | Mass Moor/Resume with checkboxes |
+| speed-breakeven.user.js | 2.05 | | ✓ | | Colors speed sliders green/red based on fuel break-even point |
+| mass-moor.user.js | 4.29 | | | | Mass Moor/Resume with checkboxes |
 | vessel-cart.user.js | 4.34 | | ✓ | | Shopping cart for vessel purchase/build |
 | vessel-sell.user.js | 1.1 | ✓ | | | Bulk-sell vessels with lazy-loaded sell prices |
-| bunker-price-display.user.js | 3.22 | | | | Fuel/CO2 prices and fill level in header |
+| bunker-price-display.user.js | 3.25 | | | | Fuel/CO2 prices and fill level in header |
 | forecast-calendar.user.js | 3.43 | ✓ | ✓ | ✓ | Page-flip calendar with price forecasts |
-| demand-summary.user.js | 5.04 | ✓ | ✓ | | Port demand with capacity overview, alliance ranking |
+| demand-summary.user.js | 5.06 | ✓ | ✓ | | Port demand with capacity overview, alliance ranking |
 | api-stats.user.js | 2.0 | ✓ | ✓ | | Monitor and analyze API call patterns |
 | enable-distance-filter.user.js | 9.24 | | | | Filter ports by distance |
 | map-unlock.user.js | 1.11 | | | | Premium Map Themes, Tanker Ops, Metropolis, Zoom |
@@ -116,7 +116,7 @@ Previous versions of these scripts worked with Tampermonkey, but the current arc
 | export-messages.user.js | 1.26 | ✓ | | | Export messages as CSV/JSON |
 | export-vessel-history.user.js | 3.8 | | | | Save vessel history as CSV |
 | admin-view.user.js | 9.0 | | | | Shows Admin UI (visual only, no permissions) |
-| auto-anchor.user.js | 1.46 | ✓ | ✓ | ✓ | Auto-purchase anchor points when timer expires |
+| auto-anchor.user.js | 1.47 | ✓ | ✓ | ✓ | Auto-purchase anchor points when timer expires |
 | auto-stock.user.js | 2.96 | ✓ | ✓ | ✓ | IPO Alerts and Investments tabs in Finance modal |
 | chatbot.user.js | 2.21 | ✓ | ✓ | ✓ | Automated chatbot for alliance chat and DMs |
 | fix-missing-vessel-details.user.js | 2.11 | | | | Fix missing vessel details (Engine, Port, Fuel Factor) via fetch interceptor |
@@ -147,7 +147,7 @@ Previous versions of these scripts worked with Tampermonkey, but the current arc
 
 ### departmanager.user.js - Depart Manager
 
-**Version:** 3.92 | **Background Job:** Yes
+**Version:** 3.96 | **Background Job:** Yes
 
 The main automation script for departure and route management.
 
@@ -194,7 +194,7 @@ Adds a **Settings** tab to the Routes modal for editing ALL vessels (including e
 
 ### departure-log-viewer.user.js - Departure Log Viewer
 
-**Version:** 1.25
+**Version:** 1.26
 
 View departure tracking logs from Depart Manager with per-vessel fleet statistics.
 
@@ -357,7 +357,7 @@ RebelShip Menu > **"Smuggler's Eye"**
 
 ### speed-breakeven.user.js - Speed Break-Even
 
-**Version:** 2.04
+**Version:** 2.05
 
 Colors speed sliders green/red based on the fuel break-even point, helping you decide the optimal speed for each route.
 
@@ -373,7 +373,7 @@ Colors speed sliders green/red based on the fuel break-even point, helping you d
 
 ### mass-moor.user.js - Mass Moor/Resume
 
-**Version:** 4.28
+**Version:** 4.29
 
 Mass moor and resume vessels with checkbox selection.
 
@@ -428,7 +428,7 @@ Select and bulk-sell vessels with lazy-loaded sell prices.
 
 ### bunker-price-display.user.js - Bunker Prices
 
-**Version:** 3.22
+**Version:** 3.25
 
 Shows current fuel and CO2 prices with fill levels in header.
 
@@ -465,7 +465,7 @@ Visual page-flip calendar with fuel and CO2 price forecasts.
 
 ### demand-summary.user.js - Demand Summary
 
-**Version:** 5.04
+**Version:** 5.06
 
 Shows port demand with capacity overview and alliance rankings.
 
@@ -663,7 +663,7 @@ Bulk delete alliance join and donation system messages from your inbox.
 
 ### auto-anchor.user.js - Auto Anchor
 
-**Version:** 1.46 | **Background Job:** Yes
+**Version:** 1.47 | **Background Job:** Yes
 
 Automatically purchases anchor points when the build timer expires.
 

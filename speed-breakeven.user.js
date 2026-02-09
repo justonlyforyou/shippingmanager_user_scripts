@@ -2,7 +2,7 @@
 // @name         ShippingManager - Speed Break-Even
 // @namespace    https://rebelship.org/
 // @description  Colors speed sliders green/red based on fuel break-even point
-// @version      2.04
+// @version      2.05
 // @author       https://github.com/justonlyforyou/
 // @order        56
 // @match        https://shippingmanager.cc/*
@@ -234,6 +234,13 @@
         // Invalidate fuel price cache on navigation (covers DepartManager settings changes)
         window.addEventListener('hashchange', invalidateFuelPriceCache);
         window.addEventListener('popstate', invalidateFuelPriceCache);
+
+        // Invalidate fuel price cache when tab becomes visible again (Android background suspension)
+        document.addEventListener('visibilitychange', function() {
+            if (!document.hidden) {
+                invalidateFuelPriceCache();
+            }
+        });
 
         startObserver();
     }

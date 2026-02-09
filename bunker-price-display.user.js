@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Bunker Price Display
 // @namespace    http://tampermonkey.net/
-// @version      3.22
+// @version      3.25
 // @description  Shows current fuel and CO2 bunker prices with fill levels
 // @author       https://github.com/justonlyforyou/
 // @order        53
@@ -25,15 +25,8 @@
     const MAX_INIT_RETRIES = 10;
 
     function findCurrentPrice(prices) {
-        const now = new Date();
-        const utcHours = now.getUTCHours();
-        const utcMinutes = now.getUTCMinutes();
-
-        // Direct index calculation: each hour has 2 slots (:00 and :30)
-        const slotIndex = utcHours * 2 + (utcMinutes < 30 ? 0 : 1);
-
-        // Return price at calculated index, fallback to first price if out of bounds
-        return prices[slotIndex] || prices[0];
+        // Game uses prices.slice(-1)[0] — last element is always the current slot
+        return prices[prices.length - 1];
     }
 
     function getFuelColor(price) {
@@ -184,14 +177,16 @@
                 if (!insertPriceDisplays()) return;
             }
 
-            // Update prices
+            // Update prices (Math.ceil to match game's formatting)
             if (fuelPriceElement && fuelPrice !== undefined) {
-                fuelPriceElement.textContent = '$' + fuelPrice + '/t';
-                fuelPriceElement.style.color = getFuelColor(fuelPrice);
+                var fuelDisplay = Math.ceil(fuelPrice);
+                fuelPriceElement.textContent = '$' + fuelDisplay + '/t';
+                fuelPriceElement.style.color = getFuelColor(fuelDisplay);
             }
             if (co2PriceElement && co2Price !== undefined) {
-                co2PriceElement.textContent = '$' + co2Price + '/t';
-                co2PriceElement.style.color = getCO2Color(co2Price);
+                var co2Display = Math.ceil(co2Price);
+                co2PriceElement.textContent = '$' + co2Display + '/t';
+                co2PriceElement.style.color = getCO2Color(co2Display);
             }
 
             // Update fill levels
@@ -291,12 +286,18 @@
      * Schedule next price update at :00:45 or :30:45
      * Android background job compatible - uses setTimeout
      */
+    var priceUpdateTimer = null;
+
     function schedulePriceUpdate() {
+        if (priceUpdateTimer) {
+            clearTimeout(priceUpdateTimer);
+        }
         var delay = getMsUntilNextPriceUpdate();
         var nextUpdate = new Date(Date.now() + delay);
         console.log('[BunkerPrice] Next update at ' + nextUpdate.toLocaleTimeString() + ' (in ' + Math.round(delay / 1000) + 's)');
 
-        setTimeout(function() {
+        priceUpdateTimer = setTimeout(function() {
+            priceUpdateTimer = null;
             updatePrices();
             schedulePriceUpdate(); // Schedule next
         }, delay);
@@ -352,6 +353,15 @@
                 console.log('[BunkerPrice] Reinit failed after resize');
             }
         }, 300);
+    });
+
+    // Re-fetch prices when tab becomes visible again (Android background suspension)
+    document.addEventListener('visibilitychange', function() {
+        if (!document.hidden && fuelFillElement) {
+            console.log('[BunkerPrice] Tab visible - refreshing prices');
+            updatePrices();
+            schedulePriceUpdate();
+        }
     });
 
     init();

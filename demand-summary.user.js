@@ -2,7 +2,7 @@
 // @name         ShippingManager - Demand Summary
 // @namespace    https://rebelship.org/
 // @description  Demand & ranking dashboard with map tooltips, CSV export, and route-popup demand/vessel filters
-// @version      5.04
+// @version      5.06
 // @author       https://github.com/justonlyforyou/
 // @order        9
 // @match        https://shippingmanager.cc/*
@@ -270,9 +270,11 @@
 
     async function saveCache(data) {
         try {
+            var vesselSnapshot = getVesselsByPort();
             const cacheData = {
                 timestamp: Date.now(),
-                ports: data.map(slimPort)
+                ports: data.map(slimPort),
+                vesselCounts: Object.keys(vesselSnapshot).length > 0 ? vesselSnapshot : undefined
             };
             await dbSet(getStorageKey(), cacheData);
             cachedData = cacheData;
@@ -610,6 +612,31 @@
         const result = {};
         for (const portCode in byPort) {
             const p = byPort[portCode];
+            result[portCode] = {
+                containerCount: p.destContainerCount,
+                tankerCount: p.destTankerCount,
+                containerCapacity: p.destContainerCapacity,
+                tankerCapacity: p.destTankerCapacity
+            };
+        }
+        return result;
+    }
+
+    function getVesselsByPortWithFallback() {
+        var live = getVesselsByPort();
+        if (Object.keys(live).length > 0) return live;
+        var cache = loadCacheSync();
+        return (cache && cache.vesselCounts) ? cache.vesselCounts : {};
+    }
+
+    function getVesselsByDestinationWithFallback() {
+        var live = getVesselsByDestination();
+        if (Object.keys(live).length > 0) return live;
+        var cache = loadCacheSync();
+        if (!cache || !cache.vesselCounts) return {};
+        var result = {};
+        for (var portCode in cache.vesselCounts) {
+            var p = cache.vesselCounts[portCode];
             result[portCode] = {
                 containerCount: p.destContainerCount,
                 tankerCount: p.destTankerCount,
@@ -1156,7 +1183,7 @@
         log('renderModalContent: hasCache=' + hasCache);
         const canCollectNow = canCollect();
         const cooldownRemaining = getTimeUntilNextCollect();
-        const vesselsByDest = getVesselsByDestination();
+        const vesselsByDest = getVesselsByDestinationWithFallback();
 
         let html = '<div id="demand-summary-wrapper" data-rebelship-modal="demand-summary" style="padding:8px 2px;font-family:Lato,sans-serif;color:#01125d;height:100%;display:flex;flex-direction:column;box-sizing:border-box;">';
 
@@ -1546,7 +1573,7 @@
         isCollectingRanking = true;
         rankingAbortController = new window.AbortController();
         rankingProgress.current = 0;
-        rankingProgress.total = 360;
+        rankingProgress.total = 0;
         updateRankingButtonProgress();
         log('Starting ranking collection...');
 
@@ -1578,18 +1605,22 @@
             }
 
             const portCodes = await fetchAllPortCodes();
-            log('Fetching ALL ' + portCodes.length + ' ports');
 
-            // Always fetch ALL ports - no skipping
-            const portsToCollect = portCodes;
+            // Skip already-collected ports for resume
+            var alreadyCollected = rankingCache && rankingCache.ports ? rankingCache.ports : {};
+            var alreadyCount = Object.keys(alreadyCollected).length;
+            var portsToCollect = portCodes.filter(function(code) {
+                return !alreadyCollected[code];
+            });
 
             rankingProgress.total = portCodes.length;
-            rankingProgress.current = 0;
+            rankingProgress.current = alreadyCount;
+            updateRankingButtonProgress();
 
-            log('Resuming from ' + rankingProgress.current + '/' + rankingProgress.total + ' (' + portsToCollect.length + ' remaining)');
+            log('Ranking: ' + alreadyCount + ' already collected, ' + portsToCollect.length + ' remaining out of ' + portCodes.length);
 
             var collectedCount = 0;
-            var baseProgress = portCodes.length - portsToCollect.length;
+            var baseProgress = alreadyCount;
 
             // Process in batches - parallel API calls per batch
             for (let batchStart = 0; batchStart < portsToCollect.length; batchStart += RANKING_BATCH_SIZE) {
@@ -2214,6 +2245,9 @@
         // Fetch alliance name ONCE before anything else (used by ranking)
         await fetchMyAllianceName();
 
+        // Load demand + vessel count cache from DB so data is available immediately
+        await loadCache();
+
         setupDemandModalWatcher();
         initMapMarkerHover();
         initRoutePopupFilter();
@@ -2703,7 +2737,7 @@
         const containerConsumed = consumed.container || {};
         const tankerDemand = demand.tanker || {};
         const tankerConsumed = consumed.tanker || {};
-        const vesselsByPort = getVesselsByPort();
+        const vesselsByPort = getVesselsByPortWithFallback();
         const vessels = vesselsByPort[portCode] || {};
         const rankings = loadRankingCacheSync();
         const portRanking = rankings && rankings.ports ? rankings.ports[portCode] : null;

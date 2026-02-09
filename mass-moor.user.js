@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Mass-Moore/Resume
 // @namespace    http://tampermonkey.net/
-// @version      4.28
+// @version      4.29
 // @description  Mass Moor and Resume vessels with checkbox selection
 // @author       https://github.com/justonlyforyou/
 // @order        15
@@ -597,17 +597,30 @@
         injectButtons();
     }
 
-    function init() {
-        attachObserver();
-        debouncedInit();
+    function startHeartbeat() {
+        if (heartbeatTimer) return;
         heartbeatTimer = setInterval(heartbeat, HEARTBEAT_MS);
     }
 
-    window.addEventListener('beforeunload', function() {
-        if (mainObserver) { mainObserver.disconnect(); mainObserver = null; }
-        if (debounceTimer) clearTimeout(debounceTimer);
+    function stopHeartbeat() {
         if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
-        observerTarget = null;
+    }
+
+    function init() {
+        attachObserver();
+        debouncedInit();
+        startHeartbeat();
+    }
+
+    // Pause on background, resume on foreground (Android GeckoView safe)
+    document.addEventListener('visibilitychange', function() {
+        if (document.hidden) {
+            stopHeartbeat();
+        } else {
+            attachObserver();
+            startHeartbeat();
+            debouncedInit();
+        }
     });
 
     if (document.readyState === 'loading') {

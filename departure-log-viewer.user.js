@@ -2,7 +2,7 @@
 // @name         ShippingManager - Departure Log Viewer
 // @namespace    https://rebelship.org/
 // @description  View departure tracking logs from Depart Manager
-// @version      1.25
+// @version      1.26
 // @author       https://github.com/justonlyforyou/
 // @order        11
 // @match        https://shippingmanager.cc/*
@@ -192,6 +192,15 @@
         return log.myContributionDelta || 0;
     }
 
+    function formatContrib(value) {
+        var n = value || 0;
+        return (n >= 0 ? '+' : '') + formatNumber(n);
+    }
+
+    function contribColor(value) {
+        return (value || 0) >= 0 ? '#0369a1' : '#dc2626';
+    }
+
     function matchesUtilizationFilter(util, filter) {
         if (!filter || filter === 'all') return true;
         if (filter === '<30') return util < 30;
@@ -301,7 +310,7 @@
         html += '<div style="text-align:right;">';
         html += '<div style="font-weight:700;font-size:16px;color:#16a34a;">+$' + formatNumber(netIncome) + '</div>';
         if (hasContribution) {
-            html += '<div style="font-size:11px;color:#0369a1;font-weight:600;">My Contrib: +' + formatNumber(myContribDelta || 0) + '</div>';
+            html += '<div style="font-size:11px;color:' + contribColor(myContribDelta) + ';font-weight:600;">My Contrib: ' + formatContrib(myContribDelta) + '</div>';
         }
         html += '</div>';
         html += '</div>';
@@ -446,7 +455,7 @@
             html += '</div>';
             html += '<div style="' + rowStyle + '">';
             html += '<span style="' + labelStyle + '">Contrib Delta</span>';
-            html += '<span style="' + valueStyle + 'color:#16a34a;">+' + formatNumber(myContribDelta || 0) + '</span>';
+            html += '<span style="' + valueStyle + 'color:' + contribColor(myContribDelta) + ';">' + formatContrib(myContribDelta) + '</span>';
             html += '</div>';
         }
 
@@ -1165,7 +1174,7 @@
                 '<div style="flex:1;text-align:right;font-weight:600;color:#16a34a;">$' + formatCompact(s.income) + '</div>' +
                 '<div style="flex:0.5;text-align:right;">' + s.departures + '</div>' +
                 '<div style="flex:0.5;text-align:right;">' + s.avgUtil + '%</div>' +
-                '<div style="flex:0.7;text-align:right;color:#0369a1;">+' + formatNumber(s.contrib) + '</div>';
+                '<div style="flex:0.7;text-align:right;color:' + contribColor(s.contrib) + ';">' + formatContrib(s.contrib) + '</div>';
             tableArea.appendChild(row);
         });
 
@@ -1176,7 +1185,7 @@
             '<div style="flex:1;text-align:right;color:#16a34a;">$' + formatCompact(totalIncome) + '</div>' +
             '<div style="flex:0.5;text-align:right;">' + totalDep + '</div>' +
             '<div style="flex:0.5;text-align:right;"></div>' +
-            '<div style="flex:0.7;text-align:right;color:#0369a1;">+' + formatNumber(totalContrib) + '</div>';
+            '<div style="flex:0.7;text-align:right;color:' + contribColor(totalContrib) + ';">' + formatContrib(totalContrib) + '</div>';
         tableArea.appendChild(totalsRow);
 
         // Vessel click handlers

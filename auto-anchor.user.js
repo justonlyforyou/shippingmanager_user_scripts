@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Auto Anchor Points
 // @namespace    https://rebelship.org/
-// @version      1.46
+// @version      1.47
 // @description  Auto-purchase anchor points when timer expires
 // @author       https://github.com/justonlyforyou/
 // @order        8
@@ -861,6 +861,16 @@
             if (settings.enabled) {
                 setTimeout(startMonitoring, 3000);
             }
+
+            // Re-check when tab becomes visible again (Android background suspension)
+            document.addEventListener('visibilitychange', function() {
+                if (!document.hidden && settings.enabled) {
+                    log('Tab visible - invalidating cache and running check');
+                    userSettingsCache.data = null;
+                    userSettingsCache.timestamp = 0;
+                    runAnchorCheck();
+                }
+            });
         } else {
             var bridgeObserver = new MutationObserver(function() {
                 if (window.RebelShipBridge) {

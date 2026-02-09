@@ -2,7 +2,7 @@
 // @name         ShippingManager - Depart Manager
 // @namespace    https://rebelship.org/
 // @description  Unified departure management: Auto bunker rebuy, auto-depart, route settings
-// @version      3.92
+// @version      3.96
 // @author       https://github.com/justonlyforyou/
 // @order        10
 // @match        https://shippingmanager.cc/*
@@ -2260,6 +2260,16 @@
             }
         }
 
+        // Wait for contribution-before to resolve before sending depart XHR
+        // (same pattern as fetch interceptor: before-value first, then depart)
+        if (contribBeforePromise) {
+            var xhrRef = this;
+            var xhrArgs = arguments;
+            contribBeforePromise.then(function() {
+                originalXHRSend.apply(xhrRef, xhrArgs);
+            });
+            return;
+        }
         return originalXHRSend.apply(this, arguments);
     };
 
@@ -4358,6 +4368,20 @@
         log('Starting monitoring (interval: ' + (CHECK_INTERVAL / 1000) + 's)');
         monitoringInterval = setInterval(periodicCheck, CHECK_INTERVAL);
     }
+
+    // Re-check when tab becomes visible again (Android background suspension)
+    document.addEventListener('visibilitychange', function() {
+        if (!document.hidden && monitoringInterval) {
+            var lastCheck = getLastCheckTime();
+            var elapsed = Date.now() - lastCheck;
+            if (lastCheck > 0 && elapsed > CATCHUP_THRESHOLD) {
+                var missedMinutes = Math.floor(elapsed / 60000);
+                log('VISIBILITY CATCH-UP: ' + missedMinutes + 'min since last check');
+                clearCycleCache();
+                periodicCheck();
+            }
+        }
+    });
 
     function requestNotificationPermission() {
         if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
