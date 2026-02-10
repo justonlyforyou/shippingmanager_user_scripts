@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Premium Feature Unlocker
 // @description Unlocks premium map themes, tanker ops, metropolis and extended zoom
-// @version     1.13
+// @version     1.14
 // @author      https://github.com/justonlyforyou/
 // @order        30
 // @match       https://shippingmanager.cc/*
@@ -170,7 +170,31 @@
         return false;
     }
 
-    // Unlock tanker ops and metropolis - runs once, then sets flag
+    // Patch company_type and metropolis on the user store
+    function applyFeaturePatch(userStore) {
+        var companyType = userStore.user.company_type;
+        if (!companyType) return;
+
+        var hasTanker = Array.isArray(companyType) ? companyType.indexOf('tanker') !== -1 : (typeof companyType === 'string' && companyType.indexOf('tanker') >= 0);
+        var needsPatch = false;
+        var newCompanyType = companyType;
+        var newMetropolis = userStore.settings ? userStore.settings.metropolis : 0;
+
+        if (!hasTanker) {
+            newCompanyType = Array.isArray(companyType) ? companyType.slice().concat(['tanker']) : [companyType, 'tanker'];
+            needsPatch = true;
+        }
+        if (userStore.settings && !userStore.settings.metropolis) {
+            newMetropolis = 1;
+            needsPatch = true;
+        }
+        if (needsPatch) {
+            userStore.user.company_type = newCompanyType;
+            if (userStore.settings) userStore.settings.metropolis = newMetropolis;
+        }
+    }
+
+    // Unlock tanker ops and metropolis - patches once, then subscribes for re-patches
     function unlockFeatures() {
         if (featuresUnlocked) return;
         try {
@@ -181,28 +205,13 @@
             var userStore = pinia._s.get('user');
             if (!userStore || !userStore.user) return;
 
-            var companyType = userStore.user.company_type;
-            if (!companyType) return;
+            applyFeaturePatch(userStore);
 
-            var hasTanker = Array.isArray(companyType) ? companyType.indexOf('tanker') !== -1 : (typeof companyType === 'string' && companyType.indexOf('tanker') >= 0);
-            var needsPatch = false;
-            var newCompanyType = companyType;
-            var newMetropolis = userStore.settings ? userStore.settings.metropolis : 0;
+            // Subscribe to store changes so the patch survives API re-fetches
+            userStore.$subscribe(function() {
+                if (userStore.user) applyFeaturePatch(userStore);
+            });
 
-            if (!hasTanker) {
-                newCompanyType = Array.isArray(companyType) ? companyType.slice().concat(['tanker']) : [companyType, 'tanker'];
-                needsPatch = true;
-            }
-            if (userStore.settings && !userStore.settings.metropolis) {
-                newMetropolis = 1;
-                needsPatch = true;
-            }
-            if (needsPatch) {
-                userStore.$patch(function(state) {
-                    state.user.company_type = newCompanyType;
-                    if (state.settings) state.settings.metropolis = newMetropolis;
-                });
-            }
             featuresUnlocked = true;
         } catch {}
     }
