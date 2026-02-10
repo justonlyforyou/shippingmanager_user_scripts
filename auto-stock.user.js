@@ -2,7 +2,7 @@
 // @name         ShippingManager - Auto Stock
 // @namespace    http://tampermonkey.net/
 // @description  IPO Alerts and Investments tabs in Finance modal
-// @version      2.97
+// @version      2.98
 // @order        16
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
@@ -33,7 +33,8 @@
         autoSellFallingDays: 3,
         autoSellDropPercent: 15,
         inAppAlerts: true,
-        desktopNotifications: false
+        desktopNotifications: false,
+        buyBlacklist: []
     };
 
     var purchasedIpoIds = new Set();
@@ -183,6 +184,26 @@
     async function saveSettings() {
         await dbSet('settings', settings);
         log('Settings saved');
+    }
+
+    async function addToBlacklist(id, companyName) {
+        if (!settings.buyBlacklist) settings.buyBlacklist = [];
+        var exists = settings.buyBlacklist.some(function(b) { return b.id === id; });
+        if (exists) {
+            log('Blacklist: ' + companyName + ' already blacklisted');
+            return;
+        }
+        settings.buyBlacklist.push({ id: id, name: companyName });
+        await saveSettings();
+        log('Blacklist: Added ' + companyName + ' (#' + id + ')');
+    }
+
+    async function removeFromBlacklist(id) {
+        if (!settings.buyBlacklist) settings.buyBlacklist = [];
+        var entry = settings.buyBlacklist.find(function(b) { return b.id === id; });
+        settings.buyBlacklist = settings.buyBlacklist.filter(function(b) { return b.id !== id; });
+        await saveSettings();
+        log('Blacklist: Removed ' + (entry ? entry.name : '#' + id));
     }
 
     async function loadCachedData() {
@@ -348,6 +369,10 @@
             var ipo = freshIpos[i];
 
             if (purchasedIpoIds.has(ipo.id)) continue;
+            if (settings.buyBlacklist && settings.buyBlacklist.some(function(b) { return b.id === ipo.id; })) {
+                log('Auto-Buy: Skipping blacklisted: ' + ipo.company_name);
+                continue;
+            }
             if (ipo.stock > settings.maxStockPrice) continue;
             if (!ipo.stock_for_sale || ipo.stock_for_sale <= 0) continue;
 
@@ -787,6 +812,22 @@
                         <span style="font-size:14px;">Enable desktop notifications</span>\
                     </label>\
                 </div>\
+                <div class="as-section">\
+                    <div style="font-size:16px;font-weight:700;margin-bottom:12px;color:#01125d;">Buy Blacklist</div>\
+                    <div style="font-size:12px;color:#626b90;margin-bottom:16px;">Companies that Auto-Buy will never purchase</div>\
+                    <div id="as-blacklist-items">' + (function() {
+                        var bl = settings.buyBlacklist;
+                        if (!bl || bl.length === 0) return '<div style="color:#94a3b8;font-size:13px;">Empty</div>';
+                        var items = '';
+                        bl.forEach(function(entry) {
+                            items += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 8px;margin-bottom:4px;background:#fff;border-radius:4px;font-size:13px;">';
+                            items += '<span>' + escapeHtml(entry.name) + ' <span style="color:#94a3b8;font-size:11px;">(#' + entry.id + ')</span></span>';
+                            items += '<button class="as-bl-remove" data-id="' + entry.id + '" style="padding:2px 8px;background:#ef4444;color:#fff;border:0;border-radius:4px;cursor:pointer;font-size:11px;font-family:Lato,sans-serif;">X</button>';
+                            items += '</div>';
+                        });
+                        return items;
+                    })() + '</div>\
+                </div>\
                 <div style="margin-bottom:16px;">\
                     <div style="font-size:14px;color:#01125d;margin-bottom:8px;">Seen IPOs: ' + cachedData.seenIpoIds.length + ' tracked</div>\
                     <button id="as-clear-seen" style="padding:6px 12px;background:#ef4444;color:#fff;border:0;border-radius:4px;cursor:pointer;font-size:12px;font-family:Lato,sans-serif;">\
@@ -855,6 +896,24 @@
             showToast('Settings saved!', 'success');
             closeModal();
         };
+
+        var blacklistRemoveHandler = function(e) {
+            var btn = e.target;
+            if (!btn.classList.contains('as-bl-remove')) return;
+            var id = parseInt(btn.getAttribute('data-id'));
+            removeFromBlacklist(id).then(function() {
+                showToast('Removed from blacklist', 'success');
+                updateSettingsContent();
+            });
+        };
+
+        var blacklistContainer = document.getElementById('as-blacklist-items');
+        if (blacklistContainer) {
+            blacklistContainer.addEventListener('click', blacklistRemoveHandler);
+            settingsEventListeners.push(
+                { element: 'as-blacklist-items', handler: blacklistRemoveHandler, type: 'click' }
+            );
+        }
 
         document.getElementById('as-cancel').addEventListener('click', cancelHandler);
         document.getElementById('as-clear-seen').addEventListener('click', clearSeenHandler);
@@ -1031,10 +1090,12 @@
         html += '<th style="padding:8px;text-align:right;">Price</th>';
         html += '<th style="padding:8px;text-align:center;">Age</th>';
         html += '<th style="padding:8px;text-align:center;">Buy</th>';
+        html += '<th style="padding:8px;text-align:center;width:30px;"></th>';
         html += '</tr></thead><tbody>';
 
         freshIpos.forEach(function(ipo, idx) {
             var bgColor = idx % 2 === 0 ? '#e9effd' : '#fff';
+            var isBlacklisted = settings.buyBlacklist && settings.buyBlacklist.some(function(b) { return b.id === ipo.id; });
             html += '<tr style="background:' + bgColor + ';">';
             html += '<td style="padding:8px;"><a href="#" class="as-open-profile" data-user-id="' + ipo.id + '" style="color:#0284c7;text-decoration:none;">' + escapeHtml(ipo.company_name) + '</a> <span style="color:#94a3b8;font-size:11px;">(#' + ipo.id + ')</span></td>';
             html += '<td style="padding:8px;text-align:right;">' + formatMoney(ipo.stock) + ' ' + getTrendIcon(ipo.stock_trend) + '</td>';
@@ -1043,6 +1104,11 @@
             html += '<input type="number" class="as-buy-amount" data-id="' + ipo.id + '" value="' + ipo.stock_for_sale + '" min="1" max="' + ipo.stock_for_sale + '" style="width:60px;padding:2px 4px;border:1px solid #ccc;border-radius:4px;text-align:center;font-size:12px;">';
             html += '<button class="as-buy-btn" data-id="' + ipo.id + '" style="margin-left:4px;padding:4px 8px;background:linear-gradient(180deg,#46ff33,#129c00);border:0;border-radius:4px;color:#fff;cursor:pointer;font-size:11px;">Buy</button>';
             html += '</td>';
+            if (isBlacklisted) {
+                html += '<td style="padding:8px;text-align:center;"><span style="color:#ef4444;font-size:11px;" title="Blacklisted">BL</span></td>';
+            } else {
+                html += '<td style="padding:8px;text-align:center;"><button class="as-block-btn" data-id="' + ipo.id + '" data-name="' + escapeHtml(ipo.company_name) + '" style="padding:2px 6px;background:#ef4444;border:0;border-radius:4px;color:#fff;cursor:pointer;font-size:10px;" title="Block from Auto-Buy">X</button></td>';
+            }
             html += '</tr>';
         });
 
@@ -1050,6 +1116,7 @@
         content.innerHTML = html;
         attachRefreshHandler(content);
         attachBuyHandlers(content);
+        attachBlockHandlers(content, 'ipo-alerts');
         attachProfileHandlers(content);
     }
 
@@ -1081,6 +1148,24 @@
 
         content.addEventListener('click', buyHandler);
         tabEventListeners.push({ element: content, handler: buyHandler, type: 'click' });
+    }
+
+    function attachBlockHandlers(content, tabName) {
+        var blockHandler = function(e) {
+            var btn = e.target;
+            if (!btn.classList.contains('as-block-btn')) return;
+
+            var id = parseInt(btn.getAttribute('data-id'));
+            var name = btn.getAttribute('data-name');
+
+            addToBlacklist(id, name).then(function() {
+                showToast('Blocked ' + name + ' from Auto-Buy', 'warning');
+                openTab(tabName);
+            });
+        };
+
+        content.addEventListener('click', blockHandler);
+        tabEventListeners.push({ element: content, handler: blockHandler, type: 'click' });
     }
 
     function openPurchaseDialog(ipo, amount) {
@@ -1265,6 +1350,7 @@
         html += '<th style="padding:4px 2px;text-align:right;white-space:nowrap;">Current</th>';
         html += '<th style="padding:4px 2px;text-align:right;">P/L</th>';
         html += '<th style="padding:4px 2px;text-align:center;">Sell</th>';
+        html += '<th style="padding:4px 2px;text-align:center;width:24px;"></th>';
         html += '</tr></thead><tbody>';
 
         investments.forEach(function(inv, idx) {
@@ -1305,6 +1391,12 @@
             html += '<td style="padding:4px 2px;text-align:right;white-space:nowrap;">' + formatMoney(currentPrice) + ' ' + getTrendIcon(inv.stock_trend) + '</td>';
             html += '<td style="padding:4px 2px;text-align:right;color:' + plColor + ';">' + plSign + formatMoney(Math.abs(pl)) + '</td>';
             html += '<td style="padding:4px 2px;text-align:center;">' + sellCell + '</td>';
+            var invBlacklisted = settings.buyBlacklist && settings.buyBlacklist.some(function(b) { return b.id === inv.id; });
+            if (invBlacklisted) {
+                html += '<td style="padding:4px 2px;text-align:center;"><span style="color:#ef4444;font-size:10px;" title="Blacklisted">BL</span></td>';
+            } else {
+                html += '<td style="padding:4px 2px;text-align:center;"><button class="as-block-btn" data-id="' + inv.id + '" data-name="' + escapeHtml(inv.company_name) + '" style="padding:2px 4px;background:#ef4444;border:0;border-radius:4px;color:#fff;cursor:pointer;font-size:9px;" title="Block from Auto-Buy">X</button></td>';
+            }
             html += '</tr>';
         });
 
@@ -1349,6 +1441,8 @@
             { element: content, handler: sellHandler, type: 'click' },
             { element: document.getElementById('as-refresh-investments'), handler: refreshHandler, type: 'click' }
         );
+
+        attachBlockHandlers(content, 'investments');
 
         startSellTimers(content);
     }
