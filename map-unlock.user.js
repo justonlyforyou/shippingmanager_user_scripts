@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Premium Feature Unlocker
 // @description Unlocks premium map themes, tanker ops, metropolis and extended zoom
-// @version     1.15
+// @version     1.16
 // @author      https://github.com/justonlyforyou/
 // @order        30
 // @match       https://shippingmanager.cc/*
@@ -16,7 +16,7 @@
     if (window._rebelShipUnlockActive) return;
     window._rebelShipUnlockActive = true;
 
-    var ALL_MAPS = {0: 'light', 1: 'dark', 2: 'street', 3: 'satellite'};
+    var ALL_MAPS = {0: 'light', 1: 'dark', 2: 'street', 3: 'satellite', 4: 'city', 5: 'sky'};
     var EXTENDED_ZOOM = 18;
 
     var initInterval = null;
@@ -55,7 +55,6 @@
 
         // All map themes unlocked
         settings.maps = ALL_MAPS;
-        settings.has_access_to_special_maps = true;
 
         // Extended zoom
         if (!settings.zoom) settings.zoom = EXTENDED_ZOOM;
