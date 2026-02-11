@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Mass-Moore/Resume
 // @namespace    http://tampermonkey.net/
-// @version      4.32
+// @version      4.34
 // @description  Mass Moor and Resume vessels with checkbox selection
 // @author       https://github.com/justonlyforyou/
 // @order        13
@@ -335,12 +335,14 @@
             var style = document.createElement('style');
             style.id = 'fleet-manager-style';
             style.textContent = [
-                '#notifications-vessels-listing { height: calc(100% - 120px) !important; }',
-                '#notifications-vessels-listing .header-text { padding: 3px !important; }',
+                '#notifications-vessels-listing { display: flex !important; flex-direction: column !important; overflow: hidden !important; }',
+                '#notifications-vessels-listing .vesselList { flex: 1 !important; overflow-y: auto !important; min-height: 0 !important; }',
+                '#notifications-vessels-listing .header-text { padding: 3px !important; flex-shrink: 0 !important; }',
                 '.countdownBox { order: -1 !important; width: 100% !important; }',
+                '.buttonWrapper { gap: 2px !important; padding: 2px !important; flex-shrink: 0 !important; }',
+                '.singleButtonWrapper { flex-shrink: 0 !important; }',
                 '#fleet-manager-buttons { background: var(--background-light) !important; padding: 2px !important; margin: 0 !important; }',
                 '#fleet-manager-buttons .btn { min-height: 0 !important; padding-top: 2px !important; padding-bottom: 2px !important; }',
-                '.buttonWrapper { gap: 2px !important; padding: 2px !important; }',
                 '#depart-all-btn { margin: 0 !important; }',
                 '.fleet-manager-checkbox { position: absolute !important; left: 8px !important; top: 50% !important; transform: translateY(-50%) !important; z-index: 100 !important; }',
                 '.fleet-manager-cb-input { width: 18px; height: 18px; cursor: pointer; accent-color: #22c55e; }',
