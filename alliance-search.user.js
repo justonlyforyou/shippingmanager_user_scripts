@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Open Alliance Search
 // @description Search all open alliances
-// @version     3.55
+// @version     3.56
 // @author      https://github.com/justonlyforyou/
 // @order        2
 // @match       https://shippingmanager.cc/*
@@ -380,7 +380,7 @@
     }
 
     // Filter and search alliances (optimized: use in-memory cache, text search first)
-    async function filterAlliances(query, minMembers, minContribution, minDepartures) {
+    async function filterAlliances(query, minMembers, minContribution, minDepartures, maxMembers, maxContribution, maxDepartures) {
         // Use cached alliances if available, otherwise load from storage
         if (!cachedAlliances) {
             cachedAlliances = await getStoredAlliances();
@@ -400,11 +400,16 @@
         }
 
         // Then apply numeric filters on smaller set
-        if (minMembers > 0 || minContribution > 0 || minDepartures > 0) {
+        var hasMinFilter = minMembers > 0 || minContribution > 0 || minDepartures > 0;
+        var hasMaxFilter = maxMembers > 0 || maxContribution > 0 || maxDepartures > 0;
+        if (hasMinFilter || hasMaxFilter) {
             filtered = filtered.filter(function(a) {
                 if (minMembers > 0 && (a.members || 0) < minMembers) return false;
+                if (maxMembers > 0 && (a.members || 0) > maxMembers) return false;
                 if (minContribution > 0 && (a.contribution_24h || 0) < minContribution) return false;
+                if (maxContribution > 0 && (a.contribution_24h || 0) > maxContribution) return false;
                 if (minDepartures > 0 && (a.departures_24h || 0) < minDepartures) return false;
+                if (maxDepartures > 0 && (a.departures_24h || 0) > maxDepartures) return false;
                 return true;
             });
         }
@@ -665,7 +670,7 @@
         searchRow.appendChild(refreshBtn);
 
         var filterRow = document.createElement('div');
-        filterRow.style.cssText = 'display:flex;gap:8px;margin-bottom:15px;flex-wrap:wrap;';
+        filterRow.style.cssText = 'display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;';
 
         var filterInputStyle = 'width:110px;padding:6px 8px;border-radius:4px;border:1px solid #ccc;background:#f5f5f5;color:#333;font-size:12px;';
 
@@ -691,14 +696,43 @@
         minDeparturesInput.placeholder = 'Min Dep 24h';
         minDeparturesInput.style.cssText = filterInputStyle;
 
+        filterRow.appendChild(minMembersInput);
+        filterRow.appendChild(minContribInput);
+        filterRow.appendChild(minDeparturesInput);
+
+        var filterRow2 = document.createElement('div');
+        filterRow2.style.cssText = 'display:flex;gap:8px;margin-bottom:15px;flex-wrap:wrap;';
+
+        var maxMembersInput = document.createElement('input');
+        maxMembersInput.id = 'alliance-filter-max-members';
+        maxMembersInput.type = 'number';
+        maxMembersInput.min = '0';
+        maxMembersInput.max = '30';
+        maxMembersInput.placeholder = 'Max Members';
+        maxMembersInput.style.cssText = filterInputStyle;
+
+        var maxContribInput = document.createElement('input');
+        maxContribInput.id = 'alliance-filter-max-contribution';
+        maxContribInput.type = 'number';
+        maxContribInput.min = '0';
+        maxContribInput.placeholder = 'Max Contrib 24h';
+        maxContribInput.style.cssText = filterInputStyle;
+
+        var maxDeparturesInput = document.createElement('input');
+        maxDeparturesInput.id = 'alliance-filter-max-departures';
+        maxDeparturesInput.type = 'number';
+        maxDeparturesInput.min = '0';
+        maxDeparturesInput.placeholder = 'Max Dep 24h';
+        maxDeparturesInput.style.cssText = filterInputStyle;
+
         var resultCount = document.createElement('span');
         resultCount.id = 'alliance-result-count';
         resultCount.style.cssText = 'color:#666;font-size:12px;margin-left:auto;align-self:center;';
 
-        filterRow.appendChild(minMembersInput);
-        filterRow.appendChild(minContribInput);
-        filterRow.appendChild(minDeparturesInput);
-        filterRow.appendChild(resultCount);
+        filterRow2.appendChild(maxMembersInput);
+        filterRow2.appendChild(maxContribInput);
+        filterRow2.appendChild(maxDeparturesInput);
+        filterRow2.appendChild(resultCount);
 
         var resultsContainer = document.createElement('div');
         resultsContainer.id = 'alliance-search-results';
@@ -707,6 +741,7 @@
         searchContainer.appendChild(statusLine);
         searchContainer.appendChild(searchRow);
         searchContainer.appendChild(filterRow);
+        searchContainer.appendChild(filterRow2);
         searchContainer.appendChild(resultsContainer);
 
         wrapper.appendChild(indexingContainer);
@@ -718,8 +753,11 @@
             var minMembers = parseInt(minMembersInput.value) || 0;
             var minContrib = parseInt(minContribInput.value) || 0;
             var minDep = parseInt(minDeparturesInput.value) || 0;
+            var maxMembers = parseInt(maxMembersInput.value) || 0;
+            var maxContrib = parseInt(maxContribInput.value) || 0;
+            var maxDep = parseInt(maxDeparturesInput.value) || 0;
 
-            currentResults = await filterAlliances(query, minMembers, minContrib, minDep);
+            currentResults = await filterAlliances(query, minMembers, minContrib, minDep, maxMembers, maxContrib, maxDep);
             displayedCount = 0;
 
             resultCount.textContent = currentResults.length + ' results';
@@ -743,6 +781,18 @@
             searchTimeout = setTimeout(doSearch, 300);
         });
         minDeparturesInput.addEventListener('input', function() {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(doSearch, 300);
+        });
+        maxMembersInput.addEventListener('input', function() {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(doSearch, 300);
+        });
+        maxContribInput.addEventListener('input', function() {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(doSearch, 300);
+        });
+        maxDeparturesInput.addEventListener('input', function() {
             clearTimeout(searchTimeout);
             searchTimeout = setTimeout(doSearch, 300);
         });
