@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         ShippingManager - Auto Happy Staff By Points
+// @name         ShippingManager - Auto Happy Staff & Stuff Header Display (Points Edition)
 // @namespace    http://tampermonkey.net/
-// @description  Automatically buys Employee Workshop from the shop when crew or management morale drops below target
-// @version      1.2
+// @description  Automatically buys Employee Workshop from the shop when crew or management morale drops below target. NOT MIX WITH NO-POINTS EDITION!
+// @version      1.3
 // @author       https://github.com/justonlyforyou/
 // @order        6
 // @match        https://shippingmanager.cc/*

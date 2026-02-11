@@ -36,6 +36,7 @@ A collection of user scripts for [Shipping Manager](https://shippingmanager.cc/)
    - [Alliance Tools](#alliance-bug-fixesuserjs---alliance-tools)
    - [Cleanup System Messages](#cleanup-system-messagesuserjs---cleanup-system-messages)
    - [Auto Anchor](#auto-anchoruserjs---auto-anchor)
+   - [Auto Speed Boost](#auto-speed-boostuserjs---auto-speed-boost)
    - [Auto Stock](#auto-stockuserjs---auto-stock)
    - [ChatBot](#chatbotuserjs---chatbot)
    - [Export Scripts](#export-scripts)
@@ -95,7 +96,7 @@ Previous versions of these scripts worked with Tampermonkey, but the current arc
 | auto-drydock.user.js | 1.68 | ✓ | ✓ | ✓ | Auto-drydock at hours threshold, drydock bug prevention |
 | smugglers-eye.user.js | 1.96 | ✓ | ✓ | ✓ | Price optimization: 4% markup, gradual increase, max guards |
 | speed-breakeven.user.js | 2.05 | | ✓ | | Colors speed sliders green/red based on fuel break-even point |
-| mass-moor.user.js | 4.29 | | | | Mass Moor/Resume with checkboxes |
+| mass-moor.user.js | 4.32 | | | | Mass Moor/Resume with checkboxes |
 | vessel-cart.user.js | 4.34 | | ✓ | | Shopping cart for vessel purchase/build |
 | vessel-sell.user.js | 1.1 | ✓ | | | Bulk-sell vessels with lazy-loaded sell prices |
 | bunker-price-display.user.js | 3.25 | | | | Fuel/CO2 prices and fill level in header |
@@ -117,6 +118,7 @@ Previous versions of these scripts worked with Tampermonkey, but the current arc
 | export-vessel-history.user.js | 3.8 | | | | Save vessel history as CSV |
 | admin-view.user.js | 9.0 | | | | Shows Admin UI (visual only, no permissions) |
 | auto-anchor.user.js | 1.47 | ✓ | ✓ | ✓ | Auto-purchase anchor points when timer expires |
+| auto-speed-boost.user.js | 1.4 | ✓ | ✓ | ✓ | Auto-purchase 4x Speed Boost when timer expires |
 | auto-stock.user.js | 2.96 | ✓ | ✓ | ✓ | IPO Alerts and Investments tabs in Finance modal |
 | chatbot.user.js | 2.21 | ✓ | ✓ | ✓ | Automated chatbot for alliance chat and DMs |
 | fix-missing-vessel-details.user.js | 2.11 | | | | Fix missing vessel details (Engine, Port, Fuel Factor) via fetch interceptor |
@@ -684,6 +686,39 @@ Automatically purchases anchor points when the build timer expires.
 - If expired, checks cash balance and purchases the configured amount
 - Intercepts anchor purchase and timer reset API responses for immediate state updates
 - Syncs game modal slider to match last purchase amount
+
+---
+
+### auto-speed-boost.user.js - Auto Speed Boost
+
+**Version:** 1.4 | **Background Job:** Yes
+
+Automatically purchases 4x Speed Boost from the point shop when the timer expires.
+
+**Access:** RebelShip Menu > **"Auto Speed Boost"**
+
+#### Settings
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| Enable Auto Speed Boost | Main toggle | Off |
+| Min Points Reserve | Keep at least this many points after purchase | 0 |
+| Notifications | Ingame toast and/or system notification | Ingame on |
+
+#### How It Works
+
+- Checks every 5 minutes whether the 4x Speed Boost timer has expired
+- If expired, checks point balance (need 1200 + reserve)
+- Purchases `speed_up` from the point shop
+- Refreshes game UI after successful purchase
+- Works in both foreground and background (API-based, no Pinia dependency for checks)
+
+#### Status Display
+
+The settings modal shows live status:
+- Current speed boost timer (active/inactive with remaining time)
+- Current point balance
+- "Run Now" button for immediate check
 
 ---
 
@@ -1354,6 +1389,7 @@ Scripts with `@background-job-required true` support background execution:
 | auto-marketing-reputation-display.user.js | Auto campaign renewal |
 | alliance-chat-notification.user.js | Unread chat message alerts |
 | auto-anchor.user.js | Auto-purchase anchor points |
+| auto-speed-boost.user.js | Auto-purchase 4x Speed Boost |
 | auto-stock.user.js | Auto-Buy/Sell stocks |
 | forecast-calendar.user.js | Forecast auto-post to alliance chat |
 | smugglers-eye.user.js | Price optimization |

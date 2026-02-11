@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         ShippingManager - Auto Happy Staff & Stuff Header Display
+// @name         ShippingManager - Auto Happy Staff & Stuff Header Display (No-Points Edition)
 // @namespace    http://tampermonkey.net/
-// @description  Automatically manages staff salaries to maintain crew and management morale at target levels
-// @version      1.47
+// @description  Automatically manages staff salaries to maintain crew and management morale at target levels. DO NOT MIX WITH POINTS EDITION!
+// @version      1.48
 // @author       https://github.com/justonlyforyou/
 // @order        5
 // @match        https://shippingmanager.cc/*

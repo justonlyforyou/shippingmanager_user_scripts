@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Mass-Moore/Resume
 // @namespace    http://tampermonkey.net/
-// @version      4.30
+// @version      4.32
 // @description  Mass Moor and Resume vessels with checkbox selection
 // @author       https://github.com/justonlyforyou/
 // @order        13
@@ -338,8 +338,10 @@
                 '#notifications-vessels-listing { height: calc(100% - 120px) !important; }',
                 '#notifications-vessels-listing .header-text { padding: 3px !important; }',
                 '.countdownBox { order: -1 !important; width: 100% !important; }',
-                '#fleet-manager-buttons { background: var(--background-light) !important; padding: 4px 2px !important; margin-bottom: 2px !important; }',
+                '#fleet-manager-buttons { background: var(--background-light) !important; padding: 2px !important; margin: 0 !important; }',
                 '#fleet-manager-buttons .btn { min-height: 0 !important; padding-top: 2px !important; padding-bottom: 2px !important; }',
+                '.buttonWrapper { gap: 2px !important; padding: 2px !important; }',
+                '#depart-all-btn { margin: 0 !important; }',
                 '.fleet-manager-checkbox { position: absolute !important; left: 8px !important; top: 50% !important; transform: translateY(-50%) !important; z-index: 100 !important; }',
                 '.fleet-manager-cb-input { width: 18px; height: 18px; cursor: pointer; accent-color: #22c55e; }',
                 '.vesselRow { position: relative !important; z-index: 1 !important; }',
@@ -360,7 +362,7 @@
 
         var buttonContainer = document.createElement('div');
         buttonContainer.id = 'fleet-manager-buttons';
-        buttonContainer.style.cssText = 'grid-column: 1 / -1; width: 100%; display: flex; gap: 4px; padding: 0; box-sizing: border-box; margin-bottom: 4px;';
+        buttonContainer.style.cssText = 'grid-column: 1 / -1; width: 100%; display: flex; gap: 2px; padding: 0; box-sizing: border-box; margin-bottom: 2px;';
 
         var allBtn = createButton('All', function() { selectAll(true); });
         allBtn.id = 'fleet-manager-all-btn';
