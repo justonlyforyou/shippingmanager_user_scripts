@@ -2,7 +2,7 @@
 // @name         ShippingManager - Depart Manager
 // @namespace    https://rebelship.org/
 // @description  Unified departure management: Auto bunker rebuy, auto-depart, route settings
-// @version      3.99
+// @version      3.100
 // @author       https://github.com/justonlyforyou/
 // @order        11
 // @match        https://shippingmanager.cc/*
@@ -1275,22 +1275,34 @@
                 return null;
             }
 
-            // Fetch alliance members with 24h stats
-            var response = await originalFetch(API_BASE + '/alliance/get-alliance-members', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify({
-                    alliance_id: allianceData.allianceId,
-                    lifetime_stats: false,
-                    last_24h_stats: true,
-                    last_season_stats: false,
-                    include_last_season_top_contributors: true
-                })
-            });
+            // Fetch alliance members with 24h stats (retry up to 3 times on failure)
+            var data = null;
+            for (var attempt = 0; attempt < 3; attempt++) {
+                var response = await originalFetch(API_BASE + '/alliance/get-alliance-members', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({
+                        alliance_id: allianceData.allianceId,
+                        lifetime_stats: false,
+                        last_24h_stats: true,
+                        last_season_stats: false,
+                        include_last_season_top_contributors: true
+                    })
+                });
 
-            if (!response.ok) throw new Error('HTTP ' + response.status);
-            var data = await response.json();
+                if (response.ok) {
+                    data = await response.json();
+                    break;
+                }
+
+                log('get-alliance-members attempt ' + (attempt + 1) + ' failed: HTTP ' + response.status, 'warn');
+                if (attempt < 2) {
+                    await new Promise(function(resolve) { setTimeout(resolve, 1000); });
+                }
+            }
+
+            if (!data) throw new Error('get-alliance-members failed after 3 attempts');
 
             if (data.data && data.data.members) {
                 // Find the user in members list
