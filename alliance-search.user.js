@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Open Alliance Search
 // @description Search all open alliances
-// @version     3.56
+// @version     3.57
 // @author      https://github.com/justonlyforyou/
 // @order        2
 // @match       https://shippingmanager.cc/*
@@ -93,6 +93,28 @@
     // Format numbers with thousand separators
     function formatNumber(num) {
         return num.toLocaleString('en-US');
+    }
+
+    function formatNumberWithSeparator(value) {
+        var num = Number(String(value).replace(/,/g, ''));
+        if (isNaN(num)) return String(value);
+        return new Intl.NumberFormat('en-US', { useGrouping: true, maximumFractionDigits: 0 }).format(num);
+    }
+
+    function setupThousandSeparator(input) {
+        input.type = 'text';
+        input.inputMode = 'numeric';
+        input.addEventListener('input', function(e) {
+            var raw = e.target.value.replace(/[^\d]/g, '');
+            e.target.value = formatNumberWithSeparator(raw);
+        });
+        if (input.value) {
+            input.value = formatNumberWithSeparator(input.value);
+        }
+    }
+
+    function getNumericValue(input) {
+        return parseInt(String(input.value).replace(/,/g, ''), 10);
     }
 
     // Get Pinia stores
@@ -684,17 +706,15 @@
 
         var minContribInput = document.createElement('input');
         minContribInput.id = 'alliance-filter-contribution';
-        minContribInput.type = 'number';
-        minContribInput.min = '0';
         minContribInput.placeholder = 'Min Contrib 24h';
         minContribInput.style.cssText = filterInputStyle;
+        setupThousandSeparator(minContribInput);
 
         var minDeparturesInput = document.createElement('input');
         minDeparturesInput.id = 'alliance-filter-departures';
-        minDeparturesInput.type = 'number';
-        minDeparturesInput.min = '0';
         minDeparturesInput.placeholder = 'Min Dep 24h';
         minDeparturesInput.style.cssText = filterInputStyle;
+        setupThousandSeparator(minDeparturesInput);
 
         filterRow.appendChild(minMembersInput);
         filterRow.appendChild(minContribInput);
@@ -713,17 +733,15 @@
 
         var maxContribInput = document.createElement('input');
         maxContribInput.id = 'alliance-filter-max-contribution';
-        maxContribInput.type = 'number';
-        maxContribInput.min = '0';
         maxContribInput.placeholder = 'Max Contrib 24h';
         maxContribInput.style.cssText = filterInputStyle;
+        setupThousandSeparator(maxContribInput);
 
         var maxDeparturesInput = document.createElement('input');
         maxDeparturesInput.id = 'alliance-filter-max-departures';
-        maxDeparturesInput.type = 'number';
-        maxDeparturesInput.min = '0';
         maxDeparturesInput.placeholder = 'Max Dep 24h';
         maxDeparturesInput.style.cssText = filterInputStyle;
+        setupThousandSeparator(maxDeparturesInput);
 
         var resultCount = document.createElement('span');
         resultCount.id = 'alliance-result-count';
@@ -751,11 +769,11 @@
         async function doSearch() {
             var query = searchInput.value;
             var minMembers = parseInt(minMembersInput.value) || 0;
-            var minContrib = parseInt(minContribInput.value) || 0;
-            var minDep = parseInt(minDeparturesInput.value) || 0;
+            var minContrib = getNumericValue(minContribInput) || 0;
+            var minDep = getNumericValue(minDeparturesInput) || 0;
             var maxMembers = parseInt(maxMembersInput.value) || 0;
-            var maxContrib = parseInt(maxContribInput.value) || 0;
-            var maxDep = parseInt(maxDeparturesInput.value) || 0;
+            var maxContrib = getNumericValue(maxContribInput) || 0;
+            var maxDep = getNumericValue(maxDeparturesInput) || 0;
 
             currentResults = await filterAlliances(query, minMembers, minContrib, minDep, maxMembers, maxContrib, maxDep);
             displayedCount = 0;

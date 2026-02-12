@@ -2,7 +2,7 @@
 // @name         ShippingManager - Auto Drydock
 // @namespace    http://tampermonkey.net/
 // @description  Automatic drydock management with bug prevention and moor option
-// @version      1.68
+// @version      1.69
 // @order        4
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
@@ -30,6 +30,29 @@
     var handleVesselDataDebounceTimer = null;
     var VESSEL_DATA_DEBOUNCE_MS = 10000; // 10 seconds
     var modalTemplateCreated = false;
+
+    // ========== THOUSAND SEPARATOR UTILITIES ==========
+    function formatNumberWithSeparator(value) {
+        var num = Number(String(value).replace(/,/g, ''));
+        if (isNaN(num)) return String(value);
+        return new Intl.NumberFormat('en-US', { useGrouping: true, maximumFractionDigits: 0 }).format(num);
+    }
+
+    function setupThousandSeparator(input) {
+        input.type = 'text';
+        input.inputMode = 'numeric';
+        input.addEventListener('input', function(e) {
+            var raw = e.target.value.replace(/[^\d]/g, '');
+            e.target.value = formatNumberWithSeparator(raw);
+        });
+        if (input.value) {
+            input.value = formatNumberWithSeparator(input.value);
+        }
+    }
+
+    function getNumericValue(input) {
+        return parseInt(String(input.value).replace(/,/g, ''), 10);
+    }
 
     // Default settings
     var DEFAULT_SETTINGS = {
@@ -970,7 +993,7 @@
                         <label style="display:block;margin-bottom:8px;font-size:14px;font-weight:700;color:#01125d;">\
                             Minimum Cash Balance\
                         </label>\
-                        <input type="number" id="ad-mincash" min="0" step="100000"\
+                        <input type="text" id="ad-mincash" inputmode="numeric"\
                                class="redesign" style="width:100%;height:2.5rem;padding:0 1rem;background:#ebe9ea;border:0;border-radius:7px;color:#01125d;font-size:16px;font-family:Lato,sans-serif;text-align:center;box-sizing:border-box;">\
                         <div style="font-size:12px;color:#626b90;margin-top:6px;">\
                             Keep at least this much cash after drydock costs\
@@ -1056,7 +1079,7 @@
                 var mode = document.getElementById('ad-mode').value;
                 var moorInstead = mode === 'moor';
                 var threshold = parseInt(document.getElementById('ad-threshold').value, 10);
-                var minCash = parseInt(document.getElementById('ad-mincash').value, 10);
+                var minCash = getNumericValue(document.getElementById('ad-mincash'));
                 var speed = document.getElementById('ad-speed').value;
                 var type = document.getElementById('ad-type').value;
                 var notifyIngame = document.getElementById('ad-notify-ingame').checked;
@@ -1118,7 +1141,10 @@
         if (enabledEl) enabledEl.checked = settings.autoDrydockEnabled;
         if (thresholdEl) thresholdEl.value = settings.autoDrydockThreshold;
         if (modeEl) modeEl.value = settings.moorInsteadOfDrydock ? 'moor' : 'drydock';
-        if (minCashEl) minCashEl.value = settings.autoDrydockMinCash;
+        if (minCashEl) {
+            minCashEl.value = formatNumberWithSeparator(settings.autoDrydockMinCash);
+            setupThousandSeparator(minCashEl);
+        }
         if (speedEl) speedEl.value = settings.autoDrydockSpeed;
         if (typeEl) typeEl.value = settings.autoDrydockType;
         if (notifyIngameEl) notifyIngameEl.checked = settings.notifyIngame;

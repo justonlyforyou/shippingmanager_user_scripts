@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Auto Speed Boost
 // @namespace    https://rebelship.org/
-// @version      1.4
+// @version      1.5
 // @description  Automatically buys 4x Speed Boost from the shop when timer expires
 // @author       https://github.com/justonlyforyou/
 // @order        8
@@ -25,6 +25,29 @@
     var API_BASE = 'https://shippingmanager.cc/api';
     var SPEED_SKU = 'speed_up';
     var SPEED_COST = 1200;
+
+    // ========== THOUSAND SEPARATOR UTILITIES ==========
+    function formatNumberWithSeparator(value) {
+        var num = Number(String(value).replace(/,/g, ''));
+        if (isNaN(num)) return String(value);
+        return new Intl.NumberFormat('en-US', { useGrouping: true, maximumFractionDigits: 0 }).format(num);
+    }
+
+    function setupThousandSeparator(input) {
+        input.type = 'text';
+        input.inputMode = 'numeric';
+        input.addEventListener('input', function(e) {
+            var raw = e.target.value.replace(/[^\d]/g, '');
+            e.target.value = formatNumberWithSeparator(raw);
+        });
+        if (input.value) {
+            input.value = formatNumberWithSeparator(input.value);
+        }
+    }
+
+    function getNumericValue(input) {
+        return parseInt(String(input.value).replace(/,/g, ''), 10);
+    }
 
     var DEFAULT_SETTINGS = {
         enabled: false,
@@ -572,7 +595,7 @@
                 </div>\
                 <div style="margin-bottom:20px;">\
                     <label style="display:block;font-weight:700;font-size:14px;margin-bottom:8px;">Min Points Reserve</label>\
-                    <input type="number" id="asbst-min-reserve" value="' + currentSettings.minPointsReserve + '" min="0" step="100"\
+                    <input type="text" id="asbst-min-reserve" inputmode="numeric" value="' + formatNumberWithSeparator(currentSettings.minPointsReserve) + '"\
                            style="width:100%;height:2.5rem;padding:0 1rem;background:#ebe9ea;border:0;border-radius:7px;color:#01125d;font-size:16px;font-family:Lato,sans-serif;text-align:center;box-sizing:border-box;">\
                     <div style="font-size:12px;color:#626b90;margin-top:6px;">\
                         Keep at least this many points after buying. Cost: ' + SPEED_COST + ' + reserve = minimum needed.\
@@ -599,6 +622,9 @@
                 </div>\
             </div>';
 
+        var reserveEl = document.getElementById('asbst-min-reserve');
+        if (reserveEl) setupThousandSeparator(reserveEl);
+
         document.getElementById('asbst-run-now').onclick = async function() {
             this.disabled = true;
             this.textContent = 'Running...';
@@ -609,7 +635,7 @@
         };
 
         document.getElementById('asbst-save').onclick = function() {
-            var reserveVal = parseInt(document.getElementById('asbst-min-reserve').value, 10);
+            var reserveVal = getNumericValue(document.getElementById('asbst-min-reserve'));
             if (!Number.isInteger(reserveVal) || reserveVal < 0) {
                 reserveVal = 0;
             }

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Auto Marketing & Reputation Header Display
 // @description Shows reputation in header, auto-renews campaigns when expired with the most expensive possible one.
-// @version     5.34
+// @version     5.35
 // @author      joseywales - Pimped by https://github.com/justonlyforyou/
 // @order        6
 // @match       https://shippingmanager.cc/*
@@ -35,6 +35,29 @@
 
     // Campaign cache with 5 min TTL
     var campaignCache = { data: null, timestamp: 0, ttl: 5 * 60 * 1000 };
+
+    // ========== THOUSAND SEPARATOR UTILITIES ==========
+    function formatNumberWithSeparator(value) {
+        var num = Number(String(value).replace(/,/g, ''));
+        if (isNaN(num)) return String(value);
+        return new Intl.NumberFormat('en-US', { useGrouping: true, maximumFractionDigits: 0 }).format(num);
+    }
+
+    function setupThousandSeparator(input) {
+        input.type = 'text';
+        input.inputMode = 'numeric';
+        input.addEventListener('input', function(e) {
+            var raw = e.target.value.replace(/[^\d]/g, '');
+            e.target.value = formatNumberWithSeparator(raw);
+        });
+        if (input.value) {
+            input.value = formatNumberWithSeparator(input.value);
+        }
+    }
+
+    function getNumericValue(input) {
+        return parseInt(String(input.value).replace(/,/g, ''), 10);
+    }
 
     // ========== SETTINGS ==========
     var settings = {
@@ -611,11 +634,11 @@
         minCashLabel.textContent = 'Minimum Cash Balance';
 
         var minCashInput = document.createElement('input');
-        minCashInput.type = 'number';
         minCashInput.id = 'rep-min-cash';
-        minCashInput.value = settings.minCash;
+        minCashInput.value = formatNumberWithSeparator(settings.minCash);
         minCashInput.placeholder = '0';
         minCashInput.style.cssText = 'width:100%;padding:10px;border:1px solid #ccc;border-radius:6px;font-size:14px;box-sizing:border-box;';
+        setupThousandSeparator(minCashInput);
 
         var minCashDesc = document.createElement('div');
         minCashDesc.style.cssText = 'font-size:12px;color:#626b90;margin-top:6px;';
@@ -711,7 +734,7 @@
 
         saveBtn.addEventListener('click', function() {
             settings.autoRenewalEnabled = autoRenewalCheckbox.checked;
-            settings.minCash = parseInt(minCashInput.value, 10) || 0;
+            settings.minCash = getNumericValue(minCashInput);
             settings.notifyIngame = ingameCheckbox.checked;
             settings.notifySystem = systemCheckbox.checked;
             if (settings.notifySystem) {

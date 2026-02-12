@@ -2,7 +2,7 @@
 // @name         ShippingManager - Depart Manager
 // @namespace    https://rebelship.org/
 // @description  Unified departure management: Auto bunker rebuy, auto-depart, route settings
-// @version      3.97
+// @version      3.98
 // @author       https://github.com/justonlyforyou/
 // @order        11
 // @match        https://shippingmanager.cc/*
@@ -81,6 +81,49 @@
             vesselLookupMapTimestamp = now;
         }
         return vesselLookupMap.get(vesselId) || null;
+    }
+
+    // ============================================
+    // THOUSAND SEPARATOR FORMATTING HELPERS
+    // ============================================
+    function formatNumberWithSeparator(value) {
+        var num = Number(String(value).replace(/,/g, ''));
+        if (isNaN(num)) return String(value);
+        return new Intl.NumberFormat('en-US', { useGrouping: true, maximumFractionDigits: 0 }).format(num);
+    }
+
+    function setupThousandSeparator(input) {
+        input.type = 'text';
+        input.inputMode = 'numeric';
+        input.addEventListener('input', function(e) {
+            var raw = e.target.value.replace(/[^\d]/g, '');
+            e.target.value = formatNumberWithSeparator(raw);
+        });
+        if (input.value) {
+            input.value = formatNumberWithSeparator(input.value);
+        }
+    }
+
+    function getNumericValue(input) {
+        return parseInt(String(input.value).replace(/,/g, ''), 10);
+    }
+
+    function setupThousandSeparatorDecimal(input) {
+        input.type = 'text';
+        input.inputMode = 'decimal';
+        input.addEventListener('input', function(e) {
+            var val = e.target.value.replace(/,/g, '');
+            if (val !== '' && !isNaN(Number(val))) {
+                var parts = val.split('.');
+                parts[0] = formatNumberWithSeparator(parts[0]);
+                e.target.value = parts.join('.');
+            }
+        });
+        if (input.value) {
+            var parts = String(input.value).split('.');
+            parts[0] = formatNumberWithSeparator(parts[0]);
+            input.value = parts.join('.');
+        }
     }
 
     // ============================================
@@ -3143,7 +3186,7 @@
         var el = e.target;
         var vesselId = el.dataset.vesselId;
         var original = el.dataset.original;
-        var value = el.value;
+        var value = el.value.replace(/,/g, '');
         var changeKey = el.dataset.changeKey;
         if (!changeKey || !vesselId) return;
 
@@ -3380,6 +3423,12 @@
 
         wrapper.innerHTML = '<table class="rs-table"><thead><tr>' + headers + '</tr></thead><tbody>' + rows + '</tbody></table>';
 
+        // Apply thousand separator to price inputs (decimal values)
+        var priceInputs = wrapper.querySelectorAll('input[data-change-key^="price_"]');
+        for (var pi = 0; pi < priceInputs.length; pi++) {
+            setupThousandSeparatorDecimal(priceInputs[pi]);
+        }
+
         // Event delegation at wrapper level instead of 300+ individual listeners
         if (!wrapper.dataset.rsDelegated) {
             wrapper.dataset.rsDelegated = '1';
@@ -3608,7 +3657,7 @@
         modalCloseObserver.observe(modalContainer, { childList: true, subtree: true });
 
         var style = document.createElement('style');
-        style.textContent = '#rs-settings-container{width:100%;height:100%;display:flex;flex-direction:column;background:#f5f5f5;color:#01125d;font-family:Lato,sans-serif;font-size:11px}.rs-header{display:flex;align-items:center;gap:4px;padding:4px 6px;background:#e8e8e8;border-bottom:1px solid #ccc}.rs-subtab{padding:3px 8px;background:#fff;color:#01125d;border:1px solid #ccc;border-radius:3px;cursor:pointer;font-size:10px;font-weight:600}.rs-subtab:hover{background:#ddd}.rs-subtab.active{background:#0db8f4;color:#fff;border-color:#0db8f4}.rs-save-btn{margin-left:auto;padding:3px 10px;background:#22c55e;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:10px;font-weight:600;opacity:0.4}.rs-save-btn.has-changes{opacity:1}.rs-status{font-size:9px;color:#666;margin-left:6px}.rs-table-wrapper{flex:1;overflow:auto}.rs-table{width:100%;border-collapse:collapse;font-size:10px}.rs-table thead{position:sticky;top:0;background:#e0e0e0;z-index:1}.rs-table th{padding:1px;text-align:center;font-weight:600;color:#01125d;border-bottom:1px solid #ccc;white-space:nowrap;background:#e0e0e0;font-size:10px}.rs-table td{padding:1px;border-bottom:1px solid #ddd;vertical-align:middle;text-align:center}.rs-table td.route-cell,.rs-table td.name-cell{text-align:left}.rs-table td.max-speed,.rs-table td.auto-price,.rs-table td.pct-diff{color:#666;font-size:9px}.rs-table tr:hover{background:#e8f4fc}.rs-table .warning{color:#d97706}.rs-table .status-cell{width:22px;text-align:center;padding:1px}.rs-table .status-icon{display:inline-block;height:14px;line-height:14px;text-align:center;font-size:8px;font-weight:700;border-radius:2px;padding:0 2px}.rs-table .status-icon.status-e{background:#3b82f6;color:#fff}.rs-table .status-icon.status-p{background:#22c55e;color:#fff}.rs-table .status-icon.status-a{background:#f59e0b;color:#fff}.rs-table .status-icon.status-mp,.rs-table .status-icon.status-me{background:#8b5cf6;color:#fff}.rs-table .status-icon.status-m{background:#ef4444;color:#fff}.rs-table .status-icon.status-d{background:#6366f1;color:#fff}.rs-table .status-icon.status-td{background:#f97316;color:#fff}.rs-table .status-icon.status-fd{background:#14b8a6;color:#fff}.rs-table .status-icon.status-eo{background:#1d4ed8;color:#fff}.rs-table .status-icon.status-er{background:#0891b2;color:#fff}.rs-table .status-icon.status-bu{background:#dc2626;color:#fff}.rs-table .route-cell{font-size:9px;white-space:nowrap}.rs-table .name-cell{max-width:60px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;cursor:pointer}.rs-table .name-cell:hover{text-decoration:underline}.rs-table input[type="number"]{width:32px;padding:1px 2px;margin:0;background:#fff;border:1px solid #ccc;border-radius:2px;color:#01125d;font-size:10px;text-align:right;box-sizing:border-box;-moz-appearance:textfield}.rs-table input.speed-input{width:24px}.rs-table .pct-positive{color:#22c55e}.rs-table .pct-negative{color:#ef4444}.rs-table input[type="number"]::-webkit-outer-spin-button,.rs-table input[type="number"]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}.rs-table input[type="number"]:focus{outline:none;border-color:#0db8f4}.rs-table input.changed{background:#fef3c7;border-color:#f59e0b}.rs-table select{padding:1px 2px;background:#fff;border:1px solid #ccc;border-radius:2px;color:#01125d;font-size:10px;cursor:pointer}.rs-table select:focus{outline:none;border-color:#0db8f4}.rs-table select.changed{background:#fef3c7;border-color:#f59e0b}.rs-loading,.rs-error,.rs-no-data{padding:20px;text-align:center;color:#666}.rs-table .pending-indicator{display:inline;font-size:9px;color:#8b5cf6;font-weight:600;margin-left:2px}.rs-table th[data-tip]{position:relative;cursor:help}.rs-table th[data-tip]:hover::after{content:attr(data-tip);position:absolute;top:100%;left:50%;transform:translateX(-50%);background:#333;color:#fff;padding:6px 10px;border-radius:4px;font-size:10px;font-weight:400;white-space:pre-line;z-index:100;min-width:100px;max-width:180px;text-align:left;box-shadow:0 2px 8px rgba(0,0,0,0.3);margin-top:4px}.rs-table th[data-tip]:nth-child(-n+3):hover::after{left:0;transform:translateX(0)}.rs-table th[data-tip]:nth-last-child(-n+5):hover::after{left:auto;right:0;transform:translateX(0)}.rs-footer{position:fixed;bottom:73px;left:0;right:0;max-width:460px;margin:0 auto;padding:6px 4px;text-align:center;background:#e8e8e8;border-top:1px solid #ccc;z-index:9999}.rs-footer a{color:#5865F2;font-size:14px;font-weight:700;text-decoration:underline}';
+        style.textContent = '#rs-settings-container{width:100%;height:100%;display:flex;flex-direction:column;background:#f5f5f5;color:#01125d;font-family:Lato,sans-serif;font-size:11px}.rs-header{display:flex;align-items:center;gap:4px;padding:4px 6px;background:#e8e8e8;border-bottom:1px solid #ccc}.rs-subtab{padding:3px 8px;background:#fff;color:#01125d;border:1px solid #ccc;border-radius:3px;cursor:pointer;font-size:10px;font-weight:600}.rs-subtab:hover{background:#ddd}.rs-subtab.active{background:#0db8f4;color:#fff;border-color:#0db8f4}.rs-save-btn{margin-left:auto;padding:3px 10px;background:#22c55e;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:10px;font-weight:600;opacity:0.4}.rs-save-btn.has-changes{opacity:1}.rs-status{font-size:9px;color:#666;margin-left:6px}.rs-table-wrapper{flex:1;overflow:auto}.rs-table{width:100%;border-collapse:collapse;font-size:10px}.rs-table thead{position:sticky;top:0;background:#e0e0e0;z-index:1}.rs-table th{padding:1px;text-align:center;font-weight:600;color:#01125d;border-bottom:1px solid #ccc;white-space:nowrap;background:#e0e0e0;font-size:10px}.rs-table td{padding:1px;border-bottom:1px solid #ddd;vertical-align:middle;text-align:center}.rs-table td.route-cell,.rs-table td.name-cell{text-align:left}.rs-table td.max-speed,.rs-table td.auto-price,.rs-table td.pct-diff{color:#666;font-size:9px}.rs-table tr:hover{background:#e8f4fc}.rs-table .warning{color:#d97706}.rs-table .status-cell{width:22px;text-align:center;padding:1px}.rs-table .status-icon{display:inline-block;height:14px;line-height:14px;text-align:center;font-size:8px;font-weight:700;border-radius:2px;padding:0 2px}.rs-table .status-icon.status-e{background:#3b82f6;color:#fff}.rs-table .status-icon.status-p{background:#22c55e;color:#fff}.rs-table .status-icon.status-a{background:#f59e0b;color:#fff}.rs-table .status-icon.status-mp,.rs-table .status-icon.status-me{background:#8b5cf6;color:#fff}.rs-table .status-icon.status-m{background:#ef4444;color:#fff}.rs-table .status-icon.status-d{background:#6366f1;color:#fff}.rs-table .status-icon.status-td{background:#f97316;color:#fff}.rs-table .status-icon.status-fd{background:#14b8a6;color:#fff}.rs-table .status-icon.status-eo{background:#1d4ed8;color:#fff}.rs-table .status-icon.status-er{background:#0891b2;color:#fff}.rs-table .status-icon.status-bu{background:#dc2626;color:#fff}.rs-table .route-cell{font-size:9px;white-space:nowrap}.rs-table .name-cell{max-width:60px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;cursor:pointer}.rs-table .name-cell:hover{text-decoration:underline}.rs-table input[type="number"],.rs-table input[type="text"]{width:32px;padding:1px 2px;margin:0;background:#fff;border:1px solid #ccc;border-radius:2px;color:#01125d;font-size:10px;text-align:right;box-sizing:border-box;-moz-appearance:textfield}.rs-table input.speed-input{width:24px}.rs-table .pct-positive{color:#22c55e}.rs-table .pct-negative{color:#ef4444}.rs-table input[type="number"]::-webkit-outer-spin-button,.rs-table input[type="number"]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}.rs-table input[type="number"]:focus,.rs-table input[type="text"]:focus{outline:none;border-color:#0db8f4}.rs-table input.changed{background:#fef3c7;border-color:#f59e0b}.rs-table select{padding:1px 2px;background:#fff;border:1px solid #ccc;border-radius:2px;color:#01125d;font-size:10px;cursor:pointer}.rs-table select:focus{outline:none;border-color:#0db8f4}.rs-table select.changed{background:#fef3c7;border-color:#f59e0b}.rs-loading,.rs-error,.rs-no-data{padding:20px;text-align:center;color:#666}.rs-table .pending-indicator{display:inline;font-size:9px;color:#8b5cf6;font-weight:600;margin-left:2px}.rs-table th[data-tip]{position:relative;cursor:help}.rs-table th[data-tip]:hover::after{content:attr(data-tip);position:absolute;top:100%;left:50%;transform:translateX(-50%);background:#333;color:#fff;padding:6px 10px;border-radius:4px;font-size:10px;font-weight:400;white-space:pre-line;z-index:100;min-width:100px;max-width:180px;text-align:left;box-shadow:0 2px 8px rgba(0,0,0,0.3);margin-top:4px}.rs-table th[data-tip]:nth-child(-n+3):hover::after{left:0;transform:translateX(0)}.rs-table th[data-tip]:nth-last-child(-n+5):hover::after{left:auto;right:0;transform:translateX(0)}.rs-footer{position:fixed;bottom:73px;left:0;right:0;max-width:460px;margin:0 auto;padding:6px 4px;text-align:center;background:#e8e8e8;border-top:1px solid #ccc;z-index:9999}.rs-footer a{color:#5865F2;font-size:14px;font-weight:700;text-decoration:underline}';
         centralContainer.appendChild(style);
 
         rsRenderSettingsPanel();
@@ -3810,11 +3859,11 @@
             html += '<div id="dm-fuel-basic-settings" style="padding:12px;background:#f9fafb;border-radius:6px;margin-bottom:12px;">';
             html += '<div style="margin-bottom:10px;">';
             html += '<label style="display:block;font-weight:600;margin-bottom:4px;font-size:13px;">Price Threshold ($/t)</label>';
-            html += '<input type="number" id="dm-fuel-threshold" value="' + escapeAttr(settings.fuelPriceThreshold) + '" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;">';
+            html += '<input type="text" id="dm-fuel-threshold" inputmode="numeric" value="' + formatNumberWithSeparator(settings.fuelPriceThreshold) + '" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;">';
             html += '</div>';
             html += '<div style="margin-bottom:10px;">';
             html += '<label style="display:block;font-weight:600;margin-bottom:4px;font-size:13px;">Min Cash Reserve ($)</label>';
-            html += '<input type="number" id="dm-fuel-mincash" value="' + escapeAttr(settings.fuelMinCash) + '" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;">';
+            html += '<input type="text" id="dm-fuel-mincash" inputmode="numeric" value="' + formatNumberWithSeparator(settings.fuelMinCash) + '" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;">';
             html += '</div>';
             // Intelligent Mode Checkbox (inside Basic settings)
             html += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid #ddd;">';
@@ -3827,14 +3876,14 @@
             html += '<div id="dm-fuel-intel-settings" style="margin-top:10px;padding:10px;background:#f0f9ff;border-radius:6px;border:1px solid #bae6fd;">';
             html += '<div style="margin-bottom:10px;">';
             html += '<label style="display:block;font-weight:600;margin-bottom:4px;font-size:13px;">Max Price ($/t)</label>';
-            html += '<input type="number" id="dm-fuel-intel-max" value="' + escapeAttr(settings.fuelIntelligentMaxPrice) + '" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;">';
+            html += '<input type="text" id="dm-fuel-intel-max" inputmode="numeric" value="' + formatNumberWithSeparator(settings.fuelIntelligentMaxPrice) + '" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;">';
             html += '</div>';
             html += '<div style="margin-bottom:8px;">';
             html += '<label style="display:flex;align-items:center;cursor:pointer;">';
             html += '<input type="checkbox" id="dm-fuel-intel-below-en"' + (settings.fuelIntelligentBelowEnabled ? ' checked' : '') + ' style="width:16px;height:16px;margin-right:8px;accent-color:#0db8f4;">';
             html += '<span style="font-size:13px;">Only if bunker below (t)</span></label>';
             html += '</div>';
-            html += '<input type="number" id="dm-fuel-intel-below" value="' + escapeAttr(settings.fuelIntelligentBelow) + '" style="width:100%;padding:6px;border:1px solid #ccc;border-radius:4px;margin-bottom:10px;">';
+            html += '<input type="text" id="dm-fuel-intel-below" inputmode="numeric" value="' + formatNumberWithSeparator(settings.fuelIntelligentBelow) + '" style="width:100%;padding:6px;border:1px solid #ccc;border-radius:4px;margin-bottom:10px;">';
             html += '<div style="margin-bottom:8px;">';
             html += '<label style="display:flex;align-items:center;cursor:pointer;">';
             html += '<input type="checkbox" id="dm-fuel-intel-ships-en"' + (settings.fuelIntelligentShipsEnabled ? ' checked' : '') + ' style="width:16px;height:16px;margin-right:8px;accent-color:#0db8f4;">';
@@ -3871,11 +3920,11 @@
             html += '<div id="dm-co2-basic-settings" style="padding:12px;background:#f9fafb;border-radius:6px;margin-bottom:12px;">';
             html += '<div style="margin-bottom:10px;">';
             html += '<label style="display:block;font-weight:600;margin-bottom:4px;font-size:13px;">Price Threshold ($/t)</label>';
-            html += '<input type="number" id="dm-co2-threshold" value="' + escapeAttr(settings.co2PriceThreshold) + '" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;">';
+            html += '<input type="text" id="dm-co2-threshold" inputmode="numeric" value="' + formatNumberWithSeparator(settings.co2PriceThreshold) + '" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;">';
             html += '</div>';
             html += '<div style="margin-bottom:10px;">';
             html += '<label style="display:block;font-weight:600;margin-bottom:4px;font-size:13px;">Min Cash Reserve ($)</label>';
-            html += '<input type="number" id="dm-co2-mincash" value="' + escapeAttr(settings.co2MinCash) + '" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;">';
+            html += '<input type="text" id="dm-co2-mincash" inputmode="numeric" value="' + formatNumberWithSeparator(settings.co2MinCash) + '" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;">';
             html += '</div>';
             // Intelligent Mode Checkbox (inside Basic settings)
             html += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid #ddd;">';
@@ -3888,14 +3937,14 @@
             html += '<div id="dm-co2-intel-settings" style="margin-top:10px;padding:10px;background:#f0fdf4;border-radius:6px;border:1px solid #bbf7d0;">';
             html += '<div style="margin-bottom:10px;">';
             html += '<label style="display:block;font-weight:600;margin-bottom:4px;font-size:13px;">Max Price ($/t)</label>';
-            html += '<input type="number" id="dm-co2-intel-max" value="' + escapeAttr(settings.co2IntelligentMaxPrice) + '" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;">';
+            html += '<input type="text" id="dm-co2-intel-max" inputmode="numeric" value="' + formatNumberWithSeparator(settings.co2IntelligentMaxPrice) + '" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;">';
             html += '</div>';
             html += '<div style="margin-bottom:8px;">';
             html += '<label style="display:flex;align-items:center;cursor:pointer;">';
             html += '<input type="checkbox" id="dm-co2-intel-below-en"' + (settings.co2IntelligentBelowEnabled ? ' checked' : '') + ' style="width:16px;height:16px;margin-right:8px;accent-color:#0db8f4;">';
             html += '<span style="font-size:13px;">Only if bunker below (t)</span></label>';
             html += '</div>';
-            html += '<input type="number" id="dm-co2-intel-below" value="' + escapeAttr(settings.co2IntelligentBelow) + '" style="width:100%;padding:6px;border:1px solid #ccc;border-radius:4px;margin-bottom:10px;">';
+            html += '<input type="text" id="dm-co2-intel-below" inputmode="numeric" value="' + formatNumberWithSeparator(settings.co2IntelligentBelow) + '" style="width:100%;padding:6px;border:1px solid #ccc;border-radius:4px;margin-bottom:10px;">';
             html += '<div style="margin-bottom:8px;">';
             html += '<label style="display:flex;align-items:center;cursor:pointer;">';
             html += '<input type="checkbox" id="dm-co2-intel-ships-en"' + (settings.co2IntelligentShipsEnabled ? ' checked' : '') + ' style="width:16px;height:16px;margin-right:8px;accent-color:#0db8f4;">';
@@ -4059,6 +4108,16 @@
             document.getElementById('dm-co2-basic').addEventListener('change', updateCO2Visibility);
             document.getElementById('dm-co2-intel').addEventListener('change', updateCO2Visibility);
 
+            // Apply thousand separators to numeric settings inputs
+            setupThousandSeparator(document.getElementById('dm-fuel-threshold'));
+            setupThousandSeparator(document.getElementById('dm-fuel-mincash'));
+            setupThousandSeparator(document.getElementById('dm-fuel-intel-max'));
+            setupThousandSeparator(document.getElementById('dm-fuel-intel-below'));
+            setupThousandSeparator(document.getElementById('dm-co2-threshold'));
+            setupThousandSeparator(document.getElementById('dm-co2-mincash'));
+            setupThousandSeparator(document.getElementById('dm-co2-intel-max'));
+            setupThousandSeparator(document.getElementById('dm-co2-intel-below'));
+
             document.getElementById('dm-save').addEventListener('click', async function() {
                 var fuelBasic = document.getElementById('dm-fuel-basic').checked;
                 var fuelIntel = document.getElementById('dm-fuel-intel').checked;
@@ -4067,21 +4126,21 @@
 
                 var newSettings = {
                     fuelMode: fuelBasic ? (fuelIntel ? 'intelligent' : 'basic') : 'off',
-                    fuelPriceThreshold: parseInt(document.getElementById('dm-fuel-threshold').value, 10) || 500,
-                    fuelMinCash: parseInt(document.getElementById('dm-fuel-mincash').value, 10) || 1000000,
-                    fuelIntelligentMaxPrice: parseInt(document.getElementById('dm-fuel-intel-max').value, 10) || 600,
+                    fuelPriceThreshold: getNumericValue(document.getElementById('dm-fuel-threshold')) || 500,
+                    fuelMinCash: getNumericValue(document.getElementById('dm-fuel-mincash')) || 1000000,
+                    fuelIntelligentMaxPrice: getNumericValue(document.getElementById('dm-fuel-intel-max')) || 600,
                     fuelIntelligentBelowEnabled: document.getElementById('dm-fuel-intel-below-en').checked,
-                    fuelIntelligentBelow: parseInt(document.getElementById('dm-fuel-intel-below').value, 10) || 500,
+                    fuelIntelligentBelow: getNumericValue(document.getElementById('dm-fuel-intel-below')) || 500,
                     fuelIntelligentShipsEnabled: document.getElementById('dm-fuel-intel-ships-en').checked,
                     fuelIntelligentShips: parseInt(document.getElementById('dm-fuel-intel-ships').value, 10) || 5,
                     fuelNotifyIngame: document.getElementById('dm-fuel-notify-ingame').checked,
                     fuelNotifySystem: document.getElementById('dm-fuel-notify-system').checked,
                     co2Mode: co2Basic ? (co2Intel ? 'intelligent' : 'basic') : 'off',
-                    co2PriceThreshold: parseInt(document.getElementById('dm-co2-threshold').value, 10) || 10,
-                    co2MinCash: parseInt(document.getElementById('dm-co2-mincash').value, 10) || 1000000,
-                    co2IntelligentMaxPrice: parseInt(document.getElementById('dm-co2-intel-max').value, 10) || 12,
+                    co2PriceThreshold: getNumericValue(document.getElementById('dm-co2-threshold')) || 10,
+                    co2MinCash: getNumericValue(document.getElementById('dm-co2-mincash')) || 1000000,
+                    co2IntelligentMaxPrice: getNumericValue(document.getElementById('dm-co2-intel-max')) || 12,
                     co2IntelligentBelowEnabled: document.getElementById('dm-co2-intel-below-en').checked,
-                    co2IntelligentBelow: parseInt(document.getElementById('dm-co2-intel-below').value, 10) || 500,
+                    co2IntelligentBelow: getNumericValue(document.getElementById('dm-co2-intel-below')) || 500,
                     co2IntelligentShipsEnabled: document.getElementById('dm-co2-intel-ships-en').checked,
                     co2IntelligentShips: parseInt(document.getElementById('dm-co2-intel-ships').value, 10) || 5,
                     avoidNegativeCO2: document.getElementById('dm-avoid-neg-co2').checked,

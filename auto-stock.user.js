@@ -2,7 +2,7 @@
 // @name         ShippingManager - Auto Stock
 // @namespace    http://tampermonkey.net/
 // @description  IPO Alerts and Investments tabs in Finance modal
-// @version      2.98
+// @version      2.99
 // @order        16
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
@@ -36,6 +36,29 @@
         desktopNotifications: false,
         buyBlacklist: []
     };
+
+    // ========== THOUSAND SEPARATOR UTILITIES ==========
+    function formatNumberWithSeparator(value) {
+        var num = Number(String(value).replace(/,/g, ''));
+        if (isNaN(num)) return String(value);
+        return new Intl.NumberFormat('en-US', { useGrouping: true, maximumFractionDigits: 0 }).format(num);
+    }
+
+    function setupThousandSeparator(input) {
+        input.type = 'text';
+        input.inputMode = 'numeric';
+        input.addEventListener('input', function(e) {
+            var raw = e.target.value.replace(/[^\d]/g, '');
+            e.target.value = formatNumberWithSeparator(raw);
+        });
+        if (input.value) {
+            input.value = formatNumberWithSeparator(input.value);
+        }
+    }
+
+    function getNumericValue(input) {
+        return parseInt(String(input.value).replace(/,/g, ''), 10);
+    }
 
     var purchasedIpoIds = new Set();
 
@@ -772,11 +795,11 @@
                     </label>\
                     <div style="margin-bottom:16px;">\
                         <label style="display:block;margin-bottom:6px;font-size:13px;">Min Cash Reserve ($)</label>\
-                        <input type="number" id="as-min-cash" min="0" value="' + settings.minCashReserve + '" class="as-input">\
+                        <input type="text" id="as-min-cash" inputmode="numeric" value="' + formatNumberWithSeparator(settings.minCashReserve) + '" class="as-input">\
                     </div>\
                     <div style="margin-bottom:16px;">\
                         <label style="display:block;margin-bottom:6px;font-size:13px;">Max Stock Price ($/share)</label>\
-                        <input type="number" id="as-max-price" min="1" value="' + settings.maxStockPrice + '" class="as-input">\
+                        <input type="text" id="as-max-price" inputmode="numeric" value="' + formatNumberWithSeparator(settings.maxStockPrice) + '" class="as-input">\
                     </div>\
                     <label class="as-label-row">\
                         <input type="checkbox" id="as-autosell-enabled" ' + (settings.autoSellEnabled ? 'checked' : '') + ' class="as-checkbox">\
@@ -844,6 +867,11 @@
                 </div>\
             </div>';
 
+        var minCashEl = document.getElementById('as-min-cash');
+        if (minCashEl) setupThousandSeparator(minCashEl);
+        var maxPriceEl = document.getElementById('as-max-price');
+        if (maxPriceEl) setupThousandSeparator(maxPriceEl);
+
         var cancelHandler = function() {
             closeModal();
         };
@@ -856,8 +884,8 @@
         var saveHandler = async function() {
             var maxAge = parseInt(document.getElementById('as-max-age').value, 10);
             var checkLimit = parseInt(document.getElementById('as-check-limit').value, 10);
-            var minCash = parseInt(document.getElementById('as-min-cash').value, 10);
-            var maxPrice = parseInt(document.getElementById('as-max-price').value, 10);
+            var minCash = getNumericValue(document.getElementById('as-min-cash'));
+            var maxPrice = getNumericValue(document.getElementById('as-max-price'));
 
             if (isNaN(maxAge) || maxAge < 1 || maxAge > 365) {
                 showToast('IPO Max Age must be between 1 and 365', 'error');

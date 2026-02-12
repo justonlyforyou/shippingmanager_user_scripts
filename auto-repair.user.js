@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Auto Repair
 // @namespace    https://rebelship.org/
-// @version      2.46
+// @version      2.47
 // @description  Auto-repair vessels when wear reaches threshold
 // @author       https://github.com/justonlyforyou/
 // @order        7
@@ -24,6 +24,29 @@
     var SCRIPT_NAME = 'AutoRepair';
     var STORE_NAME = 'data';
     var CHECK_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes (background service minimum)
+
+    // ========== THOUSAND SEPARATOR UTILITIES ==========
+    function formatNumberWithSeparator(value) {
+        var num = Number(String(value).replace(/,/g, ''));
+        if (isNaN(num)) return String(value);
+        return new Intl.NumberFormat('en-US', { useGrouping: true, maximumFractionDigits: 0 }).format(num);
+    }
+
+    function setupThousandSeparator(input) {
+        input.type = 'text';
+        input.inputMode = 'numeric';
+        input.addEventListener('input', function(e) {
+            var raw = e.target.value.replace(/[^\d]/g, '');
+            e.target.value = formatNumberWithSeparator(raw);
+        });
+        if (input.value) {
+            input.value = formatNumberWithSeparator(input.value);
+        }
+    }
+
+    function getNumericValue(input) {
+        return parseInt(String(input.value).replace(/,/g, ''), 10);
+    }
 
     // ========== STATE ==========
     var settings = {
@@ -656,12 +679,10 @@
         minCashLabel.className = 'repair-field-label';
         minCashLabel.textContent = 'Minimum Cash Balance';
         var minCashInput = document.createElement('input');
-        minCashInput.type = 'number';
         minCashInput.id = 'yf-mincash';
         minCashInput.className = 'redesign repair-input';
-        minCashInput.min = '1000000';
-        minCashInput.step = '100000';
-        minCashInput.value = settings.minCashAfterRepair;
+        minCashInput.value = formatNumberWithSeparator(settings.minCashAfterRepair);
+        setupThousandSeparator(minCashInput);
         var minCashHint = document.createElement('div');
         minCashHint.className = 'repair-hint';
         minCashHint.textContent = 'Keep at least this much cash after repairs (minimum $1,000,000)';
@@ -753,7 +774,7 @@
         }, 300));
 
         minCashInput.addEventListener('input', debounceInput('minCash', function() {
-            var val = parseInt(minCashInput.value, 10);
+            var val = getNumericValue(minCashInput);
             if (Number.isInteger(val) && val >= 1000000) {
                 minCashInput.style.borderColor = '';
             } else {
@@ -765,12 +786,11 @@
     function handleSaveSettings() {
         var enabled = document.getElementById('yf-enabled').checked;
         var thresholdVal = document.getElementById('yf-threshold').value;
-        var minCashVal = document.getElementById('yf-mincash').value;
         var notifyIngame = document.getElementById('yf-notify-ingame').checked;
         var notifySystem = document.getElementById('yf-notify-system').checked;
 
         var threshold = parseInt(thresholdVal, 10);
-        var minCash = parseInt(minCashVal, 10);
+        var minCash = getNumericValue(document.getElementById('yf-mincash'));
 
         // Validate with Number.isInteger and whitelisted ranges
         if (!Number.isInteger(threshold) || threshold < 1 || threshold > 99) {

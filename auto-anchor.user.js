@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Auto Anchor Points
 // @namespace    https://rebelship.org/
-// @version      1.48
+// @version      1.49
 // @description  Auto-purchase anchor points when timer expires
 // @author       https://github.com/justonlyforyou/
 // @order        9
@@ -43,6 +43,29 @@
     var sliderFixTimeout = null;
     var modalEventListeners = [];
     var rebelshipMenuClickHandler = null;
+
+    // ========== THOUSAND SEPARATOR UTILITIES ==========
+    function formatNumberWithSeparator(value) {
+        var num = Number(String(value).replace(/,/g, ''));
+        if (isNaN(num)) return String(value);
+        return new Intl.NumberFormat('en-US', { useGrouping: true, maximumFractionDigits: 0 }).format(num);
+    }
+
+    function setupThousandSeparator(input) {
+        input.type = 'text';
+        input.inputMode = 'numeric';
+        input.addEventListener('input', function(e) {
+            var raw = e.target.value.replace(/[^\d]/g, '');
+            e.target.value = formatNumberWithSeparator(raw);
+        });
+        if (input.value) {
+            input.value = formatNumberWithSeparator(input.value);
+        }
+    }
+
+    function getNumericValue(input) {
+        return parseInt(String(input.value).replace(/,/g, ''), 10);
+    }
 
     // Check if lock exists (script reload), only reset isProcessing flag
     if (!window._autoAnchorLock) {
@@ -777,7 +800,7 @@
                     <label style="display:block;margin-bottom:8px;font-size:14px;font-weight:700;color:#01125d;">\
                         Minimum Cash Balance\
                     </label>\
-                    <input type="number" id="anchor-mincash" min="0" step="1000000" value="' + settings.minCashAfterPurchase + '"\
+                    <input type="text" id="anchor-mincash" inputmode="numeric" value="' + formatNumberWithSeparator(settings.minCashAfterPurchase) + '"\
                            class="redesign" style="width:100%;height:2.5rem;padding:0 1rem;background:#ebe9ea;border:0;border-radius:7px;color:#01125d;font-size:16px;font-family:Lato,sans-serif;text-align:center;box-sizing:border-box;">\
                     <div style="font-size:12px;color:#626b90;margin-top:6px;">\
                         Keep at least this much cash after purchase\
@@ -808,6 +831,9 @@
                 </div>\
             </div>';
 
+        var mincashEl = document.getElementById('anchor-mincash');
+        if (mincashEl) setupThousandSeparator(mincashEl);
+
         var cancelBtn = document.getElementById('anchor-cancel');
         var cancelHandler = function() {
             closeModal();
@@ -820,7 +846,7 @@
             var enabled = document.getElementById('anchor-enabled').checked;
             var amountRadio = document.querySelector('input[name="anchor-amount"]:checked');
             var amount = amountRadio ? parseInt(amountRadio.value, 10) : 1;
-            var minCash = parseInt(document.getElementById('anchor-mincash').value, 10);
+            var minCash = getNumericValue(document.getElementById('anchor-mincash'));
             var notifyIngame = document.getElementById('anchor-notify-ingame').checked;
             var notifySystem = document.getElementById('anchor-notify-system').checked;
 
