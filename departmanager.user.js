@@ -2,7 +2,7 @@
 // @name         ShippingManager - Depart Manager
 // @namespace    https://rebelship.org/
 // @description  Unified departure management: Auto bunker rebuy, auto-depart, route settings
-// @version      3.100
+// @version      3.101
 // @author       https://github.com/justonlyforyou/
 // @order        11
 // @match        https://shippingmanager.cc/*
@@ -1275,9 +1275,10 @@
                 return null;
             }
 
-            // Fetch alliance members with 24h stats (retry up to 3 times on failure)
+            // Fetch alliance members with 24h stats (retry up to 5 times with backoff)
             var data = null;
-            for (var attempt = 0; attempt < 3; attempt++) {
+            var delays = [1000, 3000, 5000, 5000];
+            for (var attempt = 0; attempt < 5; attempt++) {
                 var response = await originalFetch(API_BASE + '/alliance/get-alliance-members', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -1296,13 +1297,13 @@
                     break;
                 }
 
-                log('get-alliance-members attempt ' + (attempt + 1) + ' failed: HTTP ' + response.status, 'warn');
-                if (attempt < 2) {
-                    await new Promise(function(resolve) { setTimeout(resolve, 1000); });
+                log('get-alliance-members attempt ' + (attempt + 1) + '/5 failed: HTTP ' + response.status, 'warn');
+                if (attempt < 4) {
+                    await new Promise(function(resolve) { setTimeout(resolve, delays[attempt]); });
                 }
             }
 
-            if (!data) throw new Error('get-alliance-members failed after 3 attempts');
+            if (!data) throw new Error('get-alliance-members failed after 5 attempts');
 
             if (data.data && data.data.members) {
                 // Find the user in members list
