@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Alliance Tools
 // @description Alliance ID display, interim CEO edit buttons, member exclude for management/COO
-// @version     1.01
+// @version     1.02
 // @author      https://github.com/justonlyforyou/
 // @order        18
 // @match       https://shippingmanager.cc/*
@@ -58,16 +58,33 @@
     // ============================================
     // FEATURE 1: Alliance ID Badge
     // ============================================
+    var _idRetryTimer = null;
+    var _idRetryCount = 0;
+
     function injectAllianceId() {
         var nameEl = document.getElementById('alliance-name');
         if (!nameEl || nameEl.querySelector('[data-at-id-badge]')) return;
 
         var allianceStore = getStore('alliance');
-        if (!allianceStore || !allianceStore.alliance) return;
+        if (!allianceStore || !allianceStore.alliance) {
+            // Store not ready yet, retry up to 10 times (5 seconds total)
+            if (_idRetryCount < 10) {
+                _idRetryCount++;
+                _idRetryTimer = setTimeout(injectAllianceId, 500);
+            }
+            return;
+        }
 
         var alliance = allianceStore.alliance;
         var allianceId = alliance.id || (alliance.value && alliance.value.id);
-        if (!allianceId) return;
+        if (!allianceId) {
+            if (_idRetryCount < 10) {
+                _idRetryCount++;
+                _idRetryTimer = setTimeout(injectAllianceId, 500);
+            }
+            return;
+        }
+        _idRetryCount = 0;
 
         var badge = document.createElement('span');
         badge.setAttribute('data-at-id-badge', 'true');
@@ -379,8 +396,13 @@
     // SINGLE OBSERVER
     // ============================================
     function runAll() {
-        // Quick bail: alliance management view not open
-        if (!document.getElementById('alliance-name')) return;
+        // Quick bail: alliance view not open
+        if (!document.getElementById('alliance-name')) {
+            // Modal closed, reset retry state
+            if (_idRetryTimer) { clearTimeout(_idRetryTimer); _idRetryTimer = null; }
+            _idRetryCount = 0;
+            return;
+        }
 
         injectAllianceId();
         injectEditButtons();
@@ -401,7 +423,7 @@
         }
 
         observer = new MutationObserver(debouncedRun);
-        observer.observe(modalContainer, { childList: true, subtree: true });
+        observer.observe(modalContainer, { childList: true, subtree: true, attributes: true, characterData: true });
 
         runAll();
     }
@@ -411,5 +433,6 @@
     window.addEventListener('beforeunload', function() {
         if (observer) observer.disconnect();
         if (debounceTimer) clearTimeout(debounceTimer);
+        if (_idRetryTimer) clearTimeout(_idRetryTimer);
     });
 })();
