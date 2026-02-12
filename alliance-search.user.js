@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Open Alliance Search
 // @description Search all open alliances
-// @version     3.57
+// @version     3.58
 // @author      https://github.com/justonlyforyou/
 // @order        2
 // @match       https://shippingmanager.cc/*
@@ -941,7 +941,7 @@
             nameText.textContent = alliance.name;
             var langText = document.createElement('div');
             langText.style.cssText = 'color:#666;font-size:12px;margin-top:2px;';
-            langText.textContent = (alliance.language || 'en').toUpperCase() + ' | Level ' + alliance.benefit_level;
+            langText.textContent = (alliance.language || 'en').toUpperCase() + ' | Level ' + alliance.benefit_level + ' | ID: ' + alliance.id;
             nameDiv.appendChild(nameText);
             nameDiv.appendChild(langText);
 
