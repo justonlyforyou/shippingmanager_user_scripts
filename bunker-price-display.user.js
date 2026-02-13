@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Bunker Price Display
 // @namespace    http://tampermonkey.net/
-// @version      3.26
+// @version      3.27
 // @description  Shows current fuel and CO2 bunker prices with fill levels
 // @author       https://github.com/justonlyforyou/
 // @order        19
@@ -20,7 +20,7 @@
     let co2PriceElement = null;
     let fuelFillElement = null;
     let co2FillElement = null;
-    let storeUnsubscribe = null;
+    let fillLevelDebounce = null;
     let initRetryCount = 0;
     const MAX_INIT_RETRIES = 10;
 
@@ -196,44 +196,19 @@
         }
     }
 
-    // Subscribe to Pinia store changes - updates immediately like the game does
-    function subscribeToStore() {
-        var userStore = getUserStore();
-        if (!userStore) {
-            // Use MutationObserver to wait for Pinia instead of polling
-            waitForPinia();
-            return;
+    // Fetch interceptor: update fill levels when bunker/user API calls complete
+    var _origFetchBunker = window.fetch;
+    window.fetch = function() {
+        var url = typeof arguments[0] === 'string' ? arguments[0] : '';
+        var result = _origFetchBunker.apply(this, arguments);
+        if (url.indexOf('/bunker/') !== -1 || url.indexOf('/user/') !== -1) {
+            result.then(function() {
+                if (fillLevelDebounce) clearTimeout(fillLevelDebounce);
+                fillLevelDebounce = setTimeout(updateFillLevels, 300);
+            }).catch(function() {});
         }
-
-        // Unsubscribe from previous subscription if exists
-        if (storeUnsubscribe) {
-            storeUnsubscribe();
-        }
-
-        // Subscribe to user store mutations and store unsubscribe function
-        storeUnsubscribe = userStore.$subscribe(function() {
-            updateFillLevels();
-        });
-    }
-
-    // Wait for Pinia to become available using MutationObserver
-    function waitForPinia() {
-        var app = document.getElementById('app');
-        if (!app) {
-            console.error('[BunkerPrice] #app not found, cannot wait for Pinia');
-            return;
-        }
-
-        var observer = new MutationObserver(function() {
-            var userStore = getUserStore();
-            if (userStore) {
-                observer.disconnect();
-                subscribeToStore();
-            }
-        });
-
-        observer.observe(app, { childList: true });
-    }
+        return result;
+    };
 
     // Update fill levels (both desktop and mobile use same elements now)
     function updateFillLevels() {
@@ -309,12 +284,6 @@
         fuelFillElement = null;
         co2FillElement = null;
         initRetryCount = 0;
-
-        // Unsubscribe from store on cleanup
-        if (storeUnsubscribe) {
-            storeUnsubscribe();
-            storeUnsubscribe = null;
-        }
     }
 
     function init() {
@@ -322,8 +291,6 @@
             updatePrices();
             // Schedule updates at :00:45 and :30:45 (Android compatible)
             schedulePriceUpdate();
-            // Subscribe to store for instant fill level updates
-            subscribeToStore();
         } else {
             initRetryCount++;
             if (initRetryCount < MAX_INIT_RETRIES) {

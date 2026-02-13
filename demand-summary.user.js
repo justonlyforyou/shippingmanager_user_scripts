@@ -2,7 +2,7 @@
 // @name         ShippingManager - Demand Summary
 // @namespace    https://rebelship.org/
 // @description  Demand & ranking dashboard with map tooltips, CSV export, and route-popup demand/vessel filters
-// @version      5.08
+// @version      5.09
 // @author       https://github.com/justonlyforyou/
 // @order        10
 // @match        https://shippingmanager.cc/*
@@ -515,6 +515,7 @@
     // Cached vessel data - invalidated via Pinia $subscribe on vesselStore
     var vesselsByPortCache = null;
     var vesselStoreSubscribed = false;
+    var vesselCacheDebounce = null;
 
     function invalidateVesselsByPortCache() {
         vesselsByPortCache = null;
@@ -526,7 +527,8 @@
         if (!vesselStore || !vesselStore.$subscribe) return;
         vesselStoreSubscribed = true;
         vesselStore.$subscribe(function() {
-            invalidateVesselsByPortCache();
+            if (vesselCacheDebounce) clearTimeout(vesselCacheDebounce);
+            vesselCacheDebounce = setTimeout(invalidateVesselsByPortCache, 500);
         });
     }
 
