@@ -2,7 +2,7 @@
 // @name         ShippingManager - Demand Summary
 // @namespace    https://rebelship.org/
 // @description  Demand & ranking dashboard with map tooltips, CSV export, and route-popup demand/vessel filters
-// @version      5.07
+// @version      5.08
 // @author       https://github.com/justonlyforyou/
 // @order        10
 // @match        https://shippingmanager.cc/*
@@ -1793,13 +1793,11 @@
         document.head.appendChild(style);
     }
 
-    function isShowAllPortsStep(container) {
-        var buttons = container.querySelectorAll('button');
-        for (var i = 0; i < buttons.length; i++) {
-            var text = (buttons[i].textContent || '').trim().toLowerCase();
-            if (text.indexOf('show all ports') !== -1) return true;
-        }
-        return false;
+    function isShowAllPortsStep() {
+        var popup = document.getElementById('createRoutePopup');
+        if (!popup) return false;
+        // #suggest-route-btn only exists in step 1 (button selection step)
+        return !!popup.querySelector('#suggest-route-btn');
     }
 
     var routePopupObserver = null;
@@ -1823,7 +1821,7 @@
                 }
                 var btnContainer = popup.querySelector('.buttonContainer');
                 if (!btnContainer) return;
-                if (!isShowAllPortsStep(btnContainer)) return;
+                if (!isShowAllPortsStep()) return;
                 // Check if our buttons are still in the DOM (popup may have been recreated)
                 var hasOurButtons = btnContainer.querySelector('.demand-filter-route-btn');
                 if (!hasOurButtons) {

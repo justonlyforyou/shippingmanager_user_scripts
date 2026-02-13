@@ -2,7 +2,7 @@
 // @name         ShippingManager - Distance Filter for Route Planner
 // @namespace    http://tampermonkey.net/
 // @description  Filter ports by distance when creating new routes!
-// @version      9.25
+// @version      9.26
 // @order        20
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
@@ -229,16 +229,18 @@
         dropdownOpen = true;
     }
 
-    function isShowAllPortsStep(container) {
-        var text = (container.textContent || '').toLowerCase();
-        return text.indexOf('show all ports') !== -1;
+    function isShowAllPortsStep() {
+        var popup = document.getElementById('createRoutePopup');
+        if (!popup) return false;
+        // #suggest-route-btn only exists in step 1 (button selection step)
+        return !!popup.querySelector('#suggest-route-btn');
     }
 
     function inject() {
         if (injected) return;
         var container = document.querySelector("#createRoutePopup .buttonContainer");
         if (!container || document.getElementById("rebel-dist-btn")) return;
-        if (!isShowAllPortsStep(container)) return;
+        if (!isShowAllPortsStep()) return;
 
         var btn = document.createElement("button");
         btn.id = "rebel-dist-btn";
@@ -286,7 +288,7 @@
             }
             var container = popup.querySelector('.buttonContainer');
             if (!container) return;
-            if (!isShowAllPortsStep(container)) return;
+            if (!isShowAllPortsStep()) return;
             if (!container.querySelector('#rebel-dist-btn')) {
                 injected = false;
                 dropdownOpen = false;

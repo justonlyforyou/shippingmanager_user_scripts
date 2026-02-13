@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Game Bug-Using: Fast Delivery for built vessels
 // @namespace    https://rebelship.org/
-// @version      1.15
+// @version      1.16
 // @description  Fast delivery for built vessels via drydock exploit. Sends pending vessels in drydock, for resetting the delivery time with the maintenance end ;)
 // @author       https://github.com/justonlyforyou/
 // @order        22
@@ -195,9 +195,9 @@
     // UI INJECTION
     // ============================================
     function isPendingTab() {
-        var header = document.querySelector('#notifications-vessels-listing .header-text .text-center');
-        if (!header) return false;
-        return header.textContent.trim().toLowerCase().indexOf('pending') !== -1;
+        var buttons = document.querySelectorAll('#notifications-vessels-listing .bottomWrapper button.btn-block');
+        // pending is the 4th button (index 3), active when selected
+        return buttons.length >= 4 && buttons[3].classList.contains('active');
     }
 
     function injectCheckboxes() {

@@ -2,7 +2,7 @@
 // @name         ShippingManager - Depart Manager
 // @namespace    https://rebelship.org/
 // @description  Unified departure management: Auto bunker rebuy, auto-depart, route settings
-// @version      3.101
+// @version      3.103
 // @author       https://github.com/justonlyforyou/
 // @order        11
 // @match        https://shippingmanager.cc/*
@@ -1382,13 +1382,13 @@
 
     // Calculate utilization percentage for a vessel at destination port
     function calculatePortUtilization(vessel, portData) {
-        if (!portData || !portData.demand) return 100; // If no data, assume full
+        if (!portData || !portData.demand) return 0; // No data = skip vessel (safe default)
 
         var demand = portData.demand;
         var consumed = portData.consumed || {};
         var vesselCapacity = getVesselCapacity(vessel);
 
-        if (vesselCapacity <= 0) return 100;
+        if (vesselCapacity <= 0) return 0; // Unknown capacity = skip vessel (safe default)
 
         var totalDemand = 0;
         var totalConsumed = 0;
@@ -1410,7 +1410,6 @@
         var availableDemand = Math.max(0, totalDemand - totalConsumed);
 
         // Utilization = how much of vessel capacity can be filled
-        if (vesselCapacity <= 0) return 100;
         var utilization = (availableDemand / vesselCapacity) * 100;
 
         return Math.min(100, utilization);
@@ -1567,16 +1566,8 @@
      * Check if we're in a create route modal (not edit route)
      */
     function isCreateRouteModal() {
-        var header = document.querySelector('.modal-header .header-title');
-        if (header && header.textContent.toLowerCase().includes('create')) {
-            return true;
-        }
-        // Also check if vessel has no active route
         var vessel = getCurrentEditingVessel();
-        if (vessel && !vessel.active_route && !vessel.route_id) {
-            return true;
-        }
-        return false;
+        return !!vessel && !vessel.active_route && !vessel.route_id;
     }
 
     /**
@@ -2822,8 +2813,12 @@
                         ? vessel.route_destination
                         : vessel.route_origin;
                     // Use depart-cycle cache to avoid fetching same port multiple times
+                    // Only cache successful results - null means API failed, retry next vessel
                     if (!(actualDestination in departPortDemandCache)) {
-                        departPortDemandCache[actualDestination] = await fetchPortDemandAPI(actualDestination);
+                        var fetchedPort = await fetchPortDemandAPI(actualDestination);
+                        if (fetchedPort) {
+                            departPortDemandCache[actualDestination] = fetchedPort;
+                        }
                     }
                     var portDemand = departPortDemandCache[actualDestination];
                     var utilization = calculatePortUtilization(vessel, portDemand);
@@ -4212,8 +4207,7 @@
         var vesselList = document.querySelector('#notifications-vessels-listing .vesselList');
         if (!vesselList) return;
 
-        var header = document.querySelector('#notifications-vessels-listing .header-text .text-center');
-        if (!header || !header.textContent.trim().toLowerCase().includes('at port')) return;
+        if (!document.getElementById('depart-all-btn')) return;
 
         var rows = vesselList.querySelectorAll('.vesselRow');
         if (!rows.length) return;
@@ -4254,11 +4248,14 @@
                 var dest = v.current_port_code === v.route_origin ? v.route_destination : v.route_origin;
 
                 // Fetch demand if not cached or cache expired
+                // Only cache successful results - null means API failed, retry next time
                 var cached = utilDemandCache[dest];
                 var now = Date.now();
                 if (!cached || !cached.timestamp || (now - cached.timestamp) > UTIL_CACHE_TTL) {
                     var freshData = await fetchPortDemandAPI(dest);
-                    utilDemandCache[dest] = { data: freshData, timestamp: now };
+                    if (freshData) {
+                        utilDemandCache[dest] = { data: freshData, timestamp: now };
+                    }
                 }
                 var portData = utilDemandCache[dest].data;
 
@@ -4288,7 +4285,7 @@
         });
     }
 
-    var lastUtilHeaderText = '';
+    var lastUtilWasPortTab = false;
     var utilObserver = null;
     var utilDebounceTimer = null;
 
@@ -4314,10 +4311,9 @@
         // Proactively cleanup all expired cache entries
         cleanupUtilDemandCache();
 
-        var header = listing.querySelector('.header-text .text-center');
-        var currentText = header ? header.textContent.trim() : '';
-        if (currentText !== lastUtilHeaderText) {
-            lastUtilHeaderText = currentText;
+        var isPortTab = !!document.getElementById('depart-all-btn');
+        if (isPortTab !== lastUtilWasPortTab) {
+            lastUtilWasPortTab = isPortTab;
             resetUtilMarkers();
         }
 

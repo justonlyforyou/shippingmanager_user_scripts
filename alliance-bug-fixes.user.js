@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Alliance Tools
 // @description Alliance ID display, interim CEO edit buttons, member exclude for management/COO
-// @version     1.02
+// @version     1.03
 // @author      https://github.com/justonlyforyou/
 // @order        18
 // @match       https://shippingmanager.cc/*
@@ -354,9 +354,6 @@
             if (btn.closest('#members-container')) continue;
             if (btn.dataset.atCeoFixed) continue;
             if (btn.dataset.atExcludeBtn) continue;
-
-            var text = (btn.textContent || '').toLowerCase();
-            if (text.indexOf('exclude') === -1 && text.indexOf('entfernen') === -1) continue;
 
             var ceo = allianceStore_getCEO();
             if (!ceo) continue;
