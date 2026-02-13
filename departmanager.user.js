@@ -2,7 +2,7 @@
 // @name         ShippingManager - Depart Manager
 // @namespace    https://rebelship.org/
 // @description  Unified departure management: Auto bunker rebuy, auto-depart, route settings
-// @version      3.104
+// @version      3.105
 // @author       https://github.com/justonlyforyou/
 // @order        11
 // @match        https://shippingmanager.cc/*
@@ -278,6 +278,9 @@
         minUtilizationNotifySystem: false,
         // Departure Tracking Settings
         contributionTrackingEnabled: false,
+        // Speed Break-Even Settings
+        breakevenEnabled: false,
+        breakevenFallbackFuelPrice: 500,
         // Notifications (legacy, kept for backward compatibility)
         systemNotifications: false
     };
@@ -333,6 +336,7 @@
         merged.co2IntelligentBelow = sanitizeNumericSetting(merged.co2IntelligentBelow, DEFAULT_SETTINGS.co2IntelligentBelow);
         merged.co2IntelligentShips = sanitizeNumericSetting(merged.co2IntelligentShips, DEFAULT_SETTINGS.co2IntelligentShips);
         merged.minUtilizationThreshold = sanitizeNumericSetting(merged.minUtilizationThreshold, DEFAULT_SETTINGS.minUtilizationThreshold);
+        merged.breakevenFallbackFuelPrice = sanitizeNumericSetting(merged.breakevenFallbackFuelPrice, DEFAULT_SETTINGS.breakevenFallbackFuelPrice);
         return {
             settings: merged,
             pendingRouteSettings: storageCache.pendingRouteSettings || {},
@@ -1838,6 +1842,105 @@
         enforceDepartButtonState();
     }
 
+    // ============================================
+    // SPEED BREAK-EVEN (slider coloring)
+    // ============================================
+    var BREAKEVEN_UTILIZATION = 0.85;
+    var breakevenProcessing = false;
+    var breakevenProcessedSliders = new WeakSet();
+    var breakevenDebounce = null;
+
+    function breakevenGetCapacity(vessel) {
+        if (!vessel || !vessel.capacity_max) return 0;
+        var cap = vessel.capacity_max;
+        if (vessel.capacity_type === 'tanker') {
+            return ((cap.fuel || 0) + (cap.crude_oil || 0)) / 74;
+        }
+        return (cap.dry || 0) + (cap.refrigerated || 0);
+    }
+
+    function breakevenEstimateIncome(vessel) {
+        if (!vessel || !vessel.capacity_max || !vessel.prices) return 0;
+        var cap = vessel.capacity_max;
+        var prices = vessel.prices;
+        if (vessel.capacity_type === 'tanker') {
+            return ((cap.crude_oil || 0) * (prices.crude_oil || 0) +
+                    (cap.fuel || 0) * (prices.fuel || 0)) * BREAKEVEN_UTILIZATION;
+        }
+        return ((cap.dry || 0) * (prices.dry || 0) +
+                (cap.refrigerated || 0) * (prices.refrigerated || 0)) * BREAKEVEN_UTILIZATION;
+    }
+
+    function breakevenCalculateSpeed(vessel, fuelPrice) {
+        var income = breakevenEstimateIncome(vessel);
+        var capacity = breakevenGetCapacity(vessel);
+        var distance = vessel.route_distance;
+        var fuelFactor = vessel.fuel_factor || 1;
+        if (capacity <= 0 || !distance || distance <= 0 || fuelPrice <= 0) return null;
+        if (income <= 0) return 0;
+        var sqrtBE = (income * 40000) / (capacity * distance * fuelFactor * fuelPrice);
+        return sqrtBE * sqrtBE;
+    }
+
+    function breakevenColorSlider(sliderEl, breakEvenSpeed) {
+        var min = parseInt(sliderEl.min) || 5;
+        var max = parseInt(sliderEl.max) || 39;
+        if (min >= max || min < 0 || max > 100) return;
+        var pct = ((breakEvenSpeed - min) / (max - min)) * 100;
+        pct = Math.min(100, Math.max(0, pct));
+        sliderEl.style.setProperty('background',
+            'linear-gradient(to right, #22c55e ' + pct + '%, #ef4444 ' + pct + '%)',
+            'important');
+    }
+
+    function breakevenGetFuelPrice() {
+        var s = getSettings();
+        if (s.fuelMode !== 'off') return s.fuelPriceThreshold;
+        return s.breakevenFallbackFuelPrice;
+    }
+
+    function breakevenProcessSliders() {
+        if (breakevenProcessing) return;
+        var s = getSettings();
+        if (!s.breakevenEnabled) return;
+        breakevenProcessing = true;
+        try {
+            var sliders = document.querySelectorAll('input[type="range"].slider');
+            if (sliders.length === 0) return;
+            var routeStore = getStore('route');
+            var vessel = routeStore && routeStore.selectedVessel;
+            if (!vessel) {
+                var globalStore = getStore('global');
+                vessel = globalStore && globalStore.trackedVessel;
+            }
+            if (!vessel) return;
+            var fuelPrice = breakevenGetFuelPrice();
+            if (!fuelPrice) return;
+            for (var i = 0; i < sliders.length; i++) {
+                var sl = sliders[i];
+                if (breakevenProcessedSliders.has(sl)) continue;
+                breakevenProcessedSliders.add(sl);
+                var slMax = parseInt(sl.max);
+                if (!slMax || slMax !== Math.round(vessel.max_speed)) continue;
+                if (!vessel.prices || !vessel.capacity_max || !vessel.route_distance) continue;
+                var beSpeed = breakevenCalculateSpeed(vessel, fuelPrice);
+                if (beSpeed === null) continue;
+                sl.classList.add('breakeven-applied');
+                breakevenColorSlider(sl, beSpeed);
+            }
+        } finally {
+            breakevenProcessing = false;
+        }
+    }
+
+    function scheduleBreakevenCheck() {
+        if (breakevenDebounce || breakevenProcessing) return;
+        breakevenDebounce = setTimeout(function() {
+            breakevenDebounce = null;
+            breakevenProcessSliders();
+        }, 300);
+    }
+
     var uiObserver = null;
     var uiObserverTimer = null;
     var uiModalClosed = false;
@@ -1925,6 +2028,9 @@
                     var hasAssigned = bottomNav && bottomNav.querySelector('#assigned-page-btn');
                     if (hasAssigned && !rsSettingsTabAdded) rsAddSettingsButton();
                     if (!hasAssigned && rsSettingsTabAdded) rsSettingsTabAdded = false;
+
+                    // Speed break-even: color sliders when they appear
+                    scheduleBreakevenCheck();
                 }, 300);
             }
         });
@@ -4056,6 +4162,24 @@
             html += '</div>';
             html += '</div>';
 
+            // === SPEED BREAK-EVEN ===
+            html += '<div style="background:#fff;border-radius:8px;padding:10px;margin-bottom:12px;border:1px solid #ddd;">';
+            html += '<div style="font-weight:700;font-size:16px;margin-bottom:12px;color:#0db8f4;">Speed Break-Even</div>';
+            html += '<div style="margin-bottom:12px;">';
+            html += '<label style="display:flex;align-items:center;cursor:pointer;">';
+            html += '<input type="checkbox" id="dm-breakeven-enabled"' + (settings.breakevenEnabled ? ' checked' : '') + ' style="width:18px;height:18px;margin-right:10px;accent-color:#0db8f4;">';
+            html += '<span style="font-weight:600;">Enable Slider Coloring</span></label>';
+            html += '<div style="font-size:12px;color:#666;margin-top:4px;">Colors speed sliders green (profitable) / red (unprofitable) based on fuel cost break-even.</div>';
+            html += '</div>';
+            html += '<div id="dm-breakeven-settings" style="padding:12px;background:#f9fafb;border-radius:6px;">';
+            html += '<div style="margin-bottom:10px;">';
+            html += '<label style="display:block;font-weight:600;margin-bottom:4px;font-size:13px;">Fallback Fuel Price ($/t)</label>';
+            html += '<input type="text" id="dm-breakeven-fallback" inputmode="numeric" value="' + formatNumberWithSeparator(settings.breakevenFallbackFuelPrice) + '" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:4px;">';
+            html += '<div style="font-size:11px;color:#888;margin-top:4px;">Used when Fuel Auto-Rebuy is off. When on, the rebuy price threshold is used instead.</div>';
+            html += '</div>';
+            html += '</div>';
+            html += '</div>';
+
             // === STATUS ===
             html += '<div style="background:#f3f4f6;border-radius:8px;padding:12px;margin-bottom:20px;">';
             html += '<div style="font-weight:700;font-size:14px;margin-bottom:8px;">Status</div>';
@@ -4136,6 +4260,15 @@
             setupThousandSeparator(document.getElementById('dm-co2-mincash'));
             setupThousandSeparator(document.getElementById('dm-co2-intel-max'));
             setupThousandSeparator(document.getElementById('dm-co2-intel-below'));
+            setupThousandSeparator(document.getElementById('dm-breakeven-fallback'));
+
+            // Breakeven visibility toggle
+            function updateBreakevenVisibility() {
+                document.getElementById('dm-breakeven-settings').style.display =
+                    document.getElementById('dm-breakeven-enabled').checked ? 'block' : 'none';
+            }
+            updateBreakevenVisibility();
+            document.getElementById('dm-breakeven-enabled').addEventListener('change', updateBreakevenVisibility);
 
             document.getElementById('dm-save').addEventListener('click', async function() {
                 var fuelBasic = document.getElementById('dm-fuel-basic').checked;
@@ -4173,6 +4306,8 @@
                     minUtilizationNotifyIngame: document.getElementById('dm-min-util-notify-ingame').checked,
                     minUtilizationNotifySystem: document.getElementById('dm-min-util-notify-system').checked,
                     contributionTrackingEnabled: document.getElementById('dm-contrib-tracking-enabled').checked,
+                    breakevenEnabled: document.getElementById('dm-breakeven-enabled').checked,
+                    breakevenFallbackFuelPrice: getNumericValue(document.getElementById('dm-breakeven-fallback')) || 500,
                     systemNotifications: false
                 };
 
@@ -4497,6 +4632,18 @@
             }
             log('Max UI retries reached, running in background mode');
             return;
+        }
+
+        // Inject breakeven slider CSS (global, not inside DM modal)
+        if (!document.getElementById('dm-breakeven-styles')) {
+            var beStyle = document.createElement('style');
+            beStyle.id = 'dm-breakeven-styles';
+            beStyle.textContent =
+                'input[type="range"].slider.breakeven-applied{-webkit-appearance:none;appearance:none;height:6px;border-radius:3px;outline:none}' +
+                'input[type="range"].slider.breakeven-applied::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:16px;height:16px;border-radius:50%;background:#fff;border:2px solid #666;cursor:pointer}' +
+                'input[type="range"].slider.breakeven-applied::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:#fff;border:2px solid #666;cursor:pointer}' +
+                'input[type="range"].slider.breakeven-applied::-moz-range-track{background:transparent}';
+            document.head.appendChild(beStyle);
         }
 
         uiInitialized = true;
