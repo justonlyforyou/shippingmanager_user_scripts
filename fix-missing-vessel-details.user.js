@@ -2,7 +2,7 @@
 // @name         ShippingManager - Vessel Details Fix
 // @namespace    http://tampermonkey.net/
 // @description  Fix missing vessel details (Engine, Port, Fuel Factor)
-// @version      2.13
+// @version      2.14
 // @order        26
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
@@ -370,21 +370,15 @@
         debounceTimer = setTimeout(fixAll, DEBOUNCE_MS);
     }
 
-    function watchStores() {
-        var subscribed = false;
-        var stores = ['vessel', 'route', 'shop'];
-        for (var i = 0; i < stores.length; i++) {
-            var store = getStore(stores[i]);
-            if (store && store.$subscribe) {
-                store.$subscribe(debouncedFix);
-                subscribed = true;
-            }
+    function watchPopover() {
+        var popover = document.getElementById('popover');
+        if (!popover) {
+            setTimeout(watchPopover, 1000);
+            return;
         }
-        if (!subscribed) {
-            setTimeout(watchStores, 1000);
-        } else {
-            log('Watching stores for vessel changes');
-        }
+        var popoverObserver = new MutationObserver(debouncedFix);
+        popoverObserver.observe(popover, { childList: true });
+        log('Watching #popover for vessel selection');
     }
 
     function init() {
@@ -398,8 +392,8 @@
         observer = new MutationObserver(debouncedFix);
         observer.observe(modalContainer, { childList: true, subtree: true });
 
-        // Watch vessel/route/shop stores for selection changes (#popover renders on select)
-        watchStores();
+        // Watch #popover for vessel selection (vessel details render there)
+        watchPopover();
 
         // Also catch SPA navigation via history API
         var origPush = history.pushState;
