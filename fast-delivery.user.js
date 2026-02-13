@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Game Bug-Using: Fast Delivery for built vessels
 // @namespace    https://rebelship.org/
-// @version      1.16
+// @version      1.17
 // @description  Fast delivery for built vessels via drydock exploit. Sends pending vessels in drydock, for resetting the delivery time with the maintenance end ;)
 // @author       https://github.com/justonlyforyou/
 // @order        22
@@ -633,31 +633,11 @@
             debouncedInject();
         });
 
-        // Try narrow scope first, fall back to #app
         var listing = document.getElementById('notifications-vessels-listing');
-        var target = listing || document.getElementById('app');
-        if (!target) return false;
+        if (!listing) return false;
 
-        observer.observe(target, { childList: true, subtree: true });
-
-        log('Observer started on ' + (listing ? '#notifications-vessels-listing' : '#app'));
-
-        // If we started on #app, try to narrow scope when listing appears
-        if (!listing) {
-            var narrowObserver = new MutationObserver(function() {
-                var el = document.getElementById('notifications-vessels-listing');
-                if (el) {
-                    narrowObserver.disconnect();
-                    observer.disconnect();
-                    observer.observe(el, { childList: true, subtree: true });
-
-                    log('Observer narrowed to #notifications-vessels-listing');
-                }
-            });
-            narrowObserver.observe(target, { childList: true, subtree: true });
-            setTimeout(function() { narrowObserver.disconnect(); }, 30000);
-        }
-
+        observer.observe(listing, { childList: true, subtree: true });
+        log('Observer started on #notifications-vessels-listing');
         return true;
     }
 

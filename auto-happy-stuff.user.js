@@ -2,7 +2,7 @@
 // @name         ShippingManager - Auto Happy Staff & Stuff Header Display (No-Points Edition)
 // @namespace    http://tampermonkey.net/
 // @description  Automatically manages staff salaries to maintain crew and management morale at target levels. DO NOT MIX WITH POINTS EDITION!
-// @version      1.48
+// @version      1.49
 // @author       https://github.com/justonlyforyou/
 // @order        5
 // @match        https://shippingmanager.cc/*
@@ -132,25 +132,22 @@
     function waitForElement(selector, timeout) {
         timeout = timeout || 20000;
         return new Promise(function(resolve, reject) {
-            if (document.querySelector(selector)) {
-                resolve(document.querySelector(selector));
-                return;
-            }
-
-            var observer = new MutationObserver(function() {
+            var elapsed = 0;
+            var interval = 500;
+            function check() {
                 var element = document.querySelector(selector);
                 if (element) {
-                    observer.disconnect();
                     resolve(element);
+                    return;
                 }
-            });
-
-            var observeTarget = document.querySelector('header') || document.getElementById('app') || document.body;
-            observer.observe(observeTarget, { childList: true, subtree: true });
-            setTimeout(function() {
-                observer.disconnect();
-                reject(new Error('Element ' + selector + ' not found within timeout'));
-            }, timeout);
+                elapsed += interval;
+                if (elapsed >= timeout) {
+                    reject(new Error('Element ' + selector + ' not found within timeout'));
+                    return;
+                }
+                setTimeout(check, interval);
+            }
+            check();
         });
     }
 

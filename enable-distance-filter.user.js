@@ -2,7 +2,7 @@
 // @name         ShippingManager - Distance Filter for Route Planner
 // @namespace    http://tampermonkey.net/
 // @description  Filter ports by distance when creating new routes!
-// @version      9.26
+// @version      9.27
 // @order        20
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
@@ -296,8 +296,15 @@
             }
         }, 200);
     });
-    var observeRoot = document.getElementById('modal-container') || document.getElementById('app') || document.body;
-    obs.observe(observeRoot, { childList: true, subtree: true });
+    function attachObserver() {
+        var modalContainer = document.getElementById('modal-container');
+        if (!modalContainer) {
+            setTimeout(attachObserver, 1000);
+            return;
+        }
+        obs.observe(modalContainer, { childList: true, subtree: true });
+    }
+    attachObserver();
 
     window.addEventListener('beforeunload', function() {
         obs.disconnect();

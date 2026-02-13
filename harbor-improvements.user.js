@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Game Bug-Fix: Move down harbor details button
 // @namespace    https://rebelship.org/
-// @version      2.91
+// @version      2.92
 // @description  Just a simple repositioning of the details button on harbor menu.
 // @author       https://github.com/justonlyforyou/
 // @order        27
@@ -114,7 +114,6 @@
         }
     }
 
-    var target = document.querySelector('.leaflet-container') || document.getElementById('app') || document.body;
     observer = new MutationObserver(function(mutations) {
         for (var i = 0; i < mutations.length; i++) {
             var added = mutations[i].addedNodes;
@@ -140,7 +139,15 @@
         }
     });
 
-    observer.observe(target, { childList: true, subtree: true });
+    function attachMapObserver() {
+        var leaflet = document.querySelector('.leaflet-container');
+        if (!leaflet) {
+            setTimeout(attachMapObserver, 1000);
+            return;
+        }
+        observer.observe(leaflet, { childList: true, subtree: true });
+    }
+    attachMapObserver();
 
     window.addEventListener('beforeunload', function() {
         if (observer) observer.disconnect();
