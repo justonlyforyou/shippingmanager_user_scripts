@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Alliance Tools
 // @description Alliance ID display, interim CEO edit buttons, member exclude for management/COO
-// @version     1.05
+// @version     1.06
 // @author      https://github.com/justonlyforyou/
 // @order        18
 // @match       https://shippingmanager.cc/*
@@ -66,10 +66,9 @@
 
         var allianceStore = getStore('alliance');
         if (!allianceStore || !allianceStore.alliance) {
-            // Store not ready yet, retry up to 10 times (5 seconds total)
-            if (_idRetryCount < 10) {
+            if (!_idRetryTimer && _idRetryCount < 20) {
                 _idRetryCount++;
-                _idRetryTimer = setTimeout(injectAllianceId, 500);
+                _idRetryTimer = setTimeout(function() { _idRetryTimer = null; injectAllianceId(); }, 500);
             }
             return;
         }
@@ -77,12 +76,13 @@
         var alliance = allianceStore.alliance;
         var allianceId = alliance.id || (alliance.value && alliance.value.id);
         if (!allianceId) {
-            if (_idRetryCount < 10) {
+            if (!_idRetryTimer && _idRetryCount < 20) {
                 _idRetryCount++;
-                _idRetryTimer = setTimeout(injectAllianceId, 500);
+                _idRetryTimer = setTimeout(function() { _idRetryTimer = null; injectAllianceId(); }, 500);
             }
             return;
         }
+        if (_idRetryTimer) { clearTimeout(_idRetryTimer); _idRetryTimer = null; }
         _idRetryCount = 0;
 
         var badge = document.createElement('span');
@@ -439,7 +439,7 @@
         }
 
         modalObserver = new MutationObserver(onModalChange);
-        modalObserver.observe(modalContainer, { childList: true, subtree: true });
+        modalObserver.observe(modalContainer, { childList: true, subtree: true, characterData: true });
 
         onModalChange();
     }

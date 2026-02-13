@@ -2,7 +2,7 @@
 // @name         ShippingManager - Vessel Details Fix
 // @namespace    http://tampermonkey.net/
 // @description  Fix missing vessel details (Engine, Port, Fuel Factor)
-// @version      2.12
+// @version      2.13
 // @order        26
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
@@ -18,7 +18,6 @@
     var DEBOUNCE_MS = 200;
     var cachedPinia = null;
     var observer = null;
-    var appObserver = null;
     var debounceTimer = null;
 
     // Vessel data captured from API responses (most reliable source)
@@ -371,6 +370,23 @@
         debounceTimer = setTimeout(fixAll, DEBOUNCE_MS);
     }
 
+    function watchStores() {
+        var subscribed = false;
+        var stores = ['vessel', 'route', 'shop'];
+        for (var i = 0; i < stores.length; i++) {
+            var store = getStore(stores[i]);
+            if (store && store.$subscribe) {
+                store.$subscribe(debouncedFix);
+                subscribed = true;
+            }
+        }
+        if (!subscribed) {
+            setTimeout(watchStores, 1000);
+        } else {
+            log('Watching stores for vessel changes');
+        }
+    }
+
     function init() {
         var modalContainer = document.getElementById('modal-container');
         if (!modalContainer) {
@@ -382,12 +398,8 @@
         observer = new MutationObserver(debouncedFix);
         observer.observe(modalContainer, { childList: true, subtree: true });
 
-        // Observer 2: #app direct children (catches SPA route changes for owned vessel details)
-        var appEl = document.getElementById('app');
-        if (appEl) {
-            appObserver = new MutationObserver(debouncedFix);
-            appObserver.observe(appEl, { childList: true, subtree: false });
-        }
+        // Watch vessel/route/shop stores for selection changes (#popover renders on select)
+        watchStores();
 
         // Also catch SPA navigation via history API
         var origPush = history.pushState;
@@ -401,7 +413,6 @@
 
     window.addEventListener('beforeunload', function() {
         if (observer) observer.disconnect();
-        if (appObserver) appObserver.disconnect();
         if (debounceTimer) clearTimeout(debounceTimer);
     });
 
