@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Alliance Tools
 // @description Alliance ID display, interim CEO edit buttons, member exclude for management/COO
-// @version     1.03
+// @version     1.05
 // @author      https://github.com/justonlyforyou/
 // @order        18
 // @match       https://shippingmanager.cc/*
@@ -13,10 +13,9 @@
 (function() {
     'use strict';
 
-    var DEBOUNCE_MS = 300;
     var cachedPinia = null;
-    var observer = null;
-    var debounceTimer = null;
+    var modalObserver = null;
+    var membersObserver = null;
     var isUpdating = false;
 
     // ============================================
@@ -390,26 +389,46 @@
     }
 
     // ============================================
-    // SINGLE OBSERVER
+    // OBSERVERS
     // ============================================
-    function runAll() {
-        // Quick bail: alliance view not open
+    var modalDebounceTimer = null;
+    var membersDebounceTimer = null;
+    var lastMembersContainer = null;
+
+    function onAllianceContent() {
+        injectAllianceId();
+        injectEditButtons();
+
+        // Watch members-container only when it appears (Members tab)
+        var mc = document.getElementById('members-container');
+        if (mc && mc !== lastMembersContainer) {
+            lastMembersContainer = mc;
+            if (membersObserver) membersObserver.disconnect();
+
+            injectExcludeButtons();
+            fixCeoExcludeButton();
+
+            membersObserver = new MutationObserver(function() {
+                if (membersDebounceTimer) clearTimeout(membersDebounceTimer);
+                membersDebounceTimer = setTimeout(function() {
+                    injectExcludeButtons();
+                    fixCeoExcludeButton();
+                }, 300);
+            });
+            membersObserver.observe(mc, { childList: true });
+        }
+    }
+
+    function onModalChange() {
         if (!document.getElementById('alliance-name')) {
-            // Modal closed, reset retry state
+            if (membersObserver) { membersObserver.disconnect(); membersObserver = null; }
+            lastMembersContainer = null;
             if (_idRetryTimer) { clearTimeout(_idRetryTimer); _idRetryTimer = null; }
             _idRetryCount = 0;
             return;
         }
-
-        injectAllianceId();
-        injectEditButtons();
-        injectExcludeButtons();
-        fixCeoExcludeButton();
-    }
-
-    function debouncedRun() {
-        if (debounceTimer) clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(runAll, DEBOUNCE_MS);
+        if (modalDebounceTimer) clearTimeout(modalDebounceTimer);
+        modalDebounceTimer = setTimeout(onAllianceContent, 200);
     }
 
     function init() {
@@ -419,17 +438,19 @@
             return;
         }
 
-        observer = new MutationObserver(debouncedRun);
-        observer.observe(modalContainer, { childList: true, subtree: true, attributes: true, characterData: true });
+        modalObserver = new MutationObserver(onModalChange);
+        modalObserver.observe(modalContainer, { childList: true, subtree: true });
 
-        runAll();
+        onModalChange();
     }
 
     init();
 
     window.addEventListener('beforeunload', function() {
-        if (observer) observer.disconnect();
-        if (debounceTimer) clearTimeout(debounceTimer);
+        if (modalObserver) modalObserver.disconnect();
+        if (membersObserver) membersObserver.disconnect();
+        if (modalDebounceTimer) clearTimeout(modalDebounceTimer);
+        if (membersDebounceTimer) clearTimeout(membersDebounceTimer);
         if (_idRetryTimer) clearTimeout(_idRetryTimer);
     });
 })();
