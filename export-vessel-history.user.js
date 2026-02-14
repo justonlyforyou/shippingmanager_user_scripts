@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Export Vessel History
 // @namespace    http://tampermonkey.net/
-// @version      3.82
+// @version      3.83
 // @description  Detect vessel history API calls and offer CSV download
 // @author       https://github.com/justonlyforyou/
 // @order        996
@@ -142,14 +142,14 @@
         // Try immediately, if not ready use MutationObserver
         if (insertButton()) return;
 
-        var observeRoot = document.getElementById('modal-wrapper');
+        var observeRoot = document.getElementById('central-container');
         if (!observeRoot) return;
         var insertObserver = new MutationObserver(function() {
             if (insertButton()) {
                 insertObserver.disconnect();
             }
         });
-        insertObserver.observe(observeRoot, { attributes: true, attributeFilter: ['style', 'class'] });
+        insertObserver.observe(observeRoot, { childList: true, subtree: true });
         // Safety timeout
         setTimeout(function() { insertObserver.disconnect(); }, 10000);
     }
