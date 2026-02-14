@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Auto Co-Op & Co-Op Header Display
 // @description Shows open Co-Op tickets, auto-sends COOP vessels to alliance members
-// @version     5.51
+// @version     5.52
 // @author      https://github.com/justonlyforyou/
 // @order        3
 // @match       https://shippingmanager.cc/*
@@ -706,27 +706,17 @@
 
     function waitForCoopContainer() {
         return new Promise(function(resolve, reject) {
-            var container = document.querySelector('.content.led.cursor-pointer');
-            if (container) {
-                resolve(container);
-                return;
+            var elapsed = 0;
+            var interval = 500;
+            var timeout = 20000;
+            function check() {
+                var container = document.querySelector('.content.led.cursor-pointer');
+                if (container) { resolve(container); return; }
+                elapsed += interval;
+                if (elapsed >= timeout) { reject(new Error('Timeout')); return; }
+                setTimeout(check, interval);
             }
-
-            var observeTarget = document.querySelector('header') || document.getElementById('app') || document.body;
-            var observer = new MutationObserver(function(mutations, obs) {
-                container = document.querySelector('.content.led.cursor-pointer');
-                if (container) {
-                    obs.disconnect();
-                    resolve(container);
-                }
-            });
-
-            observer.observe(observeTarget, { childList: true, subtree: true });
-
-            setTimeout(function() {
-                observer.disconnect();
-                reject(new Error('Timeout'));
-            }, 20000);
+            check();
         });
     }
 

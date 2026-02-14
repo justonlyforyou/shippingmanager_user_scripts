@@ -2,7 +2,7 @@
 // @name         ShippingManager - Auto Happy Staff & Stuff Header Display (Points Edition)
 // @namespace    http://tampermonkey.net/
 // @description  Automatically buys Employee Workshop from the shop when crew or management morale drops below target. NOT MIX WITH NO-POINTS EDITION!
-// @version      1.3
+// @version      1.31
 // @author       https://github.com/justonlyforyou/
 // @order        6
 // @match        https://shippingmanager.cc/*
@@ -132,25 +132,16 @@
     function waitForElement(selector, timeout) {
         timeout = timeout || 20000;
         return new Promise(function(resolve, reject) {
-            if (document.querySelector(selector)) {
-                resolve(document.querySelector(selector));
-                return;
-            }
-
-            var observer = new MutationObserver(function() {
+            var elapsed = 0;
+            var interval = 500;
+            function check() {
                 var element = document.querySelector(selector);
-                if (element) {
-                    observer.disconnect();
-                    resolve(element);
-                }
-            });
-
-            var observeTarget = document.querySelector('header') || document.getElementById('app') || document.body;
-            observer.observe(observeTarget, { childList: true, subtree: true });
-            setTimeout(function() {
-                observer.disconnect();
-                reject(new Error('Element ' + selector + ' not found within timeout'));
-            }, timeout);
+                if (element) { resolve(element); return; }
+                elapsed += interval;
+                if (elapsed >= timeout) { reject(new Error('Element ' + selector + ' not found within timeout')); return; }
+                setTimeout(check, interval);
+            }
+            check();
         });
     }
 
