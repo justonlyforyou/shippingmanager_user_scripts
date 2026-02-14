@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Alliance Tools
 // @description Alliance ID display, interim CEO edit buttons, member exclude for management/COO
-// @version     1.16
+// @version     1.17
 // @author      https://github.com/justonlyforyou/
 // @order        18
 // @match       https://shippingmanager.cc/*
@@ -61,11 +61,10 @@
 
     function injectAllianceId() {
         var nameEl = document.getElementById('alliance-name');
-        if (!nameEl || nameEl.querySelector('[data-at-id-badge]')) return;
+        if (!nameEl) return;
 
         var allianceStore = getStore('alliance');
         if (!allianceStore || !allianceStore.alliance) {
-            // Store not ready yet, retry up to 10 times (5 seconds total)
             if (_idRetryCount < 10) {
                 _idRetryCount++;
                 _idRetryTimer = setTimeout(injectAllianceId, 500);
@@ -84,8 +83,15 @@
         }
         _idRetryCount = 0;
 
+        var existingBadge = nameEl.querySelector('[data-at-id-badge]');
+        if (existingBadge) {
+            if (existingBadge.dataset.atAllianceId === String(allianceId)) return;
+            existingBadge.remove();
+        }
+
         var badge = document.createElement('span');
         badge.setAttribute('data-at-id-badge', 'true');
+        badge.dataset.atAllianceId = String(allianceId);
         badge.textContent = '(' + allianceId + ')';
         badge.title = 'Click to copy Alliance ID';
         badge.style.cssText = 'color:#626b90;font-size:inherit;font-weight:400;margin-left:5px;cursor:pointer;opacity:0.8;';
@@ -313,7 +319,7 @@
             if (member.user_id === myUserId) continue;
             if (member.role === 'ceo') continue;
             if (member.has_management_role) continue;
-            kickableByName[member.company_name] = member;
+            kickableByName[member.company_name.replace(/\u00a0/g, ' ').trim()] = member;
         }
 
         // Use specific selector: #members-container > .member-container
