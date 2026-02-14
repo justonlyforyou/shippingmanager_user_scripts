@@ -2,7 +2,7 @@
 // @name         ShippingManager - Depart Manager
 // @namespace    https://rebelship.org/
 // @description  Unified departure management: Auto bunker rebuy, auto-depart, route settings
-// @version      3.105
+// @version      3.106
 // @author       https://github.com/justonlyforyou/
 // @order        11
 // @match        https://shippingmanager.cc/*
@@ -1847,7 +1847,6 @@
     // ============================================
     var BREAKEVEN_UTILIZATION = 0.85;
     var breakevenProcessing = false;
-    var breakevenProcessedSliders = new WeakSet();
     var breakevenDebounce = null;
 
     function breakevenGetCapacity(vessel) {
@@ -1918,8 +1917,6 @@
             if (!fuelPrice) return;
             for (var i = 0; i < sliders.length; i++) {
                 var sl = sliders[i];
-                if (breakevenProcessedSliders.has(sl)) continue;
-                breakevenProcessedSliders.add(sl);
                 var slMax = parseInt(sl.max);
                 if (!slMax || slMax !== Math.round(vessel.max_speed)) continue;
                 if (!vessel.prices || !vessel.capacity_max || !vessel.route_distance) continue;
@@ -2035,25 +2032,47 @@
             }
         });
 
-        var modalRoot = document.getElementById('modal-container');
+        // Sidebar: attach once (persistent DOM element)
         var sidebarRoot = document.getElementById('mainSideBarContent');
-        if (modalRoot) {
-            uiObserver.observe(modalRoot, { childList: true, subtree: true });
-        }
         if (sidebarRoot) {
             uiObserver.observe(sidebarRoot, { childList: true, subtree: true });
+        } else {
+            setTimeout(function retrySidebar() {
+                sidebarRoot = document.getElementById('mainSideBarContent');
+                if (sidebarRoot) {
+                    uiObserver.observe(sidebarRoot, { childList: true, subtree: true });
+                } else {
+                    setTimeout(retrySidebar, 1000);
+                }
+            }, 1000);
         }
-        if (!modalRoot || !sidebarRoot) {
-            setTimeout(function retryUiTargets() {
-                if (!modalRoot) {
-                    modalRoot = document.getElementById('modal-container');
-                    if (modalRoot) uiObserver.observe(modalRoot, { childList: true, subtree: true });
+
+        // Modal: re-attach on every open (#modal-wrapper uses v-if, destroys #modal-container on close)
+        var lastModalContainer = null;
+        function attachModalObserver() {
+            var mc = document.getElementById('modal-container');
+            if (mc && mc !== lastModalContainer) {
+                lastModalContainer = mc;
+                uiObserver.observe(mc, { childList: true, subtree: true });
+            }
+        }
+        attachModalObserver();
+
+        var modalStore = getStore('modal');
+        if (modalStore) {
+            modalStore.$subscribe(function() {
+                setTimeout(attachModalObserver, 100);
+            });
+        } else {
+            setTimeout(function retryModalSubscribe() {
+                modalStore = getStore('modal');
+                if (modalStore) {
+                    modalStore.$subscribe(function() {
+                        setTimeout(attachModalObserver, 100);
+                    });
+                } else {
+                    setTimeout(retryModalSubscribe, 1000);
                 }
-                if (!sidebarRoot) {
-                    sidebarRoot = document.getElementById('mainSideBarContent');
-                    if (sidebarRoot) uiObserver.observe(sidebarRoot, { childList: true, subtree: true });
-                }
-                if (!modalRoot || !sidebarRoot) setTimeout(retryUiTargets, 1000);
             }, 1000);
         }
     }

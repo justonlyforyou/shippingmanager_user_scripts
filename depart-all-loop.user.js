@@ -2,7 +2,7 @@
 // @name        ShippingManager - Depart All Loop Button
 // @description Clicks Depart All button repeatedly until all vessels departed
 // @author      https://github.com/justonlyforyou/
-// @version     2.93
+// @version     2.94
 // @order        29
 // @match       https://shippingmanager.cc/*
 // @grant       none
@@ -208,7 +208,7 @@
             setTimeout(attachObserver, 1000);
             return;
         }
-        observer.observe(sidebar, { childList: true });
+        observer.observe(sidebar, { childList: true, subtree: true });
         debouncedAddButton();
     }
     attachObserver();
