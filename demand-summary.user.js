@@ -2,7 +2,7 @@
 // @name         ShippingManager - Demand Summary
 // @namespace    https://rebelship.org/
 // @description  Demand & ranking dashboard with map tooltips, CSV export, and route-popup demand/vessel filters
-// @version      5.14
+// @version      5.15
 // @author       https://github.com/justonlyforyou/
 // @order        10
 // @match        https://shippingmanager.cc/*
@@ -2047,29 +2047,21 @@
             return;
         }
 
-        // Capture baseline before first filter — same trick as distance filter:
-        // fetch fresh ports from API via selectedVessel if store is empty
+        // Capture baseline before first filter — always fetch from API
+        // to avoid using stale/filtered activePorts from a previous session
         if (!routeFilterBaselinePorts) {
-            var currentPorts = rs.routeSelection.activePorts;
-            if (currentPorts && currentPorts.length > 0) {
-                routeFilterBaselinePorts = currentPorts.slice();
-                log('Captured baseline from store: ' + routeFilterBaselinePorts.length + ' ports');
-            } else {
-                // Store empty — fetch from API like distance filter does
-                var selectedVessel = rs.selectedVessel;
-                if (!selectedVessel) {
-                    showToast('No vessel selected', 'error');
-                    return;
-                }
-                log('Store empty, fetching ports from API for vessel: ' + selectedVessel.id);
-                var apiPorts = await fetchVesselPorts(selectedVessel.id);
-                if (!apiPorts || apiPorts.length === 0) {
-                    showToast('Could not load ports', 'error');
-                    return;
-                }
-                routeFilterBaselinePorts = apiPorts;
-                log('Captured baseline from API: ' + routeFilterBaselinePorts.length + ' ports');
+            var selectedVessel = rs.selectedVessel;
+            if (!selectedVessel) {
+                showToast('No vessel selected', 'error');
+                return;
             }
+            var apiPorts = await fetchVesselPorts(selectedVessel.id);
+            if (!apiPorts || apiPorts.length === 0) {
+                showToast('Could not load ports', 'error');
+                return;
+            }
+            routeFilterBaselinePorts = apiPorts;
+            log('Captured baseline from API: ' + routeFilterBaselinePorts.length + ' ports');
         }
 
         if (!routeFilterBaselinePorts || routeFilterBaselinePorts.length === 0) {
@@ -2142,7 +2134,14 @@
         log('Demand filter applied: ' + filtered.length + '/' + routeFilterBaselinePorts.length + ' ports');
     }
 
+    var vesselPortsCache = {};
+    var VESSEL_PORTS_CACHE_TTL = 2 * 60 * 1000;
+
     async function fetchVesselPorts(vesselId) {
+        var cached = vesselPortsCache[vesselId];
+        if (cached && Date.now() - cached.timestamp < VESSEL_PORTS_CACHE_TTL) {
+            return cached.ports;
+        }
         try {
             var response = await fetch(API_BASE + '/route/get-vessel-ports', {
                 method: 'POST',
@@ -2153,7 +2152,9 @@
             if (!response.ok) return null;
             var data = await response.json();
             if (data && data.data && data.data.all && data.data.all.ports) {
-                return data.data.all.ports;
+                var ports = data.data.all.ports;
+                vesselPortsCache[vesselId] = { ports: ports, timestamp: Date.now() };
+                return ports;
             }
         } catch (err) {
             log('fetchVesselPorts error: ' + err.message, 'error');
