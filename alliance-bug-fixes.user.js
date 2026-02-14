@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Alliance Tools
 // @description Alliance ID display, interim CEO edit buttons, member exclude for management/COO
-// @version     1.18
+// @version     1.19
 // @author      https://github.com/justonlyforyou/
 // @order        18
 // @match       https://shippingmanager.cc/*
@@ -314,7 +314,7 @@
             if (member.user_id === myUserId) continue;
             if (member.role === 'ceo') continue;
             if (member.has_management_role) continue;
-            kickableByName[member.company_name] = member;
+            kickableByName[member.company_name.replace(/\u00a0/g, ' ').trim()] = member;
         }
 
         // Use specific selector: #members-container > .member-container
