@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Alliance Tools
 // @description Alliance ID display, interim CEO edit buttons, member exclude for management/COO
-// @version     1.08
+// @version     1.09
 // @author      https://github.com/justonlyforyou/
 // @order        18
 // @match       https://shippingmanager.cc/*
@@ -394,8 +394,6 @@
     var modalDebounceTimer = null;
     var membersDebounceTimer = null;
     var lastMembersContainer = null;
-    var allianceSetupDone = false;
-
     function onAllianceContent() {
         injectAllianceId();
         injectEditButtons();
@@ -424,21 +422,12 @@
         if (!document.getElementById('alliance-name')) {
             if (membersObserver) { membersObserver.disconnect(); membersObserver = null; }
             lastMembersContainer = null;
-            allianceSetupDone = false;
             if (_idRetryTimer) { clearTimeout(_idRetryTimer); _idRetryTimer = null; }
             _idRetryCount = 0;
             return;
         }
-        // Skip if already set up - only re-run when members-container appears/disappears (tab switch)
-        if (allianceSetupDone) {
-            var mc = document.getElementById('members-container');
-            if (mc === lastMembersContainer) return;
-        }
         if (modalDebounceTimer) clearTimeout(modalDebounceTimer);
-        modalDebounceTimer = setTimeout(function() {
-            onAllianceContent();
-            allianceSetupDone = true;
-        }, 200);
+        modalDebounceTimer = setTimeout(onAllianceContent, 200);
     }
 
     function init() {
