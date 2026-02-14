@@ -2,7 +2,7 @@
 // @name         ShippingManager - Demand Summary
 // @namespace    https://rebelship.org/
 // @description  Demand & ranking dashboard with map tooltips, CSV export, and route-popup demand/vessel filters
-// @version      5.12
+// @version      5.13
 // @author       https://github.com/justonlyforyou/
 // @order        10
 // @match        https://shippingmanager.cc/*
@@ -1802,42 +1802,26 @@
         return !!popup.querySelector('#suggest-route-btn');
     }
 
-    var routePopupObserver = null;
-
     function initRoutePopupFilter() {
         injectRoutePopupStyles();
 
-        var routePopupDebounceTimer = null;
+        var routePopupCheckTimer = null;
 
-        routePopupObserver = new MutationObserver(function() {
-            // Debounce 250ms to avoid firing hundreds of times per second in Vue SPA
-            if (routePopupDebounceTimer) clearTimeout(routePopupDebounceTimer);
-            routePopupDebounceTimer = setTimeout(function() {
-                var popup = document.getElementById('createRoutePopup');
-                if (!popup) {
-                    if (routeFilterInjected) {
-                        resetRouteFilter();
-                        // Disconnect observer when popup closes, reconnect on next check
-                    }
-                    return;
-                }
-                var btnContainer = popup.querySelector('.buttonContainer');
-                if (!btnContainer) return;
-                if (!isShowAllPortsStep()) return;
-                // Check if our buttons are still in the DOM (popup may have been recreated)
-                var hasOurButtons = btnContainer.querySelector('.demand-filter-route-btn');
-                if (!hasOurButtons) {
-                    routeFilterInjected = false;
-                    injectRouteFilterButtons(btnContainer);
-                }
-            }, 250);
-        });
-        var observeTarget = document.getElementById('central-container');
-        if (!observeTarget) {
-            setTimeout(initRoutePopupFilter, 1000);
-            return;
+        function checkForRoutePopup() {
+            var popup = document.getElementById('createRoutePopup');
+            if (!popup) {
+                if (routeFilterInjected) resetRouteFilter();
+                return;
+            }
+            var btnContainer = popup.querySelector('.buttonContainer');
+            if (!btnContainer) return;
+            if (!isShowAllPortsStep()) return;
+            var hasOurButtons = btnContainer.querySelector('.demand-filter-route-btn');
+            if (!hasOurButtons) {
+                routeFilterInjected = false;
+                injectRouteFilterButtons(btnContainer);
+            }
         }
-        routePopupObserver.observe(observeTarget, { childList: true, subtree: true });
 
         document.addEventListener('click', function(e) {
             if (routeFilterDropdownOpen) {
@@ -1846,6 +1830,9 @@
                     closeAllDemandDropdowns();
                 }
             }
+            if (!e.target.closest('#modal-wrapper')) return;
+            if (routePopupCheckTimer) clearTimeout(routePopupCheckTimer);
+            routePopupCheckTimer = setTimeout(checkForRoutePopup, 300);
         });
     }
 
