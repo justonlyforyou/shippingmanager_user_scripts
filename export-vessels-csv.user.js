@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Export all your vessels details
 // @description Export all your vessels with details as CSV
-// @version     1.22
+// @version     1.23
 // @author      https://github.com/justonlyforyou/
 // @order        994
 // @match       https://shippingmanager.cc/*
@@ -145,21 +145,22 @@
         return str;
     }
 
-    // Initialize: MutationObserver waits for RebelShip menu
+    // Initialize: finite retry for addMenuItem availability
     function init() {
         if (typeof addMenuItem === 'function') {
             addExportMenuItem();
             return;
         }
-        var observeRoot = document.getElementById('app') || document.body;
-        var initObserver = new MutationObserver(function() {
+        var attempt = 0;
+        function retryInit() {
+            attempt++;
             if (typeof addMenuItem === 'function') {
-                initObserver.disconnect();
                 addExportMenuItem();
+                return;
             }
-        });
-        initObserver.observe(observeRoot, { childList: true });
-        setTimeout(function() { initObserver.disconnect(); }, 30000);
+            if (attempt < 3) setTimeout(retryInit, attempt * 1000);
+        }
+        setTimeout(retryInit, 1000);
     }
 
     if (document.readyState === 'loading') {

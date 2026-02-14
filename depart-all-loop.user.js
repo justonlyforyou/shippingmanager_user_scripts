@@ -2,7 +2,7 @@
 // @name        ShippingManager - Depart All Loop Button
 // @description Clicks Depart All button repeatedly until all vessels departed
 // @author      https://github.com/justonlyforyou/
-// @version     2.92
+// @version     2.93
 // @order        29
 // @match       https://shippingmanager.cc/*
 // @grant       none
@@ -189,38 +189,27 @@
         buttonWrapper.appendChild(wrapper);
     }
 
-    var buttonInserted = false;
     var addButtonTimer = null;
 
     function debouncedAddButton() {
-        if (buttonInserted) return;
         if (addButtonTimer) clearTimeout(addButtonTimer);
         addButtonTimer = setTimeout(function() {
+            if (!document.querySelector('.buttonWrapper')) return;
+            if (document.getElementById('depart-loop-btn')) return;
             addButton();
-            if (document.getElementById('depart-loop-btn')) {
-                buttonInserted = true;
-                observer.disconnect();
-            }
         }, 200);
     }
 
-    var observer = new MutationObserver(function(mutations) {
-        if (buttonInserted) return;
-        for (var i = 0; i < mutations.length; i++) {
-            var added = mutations[i].addedNodes;
-            for (var j = 0; j < added.length; j++) {
-                var node = added[j];
-                if (node.nodeType !== 1) continue;
-                if (node.classList && node.classList.contains('buttonWrapper') || node.querySelector && node.querySelector('.buttonWrapper')) {
-                    debouncedAddButton();
-                    return;
-                }
-            }
-        }
-    });
-    var sidebarContent = document.getElementById('mainSideBarContent') || document.getElementById('app') || document.body;
-    observer.observe(sidebarContent, { childList: true, subtree: true });
+    var observer = new MutationObserver(debouncedAddButton);
 
-    // Initial check in case DOM is already ready
-    debouncedAddButton();
+    function attachObserver() {
+        var sidebar = document.getElementById('mainSideBarContent');
+        if (!sidebar) {
+            setTimeout(attachObserver, 1000);
+            return;
+        }
+        observer.observe(sidebar, { childList: true });
+        debouncedAddButton();
+    }
+    attachObserver();
 })();
