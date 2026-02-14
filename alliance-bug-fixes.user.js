@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Alliance Tools
 // @description Alliance ID display, interim CEO edit buttons, member exclude for management/COO
-// @version     1.14
+// @version     1.15
 // @author      https://github.com/justonlyforyou/
 // @order        18
 // @match       https://shippingmanager.cc/*
@@ -432,15 +432,9 @@
     }
 
     function init() {
-        var modalContainer = document.getElementById('modal-container');
-        if (!modalContainer) {
-            setTimeout(init, 500);
-            return;
-        }
-
+        var observeRoot = document.getElementById('modal-container') || document.getElementById('app') || document.body;
         modalObserver = new MutationObserver(onModalChange);
-        modalObserver.observe(modalContainer, { childList: true, subtree: true });
-
+        modalObserver.observe(observeRoot, { childList: true, subtree: true });
         onModalChange();
     }
 
