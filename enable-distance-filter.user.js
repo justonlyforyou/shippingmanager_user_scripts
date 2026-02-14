@@ -2,7 +2,7 @@
 // @name         ShippingManager - Distance Filter for Route Planner
 // @namespace    http://tampermonkey.net/
 // @description  Filter ports by distance when creating new routes!
-// @version      9.33
+// @version      9.34
 // @order        20
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
@@ -117,7 +117,8 @@
             var dLon = pLon * Math.PI / 180 - vLon;
             var a = Math.sin(dLat/2) * Math.sin(dLat/2) +
                     cosVLat * Math.cos(pLatR) * Math.sin(dLon/2) * Math.sin(dLon/2);
-            var dist = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            var gcDist = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            var dist = gcDist * 1.3;
             return dist >= range.min && dist < range.max;
         });
     }
