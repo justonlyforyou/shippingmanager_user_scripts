@@ -2,7 +2,7 @@
 // @name         ShippingManager - Distance Filter for Route Planner
 // @namespace    http://tampermonkey.net/
 // @description  Filter ports by distance when creating new routes!
-// @version      9.27
+// @version      9.28
 // @order        20
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
@@ -302,7 +302,7 @@
             setTimeout(attachObserver, 1000);
             return;
         }
-        obs.observe(modalContainer, { childList: true, subtree: true });
+        obs.observe(modalContainer, { childList: true });
     }
     attachObserver();
 
