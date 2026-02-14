@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Alliance Tools
 // @description Alliance ID display, interim CEO edit buttons, member exclude for management/COO
-// @version     1.06
+// @version     1.07
 // @author      https://github.com/justonlyforyou/
 // @order        18
 // @match       https://shippingmanager.cc/*
@@ -439,7 +439,7 @@
         }
 
         modalObserver = new MutationObserver(onModalChange);
-        modalObserver.observe(modalContainer, { childList: true, subtree: true, characterData: true });
+        modalObserver.observe(modalContainer, { childList: true, subtree: true });
 
         onModalChange();
     }
