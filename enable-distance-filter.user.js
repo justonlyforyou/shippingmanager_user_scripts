@@ -2,7 +2,7 @@
 // @name         ShippingManager - Distance Filter for Route Planner
 // @namespace    http://tampermonkey.net/
 // @description  Filter ports by distance when creating new routes!
-// @version      9.32
+// @version      9.33
 // @order        20
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
@@ -10,6 +10,7 @@
 // @run-at       document-end
 // @enabled      false
 // ==/UserScript==
+/* globals MutationObserver */
 
 (function() {
     var API_BASE = 'https://shippingmanager.cc/api';
@@ -275,31 +276,37 @@
         cachedDropdown = null;
     }
 
-    var checkTimer = null;
+    var obsTimer = null;
+    var obs = new MutationObserver(function() {
+        if (obsTimer) return;
+        obsTimer = setTimeout(function() {
+            obsTimer = null;
+            var popup = document.querySelector("#createRoutePopup");
+            if (!popup) {
+                if (injected) reset();
+                return;
+            }
+            var container = popup.querySelector('.buttonContainer');
+            if (!container) return;
+            if (!isShowAllPortsStep()) return;
+            if (!container.querySelector('#rebel-dist-btn')) {
+                injected = false;
+                dropdownOpen = false;
+                inject();
+            }
+        }, 200);
+    });
+    var observeRoot = document.getElementById('modal-container') || document.getElementById('app') || document.body;
+    obs.observe(observeRoot, { childList: true, subtree: true });
 
-    function checkForPopup() {
-        var popup = document.getElementById('createRoutePopup');
-        if (!popup) {
-            if (injected) reset();
-            return;
-        }
-        var container = popup.querySelector('.buttonContainer');
-        if (!container) return;
-        if (!isShowAllPortsStep()) return;
-        if (!container.querySelector('#rebel-dist-btn')) {
-            injected = false;
-            dropdownOpen = false;
-            inject();
-        }
-    }
+    window.addEventListener('beforeunload', function() {
+        obs.disconnect();
+    });
 
     document.addEventListener("click", function(e) {
         if (dropdownOpen && !e.target.closest("#rebel-dist-btn")) {
             if (cachedDropdown) cachedDropdown.style.display = 'none';
             dropdownOpen = false;
         }
-        if (!e.target.closest('#modal-wrapper')) return;
-        if (checkTimer) clearTimeout(checkTimer);
-        checkTimer = setTimeout(checkForPopup, 300);
     });
 })();

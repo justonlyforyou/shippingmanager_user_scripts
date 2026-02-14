@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Alliance Tools
 // @description Alliance ID display, interim CEO edit buttons, member exclude for management/COO
-// @version     1.12
+// @version     1.14
 // @author      https://github.com/justonlyforyou/
 // @order        18
 // @match       https://shippingmanager.cc/*
@@ -14,6 +14,7 @@
     'use strict';
 
     var cachedPinia = null;
+    var modalObserver = null;
     var membersObserver = null;
     var isUpdating = false;
 
@@ -388,17 +389,17 @@
     }
 
     // ============================================
-    // EVENT-DRIVEN DETECTION (click delegation)
+    // OBSERVERS
     // ============================================
+    var modalDebounceTimer = null;
     var membersDebounceTimer = null;
     var lastMembersContainer = null;
-    var clickCheckTimer = null;
 
     function onAllianceContent() {
         injectAllianceId();
         injectEditButtons();
 
-        // Watch members-container only when it appears (Management tab)
+        // Watch members-container only when it appears (Members tab)
         var mc = document.getElementById('members-container');
         if (mc && mc !== lastMembersContainer) {
             lastMembersContainer = mc;
@@ -418,7 +419,7 @@
         }
     }
 
-    function onModalClick() {
+    function onModalChange() {
         if (!document.getElementById('alliance-name')) {
             if (membersObserver) { membersObserver.disconnect(); membersObserver = null; }
             lastMembersContainer = null;
@@ -426,19 +427,30 @@
             _idRetryCount = 0;
             return;
         }
-        onAllianceContent();
+        if (modalDebounceTimer) clearTimeout(modalDebounceTimer);
+        modalDebounceTimer = setTimeout(onAllianceContent, 200);
     }
 
-    document.addEventListener('click', function(e) {
-        if (!e.target.closest('#modal-wrapper')) return;
-        if (clickCheckTimer) clearTimeout(clickCheckTimer);
-        clickCheckTimer = setTimeout(onModalClick, 300);
-    });
+    function init() {
+        var modalContainer = document.getElementById('modal-container');
+        if (!modalContainer) {
+            setTimeout(init, 500);
+            return;
+        }
+
+        modalObserver = new MutationObserver(onModalChange);
+        modalObserver.observe(modalContainer, { childList: true, subtree: true });
+
+        onModalChange();
+    }
+
+    init();
 
     window.addEventListener('beforeunload', function() {
+        if (modalObserver) modalObserver.disconnect();
         if (membersObserver) membersObserver.disconnect();
+        if (modalDebounceTimer) clearTimeout(modalDebounceTimer);
         if (membersDebounceTimer) clearTimeout(membersDebounceTimer);
         if (_idRetryTimer) clearTimeout(_idRetryTimer);
-        if (clickCheckTimer) clearTimeout(clickCheckTimer);
     });
 })();

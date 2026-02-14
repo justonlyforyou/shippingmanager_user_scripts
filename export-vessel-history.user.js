@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Export Vessel History
 // @namespace    http://tampermonkey.net/
-// @version      3.84
+// @version      3.85
 // @description  Detect vessel history API calls and offer CSV download
 // @author       https://github.com/justonlyforyou/
 // @order        996
@@ -139,16 +139,18 @@
             return true;
         }
 
-        // Try immediately, if not ready retry a few times
+        // Try immediately, if not ready use MutationObserver
         if (insertButton()) return;
 
-        var retryCount = 0;
-        function retryInsert() {
-            retryCount++;
-            if (insertButton()) return;
-            if (retryCount < 10) setTimeout(retryInsert, 500);
-        }
-        setTimeout(retryInsert, 500);
+        var observeRoot = document.getElementById('modal-container') || document.getElementById('app') || document.body;
+        var insertObserver = new MutationObserver(function() {
+            if (insertButton()) {
+                insertObserver.disconnect();
+            }
+        });
+        insertObserver.observe(observeRoot, { childList: true, subtree: true });
+        // Safety timeout
+        setTimeout(function() { insertObserver.disconnect(); }, 10000);
     }
 
     // Fetch history from API and save as CSV

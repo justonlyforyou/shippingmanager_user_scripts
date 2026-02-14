@@ -2,7 +2,7 @@
 // @name         ShippingManager - Demand Summary
 // @namespace    https://rebelship.org/
 // @description  Demand & ranking dashboard with map tooltips, CSV export, and route-popup demand/vessel filters
-// @version      5.13
+// @version      5.14
 // @author       https://github.com/justonlyforyou/
 // @order        10
 // @match        https://shippingmanager.cc/*
@@ -515,7 +515,6 @@
     // Cached vessel data - invalidated via Pinia $subscribe on vesselStore
     var vesselsByPortCache = null;
     var vesselStoreSubscribed = false;
-    var vesselCacheDebounce = null;
 
     function invalidateVesselsByPortCache() {
         vesselsByPortCache = null;
@@ -527,8 +526,7 @@
         if (!vesselStore || !vesselStore.$subscribe) return;
         vesselStoreSubscribed = true;
         vesselStore.$subscribe(function() {
-            if (vesselCacheDebounce) clearTimeout(vesselCacheDebounce);
-            vesselCacheDebounce = setTimeout(invalidateVesselsByPortCache, 500);
+            invalidateVesselsByPortCache();
         });
     }
 
@@ -1802,26 +1800,38 @@
         return !!popup.querySelector('#suggest-route-btn');
     }
 
+    var routePopupObserver = null;
+
     function initRoutePopupFilter() {
         injectRoutePopupStyles();
 
-        var routePopupCheckTimer = null;
+        var routePopupDebounceTimer = null;
 
-        function checkForRoutePopup() {
-            var popup = document.getElementById('createRoutePopup');
-            if (!popup) {
-                if (routeFilterInjected) resetRouteFilter();
-                return;
-            }
-            var btnContainer = popup.querySelector('.buttonContainer');
-            if (!btnContainer) return;
-            if (!isShowAllPortsStep()) return;
-            var hasOurButtons = btnContainer.querySelector('.demand-filter-route-btn');
-            if (!hasOurButtons) {
-                routeFilterInjected = false;
-                injectRouteFilterButtons(btnContainer);
-            }
-        }
+        routePopupObserver = new MutationObserver(function() {
+            // Debounce 250ms to avoid firing hundreds of times per second in Vue SPA
+            if (routePopupDebounceTimer) clearTimeout(routePopupDebounceTimer);
+            routePopupDebounceTimer = setTimeout(function() {
+                var popup = document.getElementById('createRoutePopup');
+                if (!popup) {
+                    if (routeFilterInjected) {
+                        resetRouteFilter();
+                        // Disconnect observer when popup closes, reconnect on next check
+                    }
+                    return;
+                }
+                var btnContainer = popup.querySelector('.buttonContainer');
+                if (!btnContainer) return;
+                if (!isShowAllPortsStep()) return;
+                // Check if our buttons are still in the DOM (popup may have been recreated)
+                var hasOurButtons = btnContainer.querySelector('.demand-filter-route-btn');
+                if (!hasOurButtons) {
+                    routeFilterInjected = false;
+                    injectRouteFilterButtons(btnContainer);
+                }
+            }, 250);
+        });
+        var observeTarget = document.getElementById('modal-container') || document.getElementById('app') || document.body;
+        routePopupObserver.observe(observeTarget, { childList: true, subtree: true });
 
         document.addEventListener('click', function(e) {
             if (routeFilterDropdownOpen) {
@@ -1830,9 +1840,6 @@
                     closeAllDemandDropdowns();
                 }
             }
-            if (!e.target.closest('#modal-wrapper')) return;
-            if (routePopupCheckTimer) clearTimeout(routePopupCheckTimer);
-            routePopupCheckTimer = setTimeout(checkForRoutePopup, 300);
         });
     }
 
