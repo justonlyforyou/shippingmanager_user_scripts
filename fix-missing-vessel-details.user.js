@@ -2,7 +2,7 @@
 // @name         ShippingManager - Vessel Details Fix
 // @namespace    http://tampermonkey.net/
 // @description  Fix missing vessel details (Engine, Port, Fuel Factor)
-// @version      2.14
+// @version      2.15
 // @order        26
 // @author       RebelShip
 // @match        https://shippingmanager.cc/*
@@ -381,16 +381,31 @@
         log('Watching #popover for vessel selection');
     }
 
+    var lastModalContainer = null;
+
+    function attachModalObserver() {
+        var mc = document.getElementById('modal-container');
+        if (mc && mc !== lastModalContainer) {
+            lastModalContainer = mc;
+            observer = new MutationObserver(debouncedFix);
+            observer.observe(mc, { childList: true, subtree: true });
+        }
+    }
+
     function init() {
-        var modalContainer = document.getElementById('modal-container');
-        if (!modalContainer) {
+        attachModalObserver();
+        if (!lastModalContainer) {
             setTimeout(init, 500);
             return;
         }
 
-        // Observer 1: modal container (shop/VIP vessel modals)
-        observer = new MutationObserver(debouncedFix);
-        observer.observe(modalContainer, { childList: true, subtree: true });
+        // Re-attach modal observer when modal reopens (v-if destroys #modal-container)
+        var modalStore = getStore('modal');
+        if (modalStore && modalStore.$subscribe) {
+            modalStore.$subscribe(function() {
+                setTimeout(attachModalObserver, 100);
+            });
+        }
 
         // Watch #popover for vessel selection (vessel details render there)
         watchPopover();

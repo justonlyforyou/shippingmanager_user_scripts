@@ -2,7 +2,7 @@
 // @name         ShippingManager - Demand Summary
 // @namespace    https://rebelship.org/
 // @description  Demand & ranking dashboard with map tooltips, CSV export, and route-popup demand/vessel filters
-// @version      5.15
+// @version      5.16
 // @author       https://github.com/justonlyforyou/
 // @order        10
 // @match        https://shippingmanager.cc/*
@@ -97,6 +97,20 @@
             console.error('[' + SCRIPT_NAME + '] dbSet FAILED after all retries: ' + e.message);
             return false;
         }
+    }
+
+    // ========== SETTINGS ==========
+    var demandSettings = { mapTooltipsEnabled: true };
+
+    async function loadSettings() {
+        var saved = await dbGet('settings');
+        if (saved && typeof saved === 'object') {
+            if (saved.mapTooltipsEnabled !== undefined) demandSettings.mapTooltipsEnabled = saved.mapTooltipsEnabled;
+        }
+    }
+
+    async function saveSettings() {
+        await dbSet('settings', demandSettings);
     }
 
     // Get storage key for demand cache
@@ -1195,6 +1209,14 @@
         html += ' | Ranking: ' + formatTimestamp(rankings ? rankings.timestamp : null);
         html += '</div>';
 
+        // Settings row
+        html += '<div style="text-align:center;margin-bottom:4px;">';
+        html += '<label style="font-size:11px;color:#626b90;cursor:pointer;">';
+        html += '<input type="checkbox" id="demand-map-tooltips-toggle"' + (demandSettings.mapTooltipsEnabled ? ' checked' : '') + ' style="margin-right:4px;cursor:pointer;">';
+        html += 'Map port tooltips';
+        html += '</label>';
+        html += '</div>';
+
         if (!hasCache) {
             html += '<div style="flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:40px;color:#626b90;">';
             html += '<p style="font-size:16px;margin-bottom:10px;">No demand data cached yet.</p>';
@@ -1250,6 +1272,14 @@
         container.innerHTML = html;
 
         // Event handlers
+        var tooltipToggle = document.getElementById('demand-map-tooltips-toggle');
+        if (tooltipToggle) {
+            tooltipToggle.addEventListener('change', function() {
+                demandSettings.mapTooltipsEnabled = this.checked;
+                saveSettings();
+            });
+        }
+
         const collectBtn = document.getElementById('demand-collect-btn');
         if (collectBtn) {
             collectBtn.addEventListener('click', async function() {
@@ -2248,6 +2278,7 @@
         await loadCache();
 
         setupDemandModalWatcher();
+        await loadSettings();
         initMapMarkerHover();
         initRoutePopupFilter();
         initMapPortFilter();
@@ -2632,6 +2663,7 @@
 
         // Desktop: mouse hover
         document.addEventListener('mouseenter', function(e) {
+            if (!demandSettings.mapTooltipsEnabled) return;
             if (!isPortMarker(e.target)) return;
             const portCode = getPortCodeFromMarker(e.target);
             if (portCode) {
@@ -2646,6 +2678,7 @@
 
         // Mobile: long-press (500ms)
         document.addEventListener('touchstart', function(e) {
+            if (!demandSettings.mapTooltipsEnabled) return;
             const marker = e.target;
             if (!isPortMarker(marker)) return;
 
