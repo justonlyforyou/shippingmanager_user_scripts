@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        ShippingManager - Alliance Tools
 // @description Alliance ID display, interim CEO edit buttons, member exclude for management/COO
-// @version     1.19
+// @version     1.20
 // @author      https://github.com/justonlyforyou/
 // @order        18
 // @match       https://shippingmanager.cc/*
@@ -432,25 +432,43 @@
     }
 
     function init() {
-        var modalContainer = document.getElementById('modal-container');
-        if (!modalContainer) {
-            setTimeout(init, 500);
-            return;
+        var lastModalContainer = null;
+        var pollTimer = null;
+
+        function checkModal() {
+            var mc = document.getElementById('modal-container');
+            if (mc !== lastModalContainer) {
+                if (lastModalContainer && modalObserver) {
+                    modalObserver.disconnect();
+                    modalObserver = null;
+                }
+                lastModalContainer = mc;
+
+                if (mc) {
+                    modalObserver = new MutationObserver(onModalChange);
+                    modalObserver.observe(mc, { childList: true, subtree: true });
+                    onModalChange();
+                } else {
+                    if (membersObserver) { membersObserver.disconnect(); membersObserver = null; }
+                    lastMembersContainer = null;
+                    if (_idRetryTimer) { clearTimeout(_idRetryTimer); _idRetryTimer = null; }
+                    _idRetryCount = 0;
+                }
+            }
         }
 
-        modalObserver = new MutationObserver(onModalChange);
-        modalObserver.observe(modalContainer, { childList: true, subtree: true });
+        pollTimer = setInterval(checkModal, 500);
+        checkModal();
 
-        onModalChange();
+        window.addEventListener('beforeunload', function() {
+            if (pollTimer) clearInterval(pollTimer);
+            if (modalObserver) modalObserver.disconnect();
+            if (membersObserver) membersObserver.disconnect();
+            if (modalDebounceTimer) clearTimeout(modalDebounceTimer);
+            if (membersDebounceTimer) clearTimeout(membersDebounceTimer);
+            if (_idRetryTimer) clearTimeout(_idRetryTimer);
+        });
     }
 
     init();
-
-    window.addEventListener('beforeunload', function() {
-        if (modalObserver) modalObserver.disconnect();
-        if (membersObserver) membersObserver.disconnect();
-        if (modalDebounceTimer) clearTimeout(modalDebounceTimer);
-        if (membersDebounceTimer) clearTimeout(membersDebounceTimer);
-        if (_idRetryTimer) clearTimeout(_idRetryTimer);
-    });
 })();
