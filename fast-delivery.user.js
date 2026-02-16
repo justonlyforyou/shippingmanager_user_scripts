@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ShippingManager - Game Bug-Using: Fast Delivery for built vessels
 // @namespace    https://rebelship.org/
-// @version      1.17
+// @version      1.18
 // @description  Fast delivery for built vessels via drydock exploit. Sends pending vessels in drydock, for resetting the delivery time with the maintenance end ;)
 // @author       https://github.com/justonlyforyou/
 // @order        22
@@ -642,22 +642,32 @@
     }
 
     function init() {
-        if (!startObserver()) {
-            var initTimer = setInterval(function() {
-                if (startObserver()) {
-                    clearInterval(initTimer);
+        var lastListing = null;
+
+        function checkListing() {
+            var listing = document.getElementById('notifications-vessels-listing');
+            if (listing !== lastListing) {
+                if (lastListing && observer) {
+                    observer.disconnect();
+                    observer = null;
+                }
+                lastListing = listing;
+
+                if (listing) {
+                    startObserver();
                     debouncedInject();
                 }
-            }, 500);
-            setTimeout(function() { clearInterval(initTimer); }, 30000);
-        } else {
-            debouncedInject();
+            }
         }
-    }
 
-    window.addEventListener('beforeunload', function() {
-        if (observer) observer.disconnect();
-    });
+        var pollTimer = setInterval(checkListing, 500);
+        checkListing();
+
+        window.addEventListener('beforeunload', function() {
+            if (pollTimer) clearInterval(pollTimer);
+            if (observer) observer.disconnect();
+        });
+    }
 
     init();
     log('Script loaded');
