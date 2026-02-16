@@ -2,7 +2,7 @@
 // @name         ShippingManager - Depart Manager
 // @namespace    https://rebelship.org/
 // @description  Unified departure management: Auto bunker rebuy, auto-depart, route settings
-// @version      3.108
+// @version      3.109
 // @author       https://github.com/justonlyforyou/
 // @order        11
 // @match        https://shippingmanager.cc/*
@@ -1624,19 +1624,20 @@
                 autoPrice = uiCreateRouteBasePrices;
             }
         } else {
-            // For EDIT route: use interceptor or cache
-            autoPrice = uiCurrentAutoPrice;
-            if (!autoPrice) {
-                var vessel = getCurrentEditingVessel();
-                if (vessel) {
-                    var routeId = (vessel.active_route && vessel.active_route.route_id) || vessel.route_id;
-                    if (routeId) {
-                        autoPrice = getAutoprice(routeId, vessel.capacity_type);
-                        if (autoPrice) {
-                            log('uiUpdatePriceDiffs: EDIT route - using cache for route ' + routeId);
-                        }
+            // For EDIT route: use per-route cache first (keyed by routeId, always correct route),
+            // fall back to intercepted auto-price only if cache misses
+            var vessel = getCurrentEditingVessel();
+            if (vessel) {
+                var routeId = (vessel.active_route && vessel.active_route.route_id) || vessel.route_id;
+                if (routeId) {
+                    autoPrice = getAutoprice(routeId, vessel.capacity_type);
+                    if (autoPrice) {
+                        log('uiUpdatePriceDiffs: EDIT route - using cache for route ' + routeId);
                     }
                 }
+            }
+            if (!autoPrice) {
+                autoPrice = uiCurrentAutoPrice;
             }
         }
 
@@ -2242,9 +2243,29 @@
                 var autoPriceData = await autoPriceClone.json();
                 if (autoPriceData && autoPriceData.data) {
                     uiCurrentAutoPrice = autoPriceData.data;
-                    // Reset create route base prices so DOM is re-read for this route
                     uiCreateRouteBasePrices = null;
                     log('Auto-price intercepted: ' + JSON.stringify(uiCurrentAutoPrice));
+
+                    // Update per-route cache so EDIT route always has fresh data
+                    if (options && options.body) {
+                        try {
+                            var reqBody = JSON.parse(options.body);
+                            if (reqBody.route_id && reqBody.user_vessel_id) {
+                                var vesselStore = getStore('vessel');
+                                var reqVessel = vesselStore && vesselStore.userVessels
+                                    ? vesselStore.userVessels.find(function(v) { return v.id === reqBody.user_vessel_id; })
+                                    : null;
+                                if (reqVessel) {
+                                    var cacheKey = reqBody.route_id + '_' + (reqVessel.capacity_type === 'tanker' ? 't' : 'c');
+                                    var apCache = getAutoPriceCache();
+                                    apCache[cacheKey] = { prices: autoPriceData.data, timestamp: Date.now() };
+                                }
+                            }
+                        } catch {
+                            // Ignore body parse errors
+                        }
+                    }
+
                     schedulePriceDiffUpdate();
                 }
             } catch {
