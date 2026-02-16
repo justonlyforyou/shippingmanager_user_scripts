@@ -2,7 +2,7 @@
 // @name         ShippingManager - Depart Manager
 // @namespace    https://rebelship.org/
 // @description  Unified departure management: Auto bunker rebuy, auto-depart, route settings
-// @version      3.106
+// @version      3.107
 // @author       https://github.com/justonlyforyou/
 // @order        11
 // @match        https://shippingmanager.cc/*
@@ -2009,6 +2009,9 @@
                         uiModalClosed = false;
                     }
 
+                    // Always run expand + hooks - addedNodes only has direct children,
+                    // so nested .customBlackBar/.changePrice inside a Vue subtree are missed
+                    expandAllAdvanced();
                     if (uiNeedsRun) {
                         uiMainLoop();
                         schedulePriceDiffUpdate();
@@ -2052,8 +2055,19 @@
         function attachModalObserver() {
             var mc = document.getElementById('modal-container');
             if (mc && mc !== lastModalContainer) {
+                // New modal-container = previous one was destroyed, clear stale price state
+                if (lastModalContainer) {
+                    uiCurrentAutoPrice = null;
+                    uiCreateRouteBasePrices = null;
+                }
                 lastModalContainer = mc;
                 uiObserver.observe(mc, { childList: true, subtree: true });
+            } else if (!mc && lastModalContainer) {
+                // Modal closed - clear stale state
+                lastModalContainer = null;
+                uiCurrentAutoPrice = null;
+                uiCreateRouteBasePrices = null;
+                rsSettingsTabAdded = false;
             }
         }
         attachModalObserver();
