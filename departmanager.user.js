@@ -2,7 +2,7 @@
 // @name         ShippingManager - Depart Manager
 // @namespace    https://rebelship.org/
 // @description  Unified departure management: Auto bunker rebuy, auto-depart, route settings
-// @version      3.107
+// @version      3.108
 // @author       https://github.com/justonlyforyou/
 // @order        11
 // @match        https://shippingmanager.cc/*
@@ -2062,12 +2062,6 @@
                 }
                 lastModalContainer = mc;
                 uiObserver.observe(mc, { childList: true, subtree: true });
-            } else if (!mc && lastModalContainer) {
-                // Modal closed - clear stale state
-                lastModalContainer = null;
-                uiCurrentAutoPrice = null;
-                uiCreateRouteBasePrices = null;
-                rsSettingsTabAdded = false;
             }
         }
         attachModalObserver();
